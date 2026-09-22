@@ -9,5 +9,9 @@
     "erasableSyntaxOnly": true,
     "skipLibCheck": true
   },
-  "include": ["orchestrate.ts", "orchestrator/**/*.ts"]
+  "include": [
+    "orchestrate.ts",
+    "orchestrator/**/*.ts",
+    "scripts/dev/list_models.ts"
+  ]
 }

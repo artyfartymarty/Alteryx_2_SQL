@@ -397,7 +397,11 @@ session at all — agents produce files and a PR; a human or CI merges it.
 every role onto one model, since a local server only ever serves one). Run with `--profile hosted`;
 `copilot`'s own login (`copilot /login` or `gh auth login`) is the user's own step — this repo never
 attempts it and does not recommend it as a substitute for the context-window finding in
-`docs/live-smoke-test.md` (summarized in §11).
+`docs/live-smoke-test.md` (summarized in §11). **Hand-off for the hosted profile:**
+`docs/handoff-copilot-models.md` covers the owner's model policy (Luna Max by default, the 1M-token
+context tier only for the roles that need it, no automatic escalation), where every model id is
+chosen in this repo, `scripts/dev/list_models.ts` for reading the real catalog, the one code change
+needed for per-role context tiers, and the first-run procedure.
 
 ## 9. Deviations from the program spec
 
