@@ -1,0 +1,125 @@
+[
+  {
+    "id": "Q1",
+    "kind": "input",
+    "tool_id": "1",
+    "annotation": "Warehouse stock",
+    "format": "yxdb",
+    "source": "C:\\data\\wh\\stock.yxdb",
+    "key": "wh/stock.yxdb",
+    "fields": [
+      "SKU",
+      "WAREHOUSE",
+      "QTY",
+      "NOTE"
+    ],
+    "field_source": "yxdb_header",
+    "record_count": 14,
+    "query": null,
+    "table": null,
+    "write_mode": null,
+    "keys": [],
+    "pre_sql": null,
+    "post_sql": null,
+    "blocking": true,
+    "resolved": null,
+    "candidates": [
+      {
+        "snowflake": "WH.RAW.STOCK",
+        "matched": 4,
+        "of": 4,
+        "missing": [],
+        "score": 1.0,
+        "row_count": 64118,
+        "basis": "columns"
+      },
+      {
+        "snowflake": "ANALYTICS.RAW.STOCK",
+        "basis": "naming"
+      }
+    ]
+  },
+  {
+    "id": "Q2",
+    "kind": "macro",
+    "tool_id": "2",
+    "annotation": "Clean SKU codes, drop empty stock",
+    "format": null,
+    "source": "Supporting_Macros/clean_codes.yxmc",
+    "key": "Supporting_Macros/clean_codes.yxmc",
+    "fields": [],
+    "field_source": null,
+    "record_count": null,
+    "query": null,
+    "table": null,
+    "write_mode": null,
+    "keys": [],
+    "pre_sql": null,
+    "post_sql": null,
+    "blocking": false,
+    "resolved": null,
+    "candidates": []
+  },
+  {
+    "id": "Q3",
+    "kind": "output",
+    "tool_id": "6",
+    "annotation": "inventory_by_wh.yxdb",
+    "format": "yxdb",
+    "source": "C:\\data\\out\\inventory_by_wh.yxdb",
+    "key": "out/inventory_by_wh.yxdb",
+    "fields": [
+      "SKU",
+      "FAMILY",
+      "EAST",
+      "NORTH",
+      "WEST"
+    ],
+    "field_source": "meta",
+    "record_count": null,
+    "query": null,
+    "table": null,
+    "write_mode": "overwrite",
+    "keys": [],
+    "pre_sql": null,
+    "post_sql": null,
+    "blocking": true,
+    "resolved": null,
+    "candidates": [
+      {
+        "snowflake": "ANALYTICS.CURATED.INVENTORY_BY_WH",
+        "basis": "naming"
+      }
+    ]
+  },
+  {
+    "id": "Q4",
+    "kind": "output",
+    "tool_id": "7",
+    "annotation": "inventory_long.yxdb",
+    "format": "yxdb",
+    "source": "C:\\data\\out\\inventory_long.yxdb",
+    "key": "out/inventory_long.yxdb",
+    "fields": [
+      "SKU",
+      "Name",
+      "Value"
+    ],
+    "field_source": "meta",
+    "record_count": null,
+    "query": null,
+    "table": null,
+    "write_mode": "overwrite",
+    "keys": [],
+    "pre_sql": null,
+    "post_sql": null,
+    "blocking": true,
+    "resolved": null,
+    "candidates": [
+      {
+        "snowflake": "ANALYTICS.CURATED.INVENTORY_LONG",
+        "basis": "naming"
+      }
+    ]
+  }
+]

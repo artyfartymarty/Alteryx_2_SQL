@@ -1,0 +1,20 @@
+{
+  "tool": "transpose",
+  "inputs": {
+    "1": "input.csv"
+  },
+  "node": {
+    "tool_id": "2",
+    "type": "transpose",
+    "config": {
+      "key_fields": ["SKU"],
+      "data_fields": ["EAST", "WEST"]
+    }
+  },
+  "edges": [
+    ["1", "Output", "2", "Input"]
+  ],
+  "compare": [
+    { "stream": "2_Output", "sql": "query.sql", "keys": [] }
+  ]
+}

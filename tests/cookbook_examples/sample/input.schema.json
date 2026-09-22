@@ -1,0 +1,20 @@
+[
+  {
+    "name": "GRP",
+    "type": "V_String",
+    "size": 5,
+    "scale": null
+  },
+  {
+    "name": "VAL",
+    "type": "Int32",
+    "size": 4,
+    "scale": null
+  },
+  {
+    "name": "SEQ",
+    "type": "Int32",
+    "size": 4,
+    "scale": null
+  }
+]

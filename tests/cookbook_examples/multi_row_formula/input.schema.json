@@ -1,0 +1,20 @@
+[
+  {
+    "name": "ACCT",
+    "type": "V_String",
+    "size": 10,
+    "scale": null
+  },
+  {
+    "name": "AMT",
+    "type": "Double",
+    "size": 8,
+    "scale": null
+  },
+  {
+    "name": "SEQ",
+    "type": "Int32",
+    "size": 4,
+    "scale": null
+  }
+]

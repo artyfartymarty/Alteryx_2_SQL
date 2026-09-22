@@ -1,0 +1,25 @@
+# Program-wide answers. The intake agent reads this first and only asks about what is missing.
+program:
+  target_database: ANALYTICS
+  target_schema: CURATED
+  work_schema: MIG_WORK
+  golden_schema: MIG_GOLDEN
+  raw_schema: RAW
+  warehouse: MIG_WH
+  owner_role: MIGRATION_ROLE
+  execute_as: CALLER           # procedures set session parameters (TIMEZONE, WEEK_START); owner's-rights procedures restrict that. Verify on your Snowflake account.
+  column_name_policy: sanitize # sanitize -> UPPER_SNAKE; quote -> keep Alteryx names quoted
+session:
+  TIMEZONE: America/New_York   # Alteryx DateTimeNow() used the server's local zone
+  WEEK_START: 1
+tolerances:
+  float_abs: 1e-6
+  float_rel: 1e-9
+  timestamp_precision: milliseconds
+  rounding:
+    abs: 0.01
+accepted_diff_classes: [ROUNDING, ORDERING]   # anything else is a FAIL until a human accepts it
+
+# Reusable source mappings, keyed by normalized Alteryx source (lower-case, share prefix stripped) or alias.
+sources: {}
+outputs: {}

@@ -1,0 +1,762 @@
+{
+  "workflow": "wf_0004",
+  "yxmd_version": "2023.1",
+  "engine": "E1",
+  "constants": {},
+  "file_kind": "yxmd",
+  "source_file": "inventory.yxmd",
+  "nodes": [
+    {
+      "tool_id": "1",
+      "type": "input",
+      "plugin": "AlteryxBasePluginsGui.DbFileInput.DbFileInput",
+      "container_id": null,
+      "config": {
+        "source": "C:\\data\\wh\\stock.yxdb",
+        "format": "yxdb",
+        "query": null,
+        "alias": null,
+        "csv": null,
+        "record_limit": null
+      },
+      "raw_config": "<Configuration>\n          <Passwords />\n          <File OutputFileName=\"\" RecordLimit=\"\" SearchSubDirs=\"False\" FileFormat=\"19\">C:\\data\\wh\\stock.yxdb</File>\n          <FormatSpecificOptions />\n        </Configuration>",
+      "annotation": "Warehouse stock",
+      "in_anchors": [],
+      "out_anchors": [
+        "Output"
+      ],
+      "meta": {
+        "Output": [
+          {
+            "name": "SKU",
+            "type": "V_String",
+            "size": 30,
+            "scale": null
+          },
+          {
+            "name": "WAREHOUSE",
+            "type": "V_String",
+            "size": 10,
+            "scale": null
+          },
+          {
+            "name": "QTY",
+            "type": "Int32",
+            "size": 4,
+            "scale": null
+          },
+          {
+            "name": "NOTE",
+            "type": "V_String",
+            "size": 100,
+            "scale": null
+          }
+        ]
+      }
+    },
+    {
+      "tool_id": "2",
+      "type": "macro",
+      "plugin": null,
+      "container_id": null,
+      "config": {
+        "values": {
+          "MinQty": "1"
+        }
+      },
+      "raw_config": "<Configuration>\n          <Value name=\"MinQty\">1</Value>\n        </Configuration>",
+      "annotation": "Clean SKU codes, drop empty stock",
+      "in_anchors": [
+        "Input1"
+      ],
+      "out_anchors": [
+        "Output5"
+      ],
+      "meta": {
+        "Output5": [
+          {
+            "name": "SKU",
+            "type": "V_String",
+            "size": 30,
+            "scale": null
+          },
+          {
+            "name": "WAREHOUSE",
+            "type": "V_String",
+            "size": 10,
+            "scale": null
+          },
+          {
+            "name": "QTY",
+            "type": "Int32",
+            "size": 4,
+            "scale": null
+          },
+          {
+            "name": "NOTE",
+            "type": "V_String",
+            "size": 100,
+            "scale": null
+          }
+        ]
+      },
+      "macro_path": "Supporting_Macros/clean_codes.yxmc",
+      "sub_dag": {
+        "workflow": "clean_codes",
+        "yxmd_version": "2023.1",
+        "engine": "E1",
+        "constants": {},
+        "file_kind": "yxmc",
+        "source_file": "clean_codes.yxmc",
+        "nodes": [
+          {
+            "tool_id": "1",
+            "type": "macro_input",
+            "plugin": "AlteryxBasePluginsGui.MacroInput.MacroInput",
+            "container_id": null,
+            "config": {},
+            "raw_config": "<Configuration>\n          <Name>Input</Name>\n          <AbbrevName>Input</AbbrevName>\n          <TextName>Input</TextName>\n          <Optional value=\"False\" />\n          <ShowFieldMap value=\"False\" />\n        </Configuration>",
+            "annotation": "Stock rows",
+            "in_anchors": [],
+            "out_anchors": [
+              "Output"
+            ],
+            "meta": {
+              "Output": [
+                {
+                  "name": "SKU",
+                  "type": "V_String",
+                  "size": 30,
+                  "scale": null
+                },
+                {
+                  "name": "WAREHOUSE",
+                  "type": "V_String",
+                  "size": 10,
+                  "scale": null
+                },
+                {
+                  "name": "QTY",
+                  "type": "Int32",
+                  "size": 4,
+                  "scale": null
+                },
+                {
+                  "name": "NOTE",
+                  "type": "V_String",
+                  "size": 100,
+                  "scale": null
+                }
+              ]
+            }
+          },
+          {
+            "tool_id": "2",
+            "type": "regex",
+            "plugin": "AlteryxBasePluginsGui.RegEx.RegEx",
+            "container_id": null,
+            "config": {
+              "field": "SKU",
+              "expression": "^\\s*([A-Za-z]+)[- ]?(\\d+)\\s*$",
+              "case_insensitive": true,
+              "method": "replace",
+              "replace": "$1-$2",
+              "copy_unmatched": true,
+              "output_fields": [],
+              "match_field": null
+            },
+            "raw_config": "<Configuration>\n          <Field>SKU</Field>\n          <RegExExpression value=\"^\\s*([A-Za-z]+)[- ]?(\\d+)\\s*$\" />\n          <CaseInsensitve value=\"True\" />\n          <Method>Replace</Method>\n          <Replace expression=\"$1-$2\">\n            <CopyUnmatched value=\"True\" />\n          </Replace>\n          <ErrorHandling>Ignore</ErrorHandling>\n        </Configuration>",
+            "annotation": "Normalise to FAMILY-NUMBER",
+            "in_anchors": [
+              "Input"
+            ],
+            "out_anchors": [
+              "Output"
+            ],
+            "meta": {
+              "Output": [
+                {
+                  "name": "SKU",
+                  "type": "V_String",
+                  "size": 30,
+                  "scale": null
+                },
+                {
+                  "name": "WAREHOUSE",
+                  "type": "V_String",
+                  "size": 10,
+                  "scale": null
+                },
+                {
+                  "name": "QTY",
+                  "type": "Int32",
+                  "size": 4,
+                  "scale": null
+                },
+                {
+                  "name": "NOTE",
+                  "type": "V_String",
+                  "size": 100,
+                  "scale": null
+                }
+              ]
+            }
+          },
+          {
+            "tool_id": "3",
+            "type": "formula",
+            "plugin": "AlteryxBasePluginsGui.Formula.Formula",
+            "container_id": null,
+            "config": {
+              "formulas": [
+                {
+                  "field": "SKU",
+                  "expression": "Uppercase([SKU])",
+                  "type": "V_String",
+                  "size": 30
+                }
+              ]
+            },
+            "raw_config": "<Configuration>\n          <FormulaFields>\n            <FormulaField expression=\"Uppercase([SKU])\" field=\"SKU\" size=\"30\" type=\"V_String\" />\n          </FormulaFields>\n        </Configuration>",
+            "annotation": "Upper-case the code",
+            "in_anchors": [
+              "Input"
+            ],
+            "out_anchors": [
+              "Output"
+            ],
+            "meta": {
+              "Output": [
+                {
+                  "name": "SKU",
+                  "type": "V_String",
+                  "size": 30,
+                  "scale": null
+                },
+                {
+                  "name": "WAREHOUSE",
+                  "type": "V_String",
+                  "size": 10,
+                  "scale": null
+                },
+                {
+                  "name": "QTY",
+                  "type": "Int32",
+                  "size": 4,
+                  "scale": null
+                },
+                {
+                  "name": "NOTE",
+                  "type": "V_String",
+                  "size": 100,
+                  "scale": null
+                }
+              ]
+            }
+          },
+          {
+            "tool_id": "4",
+            "type": "filter",
+            "plugin": "AlteryxBasePluginsGui.Filter.Filter",
+            "container_id": null,
+            "config": {
+              "expression": "[QTY] >= [%Question.MinQty%]"
+            },
+            "raw_config": "<Configuration>\n          <Expression>[QTY] &gt;= [%Question.MinQty%]</Expression>\n          <Mode>Custom</Mode>\n        </Configuration>",
+            "annotation": "Drop stock below MinQty",
+            "in_anchors": [
+              "Input"
+            ],
+            "out_anchors": [
+              "T",
+              "F"
+            ],
+            "meta": {
+              "T": [
+                {
+                  "name": "SKU",
+                  "type": "V_String",
+                  "size": 30,
+                  "scale": null
+                },
+                {
+                  "name": "WAREHOUSE",
+                  "type": "V_String",
+                  "size": 10,
+                  "scale": null
+                },
+                {
+                  "name": "QTY",
+                  "type": "Int32",
+                  "size": 4,
+                  "scale": null
+                },
+                {
+                  "name": "NOTE",
+                  "type": "V_String",
+                  "size": 100,
+                  "scale": null
+                }
+              ],
+              "F": [
+                {
+                  "name": "SKU",
+                  "type": "V_String",
+                  "size": 30,
+                  "scale": null
+                },
+                {
+                  "name": "WAREHOUSE",
+                  "type": "V_String",
+                  "size": 10,
+                  "scale": null
+                },
+                {
+                  "name": "QTY",
+                  "type": "Int32",
+                  "size": 4,
+                  "scale": null
+                },
+                {
+                  "name": "NOTE",
+                  "type": "V_String",
+                  "size": 100,
+                  "scale": null
+                }
+              ]
+            }
+          },
+          {
+            "tool_id": "5",
+            "type": "macro_output",
+            "plugin": "AlteryxBasePluginsGui.MacroOutput.MacroOutput",
+            "container_id": null,
+            "config": {},
+            "raw_config": "<Configuration>\n          <Name>Output</Name>\n          <AbbrevName>Output</AbbrevName>\n          <TextName>Output</TextName>\n        </Configuration>",
+            "annotation": "Cleaned stock rows",
+            "in_anchors": [
+              "Input"
+            ],
+            "out_anchors": [],
+            "meta": {
+              "Output": [
+                {
+                  "name": "SKU",
+                  "type": "V_String",
+                  "size": 30,
+                  "scale": null
+                },
+                {
+                  "name": "WAREHOUSE",
+                  "type": "V_String",
+                  "size": 10,
+                  "scale": null
+                },
+                {
+                  "name": "QTY",
+                  "type": "Int32",
+                  "size": 4,
+                  "scale": null
+                },
+                {
+                  "name": "NOTE",
+                  "type": "V_String",
+                  "size": 100,
+                  "scale": null
+                }
+              ]
+            }
+          },
+          {
+            "tool_id": "10",
+            "type": "interface",
+            "plugin": "AlteryxGuiToolkit.Questions.NumericUpDown.NumericUpDown",
+            "container_id": null,
+            "config": {
+              "name": "MinQty",
+              "type": "NumericUpDown",
+              "default": "0"
+            },
+            "raw_config": "<Configuration>\n          <Question>\n            <Type>NumericUpDown</Type>\n            <Description>Minimum quantity to keep</Description>\n            <Name>MinQty</Name>\n            <ToolId value=\"10\" />\n          </Question>\n          <Default>0</Default>\n          <Min>0</Min>\n          <Max>1000000</Max>\n          <Step>1</Step>\n        </Configuration>",
+            "annotation": "MinQty",
+            "in_anchors": [],
+            "out_anchors": [],
+            "meta": {}
+          }
+        ],
+        "edges": [
+          {
+            "src": "1",
+            "src_anchor": "Output",
+            "dst": "2",
+            "dst_anchor": "Input",
+            "dst_order": 1,
+            "wireless": false
+          },
+          {
+            "src": "2",
+            "src_anchor": "Output",
+            "dst": "3",
+            "dst_anchor": "Input",
+            "dst_order": 1,
+            "wireless": false
+          },
+          {
+            "src": "3",
+            "src_anchor": "Output",
+            "dst": "4",
+            "dst_anchor": "Input",
+            "dst_order": 1,
+            "wireless": false
+          },
+          {
+            "src": "4",
+            "src_anchor": "T",
+            "dst": "5",
+            "dst_anchor": "Input",
+            "dst_order": 1,
+            "wireless": false
+          }
+        ]
+      },
+      "unresolved": false,
+      "interface": [
+        {
+          "name": "MinQty",
+          "type": "NumericUpDown",
+          "default": "0"
+        }
+      ]
+    },
+    {
+      "tool_id": "3",
+      "type": "regex",
+      "plugin": "AlteryxBasePluginsGui.RegEx.RegEx",
+      "container_id": null,
+      "config": {
+        "field": "SKU",
+        "expression": "^([A-Z]+)-(\\d+)$",
+        "case_insensitive": false,
+        "method": "parse",
+        "replace": null,
+        "copy_unmatched": false,
+        "output_fields": [
+          {
+            "name": "FAMILY",
+            "type": "V_String",
+            "size": 20
+          },
+          {
+            "name": "ITEM_NO",
+            "type": "V_String",
+            "size": 10
+          }
+        ],
+        "match_field": null
+      },
+      "raw_config": "<Configuration>\n          <Field>SKU</Field>\n          <RegExExpression value=\"^([A-Z]+)-(\\d+)$\" />\n          <CaseInsensitve value=\"False\" />\n          <Method>Parse</Method>\n          <ParseFields>\n            <Field field=\"FAMILY\" type=\"V_String\" size=\"20\" />\n            <Field field=\"ITEM_NO\" type=\"V_String\" size=\"10\" />\n          </ParseFields>\n          <ErrorHandling>Ignore</ErrorHandling>\n        </Configuration>",
+      "annotation": "Split SKU into family and item",
+      "in_anchors": [
+        "Input"
+      ],
+      "out_anchors": [
+        "Output"
+      ],
+      "meta": {
+        "Output": [
+          {
+            "name": "SKU",
+            "type": "V_String",
+            "size": 30,
+            "scale": null
+          },
+          {
+            "name": "WAREHOUSE",
+            "type": "V_String",
+            "size": 10,
+            "scale": null
+          },
+          {
+            "name": "QTY",
+            "type": "Int32",
+            "size": 4,
+            "scale": null
+          },
+          {
+            "name": "NOTE",
+            "type": "V_String",
+            "size": 100,
+            "scale": null
+          },
+          {
+            "name": "FAMILY",
+            "type": "V_String",
+            "size": 20,
+            "scale": null
+          },
+          {
+            "name": "ITEM_NO",
+            "type": "V_String",
+            "size": 10,
+            "scale": null
+          }
+        ]
+      }
+    },
+    {
+      "tool_id": "4",
+      "type": "cross_tab",
+      "plugin": "AlteryxBasePluginsGui.CrossTab.CrossTab",
+      "container_id": null,
+      "config": {
+        "group_by": [
+          "SKU",
+          "FAMILY"
+        ],
+        "header_field": "WAREHOUSE",
+        "data_field": "QTY",
+        "methods": [
+          "Sum"
+        ]
+      },
+      "raw_config": "<Configuration>\n          <GroupFields>\n            <Field field=\"SKU\" />\n            <Field field=\"FAMILY\" />\n          </GroupFields>\n          <HeaderField field=\"WAREHOUSE\" />\n          <DataField field=\"QTY\" />\n          <Methods>\n            <Method method=\"Sum\" />\n          </Methods>\n        </Configuration>",
+      "annotation": "Quantity per warehouse",
+      "in_anchors": [
+        "Input"
+      ],
+      "out_anchors": [
+        "Output"
+      ],
+      "meta": {
+        "Output": [
+          {
+            "name": "SKU",
+            "type": "V_String",
+            "size": 30,
+            "scale": null
+          },
+          {
+            "name": "FAMILY",
+            "type": "V_String",
+            "size": 20,
+            "scale": null
+          },
+          {
+            "name": "EAST",
+            "type": "Double",
+            "size": 8,
+            "scale": null
+          },
+          {
+            "name": "NORTH",
+            "type": "Double",
+            "size": 8,
+            "scale": null
+          },
+          {
+            "name": "WEST",
+            "type": "Double",
+            "size": 8,
+            "scale": null
+          }
+        ]
+      }
+    },
+    {
+      "tool_id": "5",
+      "type": "transpose",
+      "plugin": "AlteryxBasePluginsGui.Transpose.Transpose",
+      "container_id": null,
+      "config": {
+        "key_fields": [
+          "SKU"
+        ],
+        "data_fields": [
+          "EAST",
+          "NORTH",
+          "WEST"
+        ]
+      },
+      "raw_config": "<Configuration>\n          <KeyFields>\n            <Field field=\"SKU\" />\n          </KeyFields>\n          <DataFields>\n            <Field field=\"EAST\" selected=\"True\" />\n            <Field field=\"NORTH\" selected=\"True\" />\n            <Field field=\"WEST\" selected=\"True\" />\n          </DataFields>\n        </Configuration>",
+      "annotation": "Back to one row per warehouse",
+      "in_anchors": [
+        "Input"
+      ],
+      "out_anchors": [
+        "Output"
+      ],
+      "meta": {
+        "Output": [
+          {
+            "name": "SKU",
+            "type": "V_String",
+            "size": 30,
+            "scale": null
+          },
+          {
+            "name": "Name",
+            "type": "V_String",
+            "size": 255,
+            "scale": null
+          },
+          {
+            "name": "Value",
+            "type": "Double",
+            "size": 8,
+            "scale": null
+          }
+        ]
+      }
+    },
+    {
+      "tool_id": "6",
+      "type": "output",
+      "plugin": "AlteryxBasePluginsGui.DbFileOutput.DbFileOutput",
+      "container_id": null,
+      "config": {
+        "source": "C:\\data\\out\\inventory_by_wh.yxdb",
+        "format": "yxdb",
+        "alias": null,
+        "table": null,
+        "write_mode": "overwrite",
+        "keys": [],
+        "pre_sql": null,
+        "post_sql": null
+      },
+      "raw_config": "<Configuration>\n          <Passwords />\n          <File MaxRecords=\"\" FileFormat=\"19\">C:\\data\\out\\inventory_by_wh.yxdb</File>\n          <FormatSpecificOptions>\n            <OutputOption>Overwrite</OutputOption>\n          </FormatSpecificOptions>\n          <MultiFile value=\"False\" />\n        </Configuration>",
+      "annotation": "inventory_by_wh.yxdb",
+      "in_anchors": [
+        "Input"
+      ],
+      "out_anchors": [],
+      "meta": {
+        "Output": [
+          {
+            "name": "SKU",
+            "type": "V_String",
+            "size": 30,
+            "scale": null
+          },
+          {
+            "name": "FAMILY",
+            "type": "V_String",
+            "size": 20,
+            "scale": null
+          },
+          {
+            "name": "EAST",
+            "type": "Double",
+            "size": 8,
+            "scale": null
+          },
+          {
+            "name": "NORTH",
+            "type": "Double",
+            "size": 8,
+            "scale": null
+          },
+          {
+            "name": "WEST",
+            "type": "Double",
+            "size": 8,
+            "scale": null
+          }
+        ]
+      }
+    },
+    {
+      "tool_id": "7",
+      "type": "output",
+      "plugin": "AlteryxBasePluginsGui.DbFileOutput.DbFileOutput",
+      "container_id": null,
+      "config": {
+        "source": "C:\\data\\out\\inventory_long.yxdb",
+        "format": "yxdb",
+        "alias": null,
+        "table": null,
+        "write_mode": "overwrite",
+        "keys": [],
+        "pre_sql": null,
+        "post_sql": null
+      },
+      "raw_config": "<Configuration>\n          <Passwords />\n          <File MaxRecords=\"\" FileFormat=\"19\">C:\\data\\out\\inventory_long.yxdb</File>\n          <FormatSpecificOptions>\n            <OutputOption>Overwrite</OutputOption>\n          </FormatSpecificOptions>\n          <MultiFile value=\"False\" />\n        </Configuration>",
+      "annotation": "inventory_long.yxdb",
+      "in_anchors": [
+        "Input"
+      ],
+      "out_anchors": [],
+      "meta": {
+        "Output": [
+          {
+            "name": "SKU",
+            "type": "V_String",
+            "size": 30,
+            "scale": null
+          },
+          {
+            "name": "Name",
+            "type": "V_String",
+            "size": 255,
+            "scale": null
+          },
+          {
+            "name": "Value",
+            "type": "Double",
+            "size": 8,
+            "scale": null
+          }
+        ]
+      }
+    }
+  ],
+  "edges": [
+    {
+      "src": "1",
+      "src_anchor": "Output",
+      "dst": "2",
+      "dst_anchor": "Input1",
+      "dst_order": 1,
+      "wireless": false
+    },
+    {
+      "src": "2",
+      "src_anchor": "Output5",
+      "dst": "3",
+      "dst_anchor": "Input",
+      "dst_order": 1,
+      "wireless": false
+    },
+    {
+      "src": "3",
+      "src_anchor": "Output",
+      "dst": "4",
+      "dst_anchor": "Input",
+      "dst_order": 1,
+      "wireless": false
+    },
+    {
+      "src": "4",
+      "src_anchor": "Output",
+      "dst": "5",
+      "dst_anchor": "Input",
+      "dst_order": 1,
+      "wireless": false
+    },
+    {
+      "src": "4",
+      "src_anchor": "Output",
+      "dst": "6",
+      "dst_anchor": "Input",
+      "dst_order": 1,
+      "wireless": false
+    },
+    {
+      "src": "5",
+      "src_anchor": "Output",
+      "dst": "7",
+      "dst_anchor": "Input",
+      "dst_order": 1,
+      "wireless": false
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "tool": "formula",
+  "inputs": {
+    "1": "input.csv"
+  },
+  "node": {
+    "tool_id": "2",
+    "type": "formula",
+    "config": {
+      "formulas": [
+        { "field": "AMOUNT", "expression": "ToNumber([AMOUNT_TXT])", "type": "Double", "size": 8 },
+        { "field": "NET", "expression": "Round([AMOUNT] * IIF([QTY] >= 10, 0.9, 1), 0.01)", "type": "Double", "size": 8 },
+        { "field": "SIZE_BAND", "expression": "IF [AMOUNT] >= 1000 THEN \"LARGE\" ELSEIF [AMOUNT] >= 100 THEN \"MEDIUM\" ELSE \"SMALL\" ENDIF", "type": "V_String", "size": 10 }
+      ]
+    }
+  },
+  "edges": [
+    ["1", "Output", "2", "Input"]
+  ],
+  "compare": [
+    { "stream": "2_Output", "sql": "query.sql", "keys": [] }
+  ]
+}

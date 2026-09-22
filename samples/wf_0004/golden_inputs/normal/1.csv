@@ -1,0 +1,15 @@
+SKU,WAREHOUSE,QTY,NOTE
+ab 12,EAST,5,space instead of a dash
+ AB-12 ,EAST,7,padded with spaces
+AB-12,WEST,2,already clean
+zz9,NORTH,3,no separator at all
+ZZ-9,NORTH,4,already clean
+zz9,EAST,1,"same sku, other warehouse"
+bad sku!,WEST,6,regex never matches this
+cd-100,WEST,0,zero qty
+cd-100,EAST,\N,unknown qty
+cd-100,NORTH,9,the only cd-100 that survives
+AB-12,NORTH,8,third warehouse
+ef-7,EAST,12,first of two
+ef-7,EAST,3,"second of two, same warehouse"
+GH 42,WEST,10,upper case with a space

@@ -1,0 +1,168 @@
+# wf_0003 — migration record
+
+Restates `parsed/dag.json`, `analysis.md`, `segments/*/translation_notes.md`,
+`segments/*/validation.json`, `intake/mappings.yaml` and `manifest.json`. It adds no claim about
+behaviour that those artifacts do not support, and it quotes no number about data: every count,
+diff and verdict lives in `segments/<seg>/validation*.json`, written by
+`scripts/validate_segment.py`.
+
+**Nothing in this migration has been run on a real Snowflake account or a real Alteryx engine.**
+"Validated" here means the translated procedure was executed on the local DuckDB double against
+golden data produced by `scripts/dev/alteryx_sim.py`, the project's stand-in for the Alteryx
+engine.
+
+## Overview
+
+| | |
+|---|---|
+| Workflow | `wf_0003` — GL period close |
+| Source | `gl_period_close.yxmd`, `yxmdVer 2023.1`, AMP engine |
+| Owner | `wf_owner` |
+| Schedule | `0 6 * * 1-5` (the Alteryx Server schedule recorded at parse time) |
+| Consumers | none recorded in `manifest.json` |
+| Tier | T1 — every tool has a SQL pattern |
+| Segments | `seg_01` (tools 1–3) then `seg_02` (tools 4–10), two waves |
+| Procedures | `MIG_WORK.WF0003_SEG_01(…)` and `MIG_WORK.WF0003_SEG_02(…)`, both `EXECUTE AS CALLER` |
+
+## Source mappings
+
+| Alteryx touchpoint | Logical name | Snowflake | Write mode | Confirmed by |
+|---|---|---|---|---|
+| ODBC alias `prod_fin`, query on `dbo.GL_LEDGER` (tool 1) | `GL_LEDGER` | `FINANCE.RAW.GL_LEDGER` | read | owner |
+| ODBC alias `prod_fin`, table `dbo.GL_SUMMARY` (tool 10) | `GL_SUMMARY` | `ANALYTICS.CURATED.GL_SUMMARY` | merge on `ACCT, PERIOD` | owner |
+
+Neither procedure names either of these tables. The source is read as
+`IDENTIFIER(:SRC_DB || '.' || :SRC_SCHEMA || '.GL_LEDGER')` and the target written as
+`IDENTIFIER(:TGT_DB || '.' || :TGT_SCHEMA || '.GL_SUMMARY')`, so the same body runs against the
+golden view schema in validation and against the real schema in production. The connection
+string's user id and password were removed by the parser's scrubber and appear nowhere under
+`workflows/`.
+
+Two workflow constants are resolved at translation time, because Snowflake has no equivalent:
+`User.Region` = `EMEA` in tool 2's filter and `User.PeriodEnd` = `2026-08-31` in tool 8's formula.
+Both are recorded under `constants:` in `intake/mappings.yaml`. A run for another region or
+period needs a re-translation, not a new argument — that is a real loss of flexibility against
+the Alteryx workflow and is listed under Open items.
+
+## Tool → CTE map
+
+| Tool | Type | Segment | CTE |
+|------|------|---------|-----|
+| 1 | `input` | `seg_01` | `t1_input` |
+| 2 | `filter` | `seg_01` | `t2_filter_t` (True anchor; the False anchor is not wired) |
+| 3 | `datetime` | `seg_01` | `t3_datetime` |
+| 4 | `sort` | `seg_02` | `t4_sort` |
+| 5 | `unique` | `seg_02` | `t5_unique_u` (Unique anchor; the Duplicates anchor is not wired) |
+| 6 | `multi_row_formula` | `seg_02` | `t6_multi_row_formula` |
+| 7 | `record_id` | `seg_02` | `t7_record_id` |
+| 8 | `formula` | `seg_02` | `t8_formula` |
+| 9 | `summarize` | `seg_02` | `t9_summarize` |
+| 10 | `output` | `seg_02` | no CTE — the three statements (PreSQL `DELETE`, the `MERGE` whose `USING` subquery ends at `t9_summarize`, PostSQL `UPDATE`) that stand in for one Alteryx tool |
+| 100, 200 | `container` | — | Tool Containers carry no data |
+
+`seg_01` writes the transient work table `MIG_WORK.WF0003_SEG_01_OUT`; `seg_02` reads it by that
+literal name, as contract C4 requires for a table that is neither a mapped source nor a mapped
+target.
+
+## Assumptions
+
+Every assumption is listed one per line in each segment's `translation_notes.md`. The ones a
+reader of this document should know about:
+
+- The Sort at tool 4 is what gives tools 5, 6, 7 and 9 their meaning, so its three keys are
+  repeated in every window's `ORDER BY` rather than taken from the preceding CTE: a CTE's row
+  order is not a promise in either dialect.
+- `Last` has no ordered aggregate in either dialect. It is translated as `MAX_BY(RUN_BAL,
+  RECORD_ID)`, which equals Alteryx's `Last` because `RECORD_ID` is a row number — unique, so its
+  maximum inside a group is that group's last row. It would stop matching if the last row's value
+  were NULL; `RUN_BAL` is a running total of a `NOT NULL` column, so that does not arise here.
+- The running balance is summed over the exact `NUMBER` amounts and cast to `FLOAT` once, where
+  the model converts to a binary double on every row and reads the previous row's double back.
+  The two agree for every amount in the golden sets; a running total long enough to lose a
+  double's precision would not.
+- `CREATE OR REPLACE TRANSIENT TABLE … AS` takes its column types from the expressions that
+  produced them and does not enforce the `VARCHAR(n)`/`NUMBER(p,s)` widths the contract declares.
+  The declared widths are the Alteryx field widths and nothing checks them locally.
+- `MERGE`, `QUALIFY`, `MAX_BY`, `TO_CHAR(<timestamp>, fmt)` and `TRY_TO_TIMESTAMP_NTZ(x, fmt)` are
+  all documented Snowflake SQL and all run on the local DuckDB double; none of them has been
+  executed on a Snowflake account. The `WHEN MATCHED THEN UPDATE SET` list is written unqualified,
+  which both accept, where the local runtime rejects the qualified form.
+- The Snowflake multiplication rule — scale `min(S1 + S2, max(S1, S2, 12))`, not the local
+  runtime's `S1 + S2` — is not reached by either segment: nothing in this workflow multiplies.
+  Both segments only add `NUMBER(19,2)` values, where the two rules agree.
+- `seg_01`'s work stream declares no keys, so its comparison is a row multiset: exact about
+  whether the rows match; a difference is attributed to a column by nearest-match pairing, which
+  is a heuristic. `seg_02`'s target is keyed on the Output tool's own update keys, so its
+  comparison can name the column behind a difference outright.
+
+## Accepted differences
+
+None. `mappings/global.yaml` accepts the classes `ROUNDING` and `ORDERING` in principle, but
+`manifest.accepted_diffs` is empty for this workflow and no cluster has been approved, so a
+difference of any class would be a `FAIL`.
+
+## Unsupported / manual items
+
+None. `unsupported.json` is `{"tier": "T1", "unsupported": [], "unknown": []}`; no tool needs
+Snowpark and none needs a human rewrite.
+
+## Validation summary
+
+`scripts/validate_segment.py wf_0003 <seg>` compares every entry of `contract.outputs[]` against
+its golden file for each golden set and writes the verdicts to
+`segments/<seg>/validation.<set>.json`, with the segment-level report in
+`segments/<seg>/validation.json`. Read the verdicts, counts and any diff clusters there — this
+document does not restate them, because a number about data may come only from a script.
+
+The golden sets exercised are the four `manifest.golden_sets` names: `normal`, `period_end`,
+`empty` and `edge`. Idempotency is checked by running the procedure twice from the same starting
+state in two fresh sandboxes and comparing the outputs as row multisets; for `seg_02` that
+starting state includes `golden/targets_before/<set>/GL_SUMMARY.csv`, because an
+`Update; Insert if new` write merges into whatever the target already holds.
+
+Deliberately broken copies of both procedures live in `samples/wf_0003/broken_sql/`, each with one
+realistic translator mistake and a `broken.json` row naming the diff class the validator reports
+for it. They exist so the comparison itself stays honest.
+
+## Runbook
+
+1. Deploy `MIG_WORK.WF0003_SEG_01` and `MIG_WORK.WF0003_SEG_02` from each segment's `proc.sql`.
+2. Load or refresh the golden inputs if running against the sandbox:
+   `python scripts/load_golden.py wf_0003 <set>`. That also loads
+   `golden/targets_before/<set>/GL_SUMMARY.csv` into `MIG_WORK.GL_SUMMARY`, the prior state the
+   merge needs.
+3. Call the two procedures **in order**, `seg_01` before `seg_02` — they are two waves, not one —
+   each with the four schema arguments and a run id:
+   `CALL MIG_WORK.WF0003_SEG_01('<SRC_DB>', '<SRC_SCHEMA>', '<TGT_DB>', '<TGT_SCHEMA>', '<RUN_ID>')`.
+   In validation `SRC_SCHEMA` is the golden view schema `MIG_GOLDEN_WF0003_<SET>`; in production it
+   is the schema that exposes `GL_LEDGER` under that logical name.
+4. Each procedure sets `TIMEZONE` and `WEEK_START` itself, which is why contract C4 requires
+   `EXECUTE AS CALLER`: an owner's-rights procedure cannot `ALTER SESSION`.
+5. Check parity: `python scripts/validate_segment.py wf_0003 seg_01` and then `… seg_02`. Exit 0
+   is a pass, 1 a domain failure, 2 a usage error.
+6. Rollback. `seg_01` only replaces its own transient work table, so there is nothing to undo
+   there. `seg_02` is **not** a wholesale replacement: its PreSQL deletes `PERIOD < '2020-01'`,
+   its MERGE updates and inserts, and its PostSQL rewrites NULL `LOADED_FLAG` values, all against
+   the live target. Restore `GL_SUMMARY` with Snowflake Time Travel
+   (`CREATE OR REPLACE TABLE … CLONE … BEFORE (STATEMENT => …)`) before re-running, or re-run the
+   Alteryx workflow against a restored target — re-running the procedure alone does not undo the
+   delete.
+
+## Open items
+
+- No step of this migration has run against a real Snowflake account or a real Alteryx engine.
+  Every rule the translation relies on is an assumption recorded in
+  `docs/reference/simulator-semantics.md`, to be checked one by one when an engine is available.
+- The exact-decimal arithmetic the oracle uses is a deliberate simplification and is the single
+  largest known parity risk in the project; see that document's §1.1.
+- Both workflow constants are baked into the procedure text. If the owner needs to run this for a
+  different region or period end, the right change is to turn them into procedure parameters,
+  which contract C4's fixed parameter list does not currently allow.
+- `seg_02` writes into a target with prior state and deletes part of it before writing. It is the
+  one segment in the samples whose rollback needs Time Travel rather than a re-run, and that
+  should be confirmed against the account's data-retention setting before the first production
+  run.
+- The Summarize's `Last` is not a `MAX`: the `normal` golden set carries an account/period group
+  whose running balance falls on its last row, so a translation that used `MAX(RUN_BAL)` fails
+  parity there (`broken_sql/seg_02/04_last_translated_as_max.sql` is that mistake). The rule
+  itself is in `docs/reference/simulator-semantics.md` §7.

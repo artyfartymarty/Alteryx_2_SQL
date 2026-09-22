@@ -1,0 +1,38 @@
+[
+  {
+    "name": "ACCT",
+    "type": "V_String",
+    "size": 20,
+    "scale": null
+  },
+  {
+    "name": "PERIOD",
+    "type": "V_String",
+    "size": 7,
+    "scale": null
+  },
+  {
+    "name": "POSTED",
+    "type": "V_String",
+    "size": 10,
+    "scale": null
+  },
+  {
+    "name": "AMOUNT",
+    "type": "FixedDecimal",
+    "size": 19,
+    "scale": 2
+  },
+  {
+    "name": "REGION",
+    "type": "V_String",
+    "size": 10,
+    "scale": null
+  },
+  {
+    "name": "ENTRY_ID",
+    "type": "Int64",
+    "size": 8,
+    "scale": null
+  }
+]

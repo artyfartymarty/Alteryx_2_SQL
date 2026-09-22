@@ -1,0 +1,21 @@
+{
+  "id": "wf_0002",
+  "title": "Customer orders fact load",
+  "owner": "wf_owner",
+  "schedule": "0 6 * * 1-5",
+  "segmentation": {
+    "min_tools": 2,
+    "max_tools": 40
+  },
+  "expected_terminal": "VALIDATED",
+  "answers": {
+    "crm/customers.yxdb": "CRM.RAW.CUSTOMERS",
+    "crm/orders_export.csv": "CRM.RAW.ORDERS_EXPORT",
+    "10": "ANALYTICS.CURATED.CUSTOMER_ORDER_FACT"
+  },
+  "logical": {
+    "1": "CUSTOMERS",
+    "3": "ORDERS_EXPORT",
+    "10": "CUSTOMER_ORDER_FACT"
+  }
+}

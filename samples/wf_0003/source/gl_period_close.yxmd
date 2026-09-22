@@ -1,0 +1,453 @@
+<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2023.1">
+  <Nodes>
+    <Node ToolID="100">
+      <GuiSettings Plugin="AlteryxGuiToolkit.ToolContainer.ToolContainer">
+        <Position x="30" y="30" width="358" height="132" />
+      </GuiSettings>
+      <Properties>
+        <Configuration>
+          <Caption>Extract</Caption>
+          <Style TextColor="#314c4a" FillColor="#ecf2f2" BorderColor="#314c4a" Transparency="25" Margin="25" />
+          <Disabled value="False" />
+          <Folded value="False" />
+        </Configuration>
+        <Annotation DisplayMode="0">
+          <Name />
+          <DefaultAnnotationText />
+        </Annotation>
+      </Properties>
+      <ChildNodes>
+        <Node ToolID="1">
+          <GuiSettings Plugin="AlteryxBasePluginsGui.DbFileInput.DbFileInput">
+            <Position x="54" y="66" />
+          </GuiSettings>
+          <Properties>
+            <Configuration>
+              <Passwords />
+              <File OutputFileName="" RecordLimit="" SearchSubDirs="False" FileFormat="23">odbc:DSN=PROD_FIN;UID=svc_alx;PWD=__EncPwd2__|||<![CDATA[SELECT ACCT, PERIOD, POSTED, AMOUNT, REGION, ENTRY_ID FROM dbo.GL_LEDGER WHERE AMOUNT <> 0]]></File>
+              <FormatSpecificOptions>
+                <ODBCVersion>3</ODBCVersion>
+              </FormatSpecificOptions>
+            </Configuration>
+            <Annotation DisplayMode="0">
+              <Name />
+              <DefaultAnnotationText>GL ledger extract</DefaultAnnotationText>
+            </Annotation>
+            <MetaInfo connection="Output">
+              <RecordInfo>
+                <Field name="ACCT" type="V_String" size="20" source="ODBC: PROD_FIN" />
+                <Field name="PERIOD" type="V_String" size="7" source="ODBC: PROD_FIN" />
+                <Field name="POSTED" type="V_String" size="10" source="ODBC: PROD_FIN" />
+                <Field name="AMOUNT" type="FixedDecimal" size="19" scale="2" source="ODBC: PROD_FIN" />
+                <Field name="REGION" type="V_String" size="10" source="ODBC: PROD_FIN" />
+                <Field name="ENTRY_ID" type="Int64" size="8" source="ODBC: PROD_FIN" />
+              </RecordInfo>
+            </MetaInfo>
+          </Properties>
+          <EngineSettings EngineDll="AlteryxBasePluginsEngine.dll" EngineDllEntryPoint="AlteryxDbFileInput" />
+        </Node>
+        <Node ToolID="2">
+          <GuiSettings Plugin="AlteryxBasePluginsGui.Filter.Filter">
+            <Position x="162" y="66" />
+          </GuiSettings>
+          <Properties>
+            <Configuration>
+              <Expression>[REGION] = [User.Region]</Expression>
+              <Mode>Custom</Mode>
+            </Configuration>
+            <Annotation DisplayMode="0">
+              <Name />
+              <DefaultAnnotationText>Keep the run's region</DefaultAnnotationText>
+            </Annotation>
+            <MetaInfo connection="True">
+              <RecordInfo>
+                <Field name="ACCT" type="V_String" size="20" source="ODBC: PROD_FIN" />
+                <Field name="PERIOD" type="V_String" size="7" source="ODBC: PROD_FIN" />
+                <Field name="POSTED" type="V_String" size="10" source="ODBC: PROD_FIN" />
+                <Field name="AMOUNT" type="FixedDecimal" size="19" scale="2" source="ODBC: PROD_FIN" />
+                <Field name="REGION" type="V_String" size="10" source="ODBC: PROD_FIN" />
+                <Field name="ENTRY_ID" type="Int64" size="8" source="ODBC: PROD_FIN" />
+              </RecordInfo>
+            </MetaInfo>
+            <MetaInfo connection="False">
+              <RecordInfo>
+                <Field name="ACCT" type="V_String" size="20" source="ODBC: PROD_FIN" />
+                <Field name="PERIOD" type="V_String" size="7" source="ODBC: PROD_FIN" />
+                <Field name="POSTED" type="V_String" size="10" source="ODBC: PROD_FIN" />
+                <Field name="AMOUNT" type="FixedDecimal" size="19" scale="2" source="ODBC: PROD_FIN" />
+                <Field name="REGION" type="V_String" size="10" source="ODBC: PROD_FIN" />
+                <Field name="ENTRY_ID" type="Int64" size="8" source="ODBC: PROD_FIN" />
+              </RecordInfo>
+            </MetaInfo>
+          </Properties>
+          <EngineSettings EngineDll="AlteryxBasePluginsEngine.dll" EngineDllEntryPoint="AlteryxFilter" />
+        </Node>
+        <Node ToolID="3">
+          <GuiSettings Plugin="AlteryxBasePluginsGui.DateTime.DateTime">
+            <Position x="270" y="66" />
+          </GuiSettings>
+          <Properties>
+            <Configuration>
+              <IsFrom value="False" />
+              <InputFieldName>POSTED</InputFieldName>
+              <Format>%d/%m/%Y</Format>
+              <OutputFieldName>POSTED_DT</OutputFieldName>
+              <Language>English</Language>
+            </Configuration>
+            <Annotation DisplayMode="0">
+              <Name />
+              <DefaultAnnotationText>POSTED is dd/mm/yyyy text</DefaultAnnotationText>
+            </Annotation>
+            <MetaInfo connection="Output">
+              <RecordInfo>
+                <Field name="ACCT" type="V_String" size="20" source="ODBC: PROD_FIN" />
+                <Field name="PERIOD" type="V_String" size="7" source="ODBC: PROD_FIN" />
+                <Field name="POSTED" type="V_String" size="10" source="ODBC: PROD_FIN" />
+                <Field name="AMOUNT" type="FixedDecimal" size="19" scale="2" source="ODBC: PROD_FIN" />
+                <Field name="REGION" type="V_String" size="10" source="ODBC: PROD_FIN" />
+                <Field name="ENTRY_ID" type="Int64" size="8" source="ODBC: PROD_FIN" />
+                <Field name="POSTED_DT" type="DateTime" size="19" source="DateTime: POSTED_DT" />
+              </RecordInfo>
+            </MetaInfo>
+          </Properties>
+          <EngineSettings EngineDll="AlteryxBasePluginsEngine.dll" EngineDllEntryPoint="AlteryxDateTime" />
+        </Node>
+      </ChildNodes>
+    </Node>
+    <Node ToolID="4">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.Sort.Sort">
+        <Position x="414" y="66" />
+      </GuiSettings>
+      <Properties>
+        <Configuration>
+          <SortInfo>
+            <Field field="ACCT" order="Ascending" />
+            <Field field="POSTED_DT" order="Ascending" />
+            <Field field="ENTRY_ID" order="Descending" />
+          </SortInfo>
+        </Configuration>
+        <Annotation DisplayMode="0">
+          <Name />
+          <DefaultAnnotationText>Latest entry per posting first</DefaultAnnotationText>
+        </Annotation>
+        <MetaInfo connection="Output">
+          <RecordInfo>
+            <Field name="ACCT" type="V_String" size="20" source="ODBC: PROD_FIN" />
+            <Field name="PERIOD" type="V_String" size="7" source="ODBC: PROD_FIN" />
+            <Field name="POSTED" type="V_String" size="10" source="ODBC: PROD_FIN" />
+            <Field name="AMOUNT" type="FixedDecimal" size="19" scale="2" source="ODBC: PROD_FIN" />
+            <Field name="REGION" type="V_String" size="10" source="ODBC: PROD_FIN" />
+            <Field name="ENTRY_ID" type="Int64" size="8" source="ODBC: PROD_FIN" />
+            <Field name="POSTED_DT" type="DateTime" size="19" source="DateTime: POSTED_DT" />
+          </RecordInfo>
+        </MetaInfo>
+      </Properties>
+      <EngineSettings EngineDll="AlteryxBasePluginsEngine.dll" EngineDllEntryPoint="AlteryxSort" />
+    </Node>
+    <Node ToolID="5">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.Unique.Unique">
+        <Position x="522" y="66" />
+      </GuiSettings>
+      <Properties>
+        <Configuration>
+          <UniqueFields>
+            <Field field="ACCT" />
+            <Field field="POSTED_DT" />
+          </UniqueFields>
+        </Configuration>
+        <Annotation DisplayMode="0">
+          <Name />
+          <DefaultAnnotationText>One entry per ACCT and day</DefaultAnnotationText>
+        </Annotation>
+        <MetaInfo connection="Unique">
+          <RecordInfo>
+            <Field name="ACCT" type="V_String" size="20" source="ODBC: PROD_FIN" />
+            <Field name="PERIOD" type="V_String" size="7" source="ODBC: PROD_FIN" />
+            <Field name="POSTED" type="V_String" size="10" source="ODBC: PROD_FIN" />
+            <Field name="AMOUNT" type="FixedDecimal" size="19" scale="2" source="ODBC: PROD_FIN" />
+            <Field name="REGION" type="V_String" size="10" source="ODBC: PROD_FIN" />
+            <Field name="ENTRY_ID" type="Int64" size="8" source="ODBC: PROD_FIN" />
+            <Field name="POSTED_DT" type="DateTime" size="19" source="DateTime: POSTED_DT" />
+          </RecordInfo>
+        </MetaInfo>
+        <MetaInfo connection="Duplicates">
+          <RecordInfo>
+            <Field name="ACCT" type="V_String" size="20" source="ODBC: PROD_FIN" />
+            <Field name="PERIOD" type="V_String" size="7" source="ODBC: PROD_FIN" />
+            <Field name="POSTED" type="V_String" size="10" source="ODBC: PROD_FIN" />
+            <Field name="AMOUNT" type="FixedDecimal" size="19" scale="2" source="ODBC: PROD_FIN" />
+            <Field name="REGION" type="V_String" size="10" source="ODBC: PROD_FIN" />
+            <Field name="ENTRY_ID" type="Int64" size="8" source="ODBC: PROD_FIN" />
+            <Field name="POSTED_DT" type="DateTime" size="19" source="DateTime: POSTED_DT" />
+          </RecordInfo>
+        </MetaInfo>
+      </Properties>
+      <EngineSettings EngineDll="AlteryxBasePluginsEngine.dll" EngineDllEntryPoint="AlteryxUnique" />
+    </Node>
+    <Node ToolID="6">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.MultiRowFormula.MultiRowFormula">
+        <Position x="630" y="66" />
+      </GuiSettings>
+      <Properties>
+        <Configuration>
+          <UpdateField value="False" />
+          <UpdateField_Name />
+          <CreateField_Name>RUN_BAL</CreateField_Name>
+          <CreateField_Type>Double</CreateField_Type>
+          <CreateField_Size>8</CreateField_Size>
+          <NumRows value="1" />
+          <OtherRows>0</OtherRows>
+          <GroupByFields>
+            <Field field="ACCT" />
+          </GroupByFields>
+          <Expression>[Row-1:RUN_BAL] + [AMOUNT]</Expression>
+        </Configuration>
+        <Annotation DisplayMode="0">
+          <Name />
+          <DefaultAnnotationText>Running balance per ACCT</DefaultAnnotationText>
+        </Annotation>
+        <MetaInfo connection="Output">
+          <RecordInfo>
+            <Field name="ACCT" type="V_String" size="20" source="ODBC: PROD_FIN" />
+            <Field name="PERIOD" type="V_String" size="7" source="ODBC: PROD_FIN" />
+            <Field name="POSTED" type="V_String" size="10" source="ODBC: PROD_FIN" />
+            <Field name="AMOUNT" type="FixedDecimal" size="19" scale="2" source="ODBC: PROD_FIN" />
+            <Field name="REGION" type="V_String" size="10" source="ODBC: PROD_FIN" />
+            <Field name="ENTRY_ID" type="Int64" size="8" source="ODBC: PROD_FIN" />
+            <Field name="POSTED_DT" type="DateTime" size="19" source="DateTime: POSTED_DT" />
+            <Field name="RUN_BAL" type="Double" size="8" source="MultiRowFormula: RUN_BAL" />
+          </RecordInfo>
+        </MetaInfo>
+      </Properties>
+      <EngineSettings EngineDll="AlteryxBasePluginsEngine.dll" EngineDllEntryPoint="AlteryxMultiRowFormula" />
+    </Node>
+    <Node ToolID="7">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.RecordID.RecordID">
+        <Position x="738" y="66" />
+      </GuiSettings>
+      <Properties>
+        <Configuration>
+          <FieldName>RecordID</FieldName>
+          <StartValue>1</StartValue>
+          <FieldType>Int32</FieldType>
+          <Position>0</Position>
+        </Configuration>
+        <Annotation DisplayMode="0">
+          <Name />
+          <DefaultAnnotationText>Number the closing rows</DefaultAnnotationText>
+        </Annotation>
+        <MetaInfo connection="Output">
+          <RecordInfo>
+            <Field name="RecordID" type="Int32" size="4" source="RecordID: RecordID" />
+            <Field name="ACCT" type="V_String" size="20" source="ODBC: PROD_FIN" />
+            <Field name="PERIOD" type="V_String" size="7" source="ODBC: PROD_FIN" />
+            <Field name="POSTED" type="V_String" size="10" source="ODBC: PROD_FIN" />
+            <Field name="AMOUNT" type="FixedDecimal" size="19" scale="2" source="ODBC: PROD_FIN" />
+            <Field name="REGION" type="V_String" size="10" source="ODBC: PROD_FIN" />
+            <Field name="ENTRY_ID" type="Int64" size="8" source="ODBC: PROD_FIN" />
+            <Field name="POSTED_DT" type="DateTime" size="19" source="DateTime: POSTED_DT" />
+            <Field name="RUN_BAL" type="Double" size="8" source="MultiRowFormula: RUN_BAL" />
+          </RecordInfo>
+        </MetaInfo>
+      </Properties>
+      <EngineSettings EngineDll="AlteryxBasePluginsEngine.dll" EngineDllEntryPoint="AlteryxRecordID" />
+    </Node>
+    <Node ToolID="8">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.Formula.Formula">
+        <Position x="846" y="66" />
+      </GuiSettings>
+      <Properties>
+        <Configuration>
+          <FormulaFields>
+            <FormulaField expression="IIF(DateTimeFormat([POSTED_DT], &quot;%Y-%m-%d&quot;) = [User.PeriodEnd], &quot;Y&quot;, &quot;N&quot;)" field="PERIOD_END_FLAG" size="1" type="V_String" />
+          </FormulaFields>
+        </Configuration>
+        <Annotation DisplayMode="0">
+          <Name />
+          <DefaultAnnotationText>Flag the period end posting</DefaultAnnotationText>
+        </Annotation>
+        <MetaInfo connection="Output">
+          <RecordInfo>
+            <Field name="RecordID" type="Int32" size="4" source="RecordID: RecordID" />
+            <Field name="ACCT" type="V_String" size="20" source="ODBC: PROD_FIN" />
+            <Field name="PERIOD" type="V_String" size="7" source="ODBC: PROD_FIN" />
+            <Field name="POSTED" type="V_String" size="10" source="ODBC: PROD_FIN" />
+            <Field name="AMOUNT" type="FixedDecimal" size="19" scale="2" source="ODBC: PROD_FIN" />
+            <Field name="REGION" type="V_String" size="10" source="ODBC: PROD_FIN" />
+            <Field name="ENTRY_ID" type="Int64" size="8" source="ODBC: PROD_FIN" />
+            <Field name="POSTED_DT" type="DateTime" size="19" source="DateTime: POSTED_DT" />
+            <Field name="RUN_BAL" type="Double" size="8" source="MultiRowFormula: RUN_BAL" />
+            <Field name="PERIOD_END_FLAG" type="V_String" size="1" source="Formula: PERIOD_END_FLAG" />
+          </RecordInfo>
+        </MetaInfo>
+      </Properties>
+      <EngineSettings EngineDll="AlteryxBasePluginsEngine.dll" EngineDllEntryPoint="AlteryxFormula" />
+    </Node>
+    <Node ToolID="200">
+      <GuiSettings Plugin="AlteryxGuiToolkit.ToolContainer.ToolContainer">
+        <Position x="930" y="30" width="250" height="132" />
+      </GuiSettings>
+      <Properties>
+        <Configuration>
+          <Caption>Publish</Caption>
+          <Style TextColor="#514c31" FillColor="#f2f1ec" BorderColor="#514c31" Transparency="25" Margin="25" />
+          <Disabled value="False" />
+          <Folded value="False" />
+        </Configuration>
+        <Annotation DisplayMode="0">
+          <Name />
+          <DefaultAnnotationText />
+        </Annotation>
+      </Properties>
+      <ChildNodes>
+        <Node ToolID="9">
+          <GuiSettings Plugin="AlteryxSpatialPluginsGui.Summarize.Summarize">
+            <Position x="954" y="66" />
+          </GuiSettings>
+          <Properties>
+            <Configuration>
+              <SummarizeFields>
+                <SummarizeField field="ACCT" action="GroupBy" rename="ACCT" />
+                <SummarizeField field="PERIOD" action="GroupBy" rename="PERIOD" />
+                <SummarizeField field="AMOUNT" action="Sum" rename="TOTAL" />
+                <SummarizeField field="RUN_BAL" action="Last" rename="CLOSING_BAL" />
+                <SummarizeField field="ENTRY_ID" action="Count" rename="ENTRIES" />
+                <SummarizeField field="PERIOD_END_FLAG" action="Max" rename="HAS_PERIOD_END" />
+              </SummarizeFields>
+            </Configuration>
+            <Annotation DisplayMode="0">
+              <Name />
+              <DefaultAnnotationText>Closing balance is the last row</DefaultAnnotationText>
+            </Annotation>
+            <MetaInfo connection="Output">
+              <RecordInfo>
+                <Field name="ACCT" type="V_String" size="20" source="Summarize: GroupBy_ACCT" />
+                <Field name="PERIOD" type="V_String" size="7" source="Summarize: GroupBy_PERIOD" />
+                <Field name="TOTAL" type="FixedDecimal" size="19" scale="2" source="Summarize: Sum_AMOUNT" />
+                <Field name="CLOSING_BAL" type="Double" size="8" source="Summarize: Last_RUN_BAL" />
+                <Field name="ENTRIES" type="Int64" size="8" source="Summarize: Count_ENTRY_ID" />
+                <Field name="HAS_PERIOD_END" type="V_String" size="1" source="Summarize: Max_PERIOD_END_FLAG" />
+              </RecordInfo>
+            </MetaInfo>
+          </Properties>
+          <EngineSettings EngineDll="AlteryxSpatialPluginsEngine.dll" EngineDllEntryPoint="AlteryxSummarize" />
+        </Node>
+        <Node ToolID="10">
+          <GuiSettings Plugin="AlteryxBasePluginsGui.DbFileOutput.DbFileOutput">
+            <Position x="1062" y="66" />
+          </GuiSettings>
+          <Properties>
+            <Configuration>
+              <Passwords />
+              <File MaxRecords="" FileFormat="23">odbc:DSN=PROD_FIN;UID=svc_alx;PWD=__EncPwd2__|||dbo.GL_SUMMARY</File>
+              <FormatSpecificOptions>
+                <OutputOption>Update; Insert if new</OutputOption>
+                <TableStyle>Quoted</TableStyle>
+                <TransactionSize>0</TransactionSize>
+              </FormatSpecificOptions>
+              <PreSQL><![CDATA[DELETE FROM dbo.GL_SUMMARY WHERE PERIOD < '2020-01']]></PreSQL>
+              <PostSQL><![CDATA[UPDATE dbo.GL_SUMMARY SET LOADED_FLAG = 'Y' WHERE LOADED_FLAG IS NULL]]></PostSQL>
+              <UpdateKeys>
+                <Field field="ACCT" />
+                <Field field="PERIOD" />
+              </UpdateKeys>
+              <MultiFile value="False" />
+            </Configuration>
+            <Annotation DisplayMode="0">
+              <Name />
+              <DefaultAnnotationText>dbo.GL_SUMMARY</DefaultAnnotationText>
+            </Annotation>
+            <MetaInfo connection="Output">
+              <RecordInfo>
+                <Field name="ACCT" type="V_String" size="20" source="Summarize: GroupBy_ACCT" />
+                <Field name="PERIOD" type="V_String" size="7" source="Summarize: GroupBy_PERIOD" />
+                <Field name="TOTAL" type="FixedDecimal" size="19" scale="2" source="Summarize: Sum_AMOUNT" />
+                <Field name="CLOSING_BAL" type="Double" size="8" source="Summarize: Last_RUN_BAL" />
+                <Field name="ENTRIES" type="Int64" size="8" source="Summarize: Count_ENTRY_ID" />
+                <Field name="HAS_PERIOD_END" type="V_String" size="1" source="Summarize: Max_PERIOD_END_FLAG" />
+              </RecordInfo>
+            </MetaInfo>
+          </Properties>
+          <EngineSettings EngineDll="AlteryxBasePluginsEngine.dll" EngineDllEntryPoint="AlteryxDbFileOutput" />
+        </Node>
+      </ChildNodes>
+    </Node>
+  </Nodes>
+  <Connections>
+    <Connection>
+      <Origin ToolID="1" Connection="Output" />
+      <Destination ToolID="2" Connection="Input" />
+    </Connection>
+    <Connection>
+      <Origin ToolID="2" Connection="True" />
+      <Destination ToolID="3" Connection="Input" />
+    </Connection>
+    <Connection>
+      <Origin ToolID="3" Connection="Output" />
+      <Destination ToolID="4" Connection="Input" />
+    </Connection>
+    <Connection>
+      <Origin ToolID="4" Connection="Output" />
+      <Destination ToolID="5" Connection="Input" />
+    </Connection>
+    <Connection>
+      <Origin ToolID="5" Connection="Unique" />
+      <Destination ToolID="6" Connection="Input" />
+    </Connection>
+    <Connection>
+      <Origin ToolID="6" Connection="Output" />
+      <Destination ToolID="7" Connection="Input" />
+    </Connection>
+    <Connection>
+      <Origin ToolID="7" Connection="Output" />
+      <Destination ToolID="8" Connection="Input" />
+    </Connection>
+    <Connection>
+      <Origin ToolID="8" Connection="Output" />
+      <Destination ToolID="9" Connection="Input" />
+    </Connection>
+    <Connection>
+      <Origin ToolID="9" Connection="Output" />
+      <Destination ToolID="10" Connection="Input" />
+    </Connection>
+  </Connections>
+  <Properties>
+    <Memory default="True" />
+    <GlobalRecordLimit value="0" />
+    <TempFiles default="True" />
+    <Annotation on="True" includeToolName="False" />
+    <ConvErrorLimit value="10" />
+    <ConvErrorLimit_Stopped value="False" />
+    <CancelOnError value="False" />
+    <DisableBrowse value="False" />
+    <EnablePerformanceProfiling value="False" />
+    <DisableAllOutput value="False" />
+    <ShowAllMacroMessages value="False" />
+    <ShowConnectionStatusIsOn value="True" />
+    <ShowConnectionStatusOnlyWhenRunning value="True" />
+    <ZoomLevel value="0" />
+    <LayoutType>Horizontal</LayoutType>
+    <Constants>
+      <Constant>
+        <Namespace>User</Namespace>
+        <Name>User.Region</Name>
+        <Value>EMEA</Value>
+        <IsNumeric value="False" />
+      </Constant>
+      <Constant>
+        <Namespace>User</Namespace>
+        <Name>User.PeriodEnd</Name>
+        <Value>2026-08-31</Value>
+        <IsNumeric value="False" />
+      </Constant>
+    </Constants>
+    <RuntimeProperties>
+      <Actions />
+      <Questions />
+      <ModuleType>Wizard</ModuleType>
+      <MacroCustomHelp value="False" />
+      <RunE2 value="True" />
+    </RuntimeProperties>
+  </Properties>
+</AlteryxDocument>

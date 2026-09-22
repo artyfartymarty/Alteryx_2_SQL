@@ -1,0 +1,20 @@
+[
+  {
+    "name": "ACCT",
+    "type": "V_String",
+    "size": 20,
+    "scale": null
+  },
+  {
+    "name": "UPDATED",
+    "type": "Date",
+    "size": 10,
+    "scale": null
+  },
+  {
+    "name": "BALANCE",
+    "type": "Double",
+    "size": 8,
+    "scale": null
+  }
+]

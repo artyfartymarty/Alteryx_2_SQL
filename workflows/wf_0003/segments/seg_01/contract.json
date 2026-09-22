@@ -1,0 +1,90 @@
+{
+  "workflow": "wf_0003",
+  "segment": "seg_01",
+  "inputs": [
+    {
+      "logical": "GL_LEDGER",
+      "tool_id": "1",
+      "columns": [
+        { "name": "ACCT", "type": "VARCHAR(20)", "nullable": true },
+        { "name": "PERIOD", "type": "VARCHAR(7)", "nullable": true },
+        { "name": "POSTED", "type": "VARCHAR(10)", "nullable": true },
+        { "name": "AMOUNT", "type": "NUMBER(19,2)", "nullable": true },
+        { "name": "REGION", "type": "VARCHAR(10)", "nullable": true },
+        { "name": "ENTRY_ID", "type": "NUMBER(38,0)", "nullable": true }
+      ],
+      "keys": [],
+      "expected_rows": { "min": 0, "max": 20000000 },
+      "large": true
+    }
+  ],
+  "outputs": [
+    {
+      "stream": "3_Output",
+      "kind": "work",
+      "table": "MIG_WORK.WF0003_SEG_01_OUT",
+      "logical": null,
+      "columns": [
+        { "name": "ACCT", "type": "VARCHAR(20)", "nullable": true },
+        { "name": "PERIOD", "type": "VARCHAR(7)", "nullable": true },
+        { "name": "POSTED", "type": "VARCHAR(10)", "nullable": true },
+        { "name": "AMOUNT", "type": "NUMBER(19,2)", "nullable": false },
+        { "name": "REGION", "type": "VARCHAR(10)", "nullable": false },
+        { "name": "ENTRY_ID", "type": "NUMBER(38,0)", "nullable": true },
+        { "name": "POSTED_DT", "type": "TIMESTAMP_NTZ", "nullable": true }
+      ],
+      "keys": []
+    }
+  ],
+  "output": {
+    "stream": "3_Output",
+    "kind": "work",
+    "table": "MIG_WORK.WF0003_SEG_01_OUT",
+    "logical": null,
+    "columns": [
+      { "name": "ACCT", "type": "VARCHAR(20)", "nullable": true },
+      { "name": "PERIOD", "type": "VARCHAR(7)", "nullable": true },
+      { "name": "POSTED", "type": "VARCHAR(10)", "nullable": true },
+      { "name": "AMOUNT", "type": "NUMBER(19,2)", "nullable": false },
+      { "name": "REGION", "type": "VARCHAR(10)", "nullable": false },
+      { "name": "ENTRY_ID", "type": "NUMBER(38,0)", "nullable": true },
+      { "name": "POSTED_DT", "type": "TIMESTAMP_NTZ", "nullable": true }
+    ],
+    "keys": []
+  },
+  "row_relation": "filter",
+  "ordering": {
+    "keys": [],
+    "alteryx_deterministic": true,
+    "order_dependent_columns": []
+  },
+  "tolerances": {},
+  "normalizations": [],
+  "parity_risks": [
+    {
+      "tool_id": "1",
+      "class": "LOGIC",
+      "note": "The Input tool's own query carries `WHERE AMOUNT <> 0`. The procedure reads the mapped table rather than running that query, so the predicate has to be written out again in t1_input; without it every zero or NULL amount would reach the segment, which Alteryx never saw."
+    },
+    {
+      "tool_id": "2",
+      "class": "NULL_SEMANTICS",
+      "note": "Filter [REGION] = [User.Region]: a NULL REGION makes the expression NULL, and Alteryx sends both false AND NULL to the False anchor. That anchor is not wired, so those rows simply leave the workflow -- which is also what a three-valued SQL WHERE does with them."
+    },
+    {
+      "tool_id": "2",
+      "class": "LOGIC",
+      "note": "[User.Region] is a workflow constant, not a column. Its value ('EMEA') is resolved at translation time into a literal; nothing at run time supplies it, and a run wanting another region needs a new procedure."
+    },
+    {
+      "tool_id": "3",
+      "class": "NULL_SEMANTICS",
+      "note": "The DateTime tool reads dd/mm/yyyy text and writes NULL for text the format cannot read, so TRY_TO_TIMESTAMP_NTZ (not TO_TIMESTAMP_NTZ) is the warn-and-null form; 31/02/2026 is the row that proves it."
+    },
+    {
+      "tool_id": "3",
+      "class": "TYPE",
+      "note": "POSTED_DT is an Alteryx DateTime, so a parsed date carries midnight: the column is TIMESTAMP_NTZ, not DATE, and comparing it against a DATE would be a type difference."
+    }
+  ]
+}

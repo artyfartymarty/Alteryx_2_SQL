@@ -1,0 +1,145 @@
+<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2023.1">
+  <Nodes>
+    <Node ToolID="1">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.DbFileInput.DbFileInput">
+        <Position x="54" y="66" />
+      </GuiSettings>
+      <Properties>
+        <Configuration>
+          <Passwords />
+          <File OutputFileName="" RecordLimit="" SearchSubDirs="False" FileFormat="19">C:\data\vendor\accounts.yxdb</File>
+          <FormatSpecificOptions />
+        </Configuration>
+        <Annotation DisplayMode="0">
+          <Name />
+          <DefaultAnnotationText>Vendor accounts</DefaultAnnotationText>
+        </Annotation>
+        <MetaInfo connection="Output">
+          <RecordInfo>
+            <Field name="ACCT" type="V_String" size="20" source="File: C:\data\vendor\accounts.yxdb" />
+            <Field name="UPDATED" type="Date" size="10" source="File: C:\data\vendor\accounts.yxdb" />
+            <Field name="BALANCE" type="Double" size="8" source="File: C:\data\vendor\accounts.yxdb" />
+          </RecordInfo>
+        </MetaInfo>
+      </Properties>
+      <EngineSettings EngineDll="AlteryxBasePluginsEngine.dll" EngineDllEntryPoint="AlteryxDbFileInput" />
+    </Node>
+    <Node ToolID="2">
+      <GuiSettings Plugin="AcmeAnalytics.Dedupe.DedupeTool">
+        <Position x="162" y="66" />
+      </GuiSettings>
+      <Properties>
+        <Configuration>
+          <KeyField>ACCT</KeyField>
+          <Keep>MaxDate</Keep>
+          <DateField>UPDATED</DateField>
+        </Configuration>
+        <Annotation DisplayMode="0">
+          <Name />
+          <DefaultAnnotationText>Acme Dedupe (third party)</DefaultAnnotationText>
+        </Annotation>
+        <MetaInfo connection="Output">
+          <RecordInfo>
+            <Field name="ACCT" type="V_String" size="20" source="File: C:\data\vendor\accounts.yxdb" />
+            <Field name="UPDATED" type="Date" size="10" source="File: C:\data\vendor\accounts.yxdb" />
+            <Field name="BALANCE" type="Double" size="8" source="File: C:\data\vendor\accounts.yxdb" />
+          </RecordInfo>
+        </MetaInfo>
+      </Properties>
+      <EngineSettings EngineDll="AcmeDedupe.dll" EngineDllEntryPoint="AcmeDedupe" />
+    </Node>
+    <Node ToolID="3">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.RunCommand.RunCommand">
+        <Position x="270" y="66" />
+      </GuiSettings>
+      <Properties>
+        <Configuration>
+          <Command>C:\scripts\notify.bat</Command>
+          <CommandArguments />
+          <WorkingDir />
+          <ReadOutput value="False" />
+          <RunMinimized value="False" />
+        </Configuration>
+        <Annotation DisplayMode="0">
+          <Name />
+          <DefaultAnnotationText>Tell the vendor team</DefaultAnnotationText>
+        </Annotation>
+        <MetaInfo connection="Output">
+          <RecordInfo>
+            <Field name="ACCT" type="V_String" size="20" source="File: C:\data\vendor\accounts.yxdb" />
+            <Field name="UPDATED" type="Date" size="10" source="File: C:\data\vendor\accounts.yxdb" />
+            <Field name="BALANCE" type="Double" size="8" source="File: C:\data\vendor\accounts.yxdb" />
+          </RecordInfo>
+        </MetaInfo>
+      </Properties>
+      <EngineSettings EngineDll="AlteryxBasePluginsEngine.dll" EngineDllEntryPoint="AlteryxRunCommand" />
+    </Node>
+    <Node ToolID="4">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.DbFileOutput.DbFileOutput">
+        <Position x="378" y="66" />
+      </GuiSettings>
+      <Properties>
+        <Configuration>
+          <Passwords />
+          <File MaxRecords="" FileFormat="19">C:\data\out\accounts_clean.yxdb</File>
+          <FormatSpecificOptions>
+            <OutputOption>Overwrite</OutputOption>
+          </FormatSpecificOptions>
+          <MultiFile value="False" />
+        </Configuration>
+        <Annotation DisplayMode="0">
+          <Name />
+          <DefaultAnnotationText>accounts_clean.yxdb</DefaultAnnotationText>
+        </Annotation>
+        <MetaInfo connection="Output">
+          <RecordInfo>
+            <Field name="ACCT" type="V_String" size="20" source="File: C:\data\vendor\accounts.yxdb" />
+            <Field name="UPDATED" type="Date" size="10" source="File: C:\data\vendor\accounts.yxdb" />
+            <Field name="BALANCE" type="Double" size="8" source="File: C:\data\vendor\accounts.yxdb" />
+          </RecordInfo>
+        </MetaInfo>
+      </Properties>
+      <EngineSettings EngineDll="AlteryxBasePluginsEngine.dll" EngineDllEntryPoint="AlteryxDbFileOutput" />
+    </Node>
+  </Nodes>
+  <Connections>
+    <Connection>
+      <Origin ToolID="1" Connection="Output" />
+      <Destination ToolID="2" Connection="Input" />
+    </Connection>
+    <Connection>
+      <Origin ToolID="2" Connection="Output" />
+      <Destination ToolID="3" Connection="Input" />
+    </Connection>
+    <Connection>
+      <Origin ToolID="3" Connection="Output" />
+      <Destination ToolID="4" Connection="Input" />
+    </Connection>
+  </Connections>
+  <Properties>
+    <Memory default="True" />
+    <GlobalRecordLimit value="0" />
+    <TempFiles default="True" />
+    <Annotation on="True" includeToolName="False" />
+    <ConvErrorLimit value="10" />
+    <ConvErrorLimit_Stopped value="False" />
+    <CancelOnError value="False" />
+    <DisableBrowse value="False" />
+    <EnablePerformanceProfiling value="False" />
+    <DisableAllOutput value="False" />
+    <ShowAllMacroMessages value="False" />
+    <ShowConnectionStatusIsOn value="True" />
+    <ShowConnectionStatusOnlyWhenRunning value="True" />
+    <ZoomLevel value="0" />
+    <LayoutType>Horizontal</LayoutType>
+    <Constants />
+    <RuntimeProperties>
+      <Actions />
+      <Questions />
+      <ModuleType>Wizard</ModuleType>
+      <MacroCustomHelp value="False" />
+      <RunE2 value="False" />
+    </RuntimeProperties>
+  </Properties>
+</AlteryxDocument>

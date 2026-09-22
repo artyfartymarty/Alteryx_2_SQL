@@ -1,0 +1,26 @@
+{
+  "tool": "input",
+  "inputs": {
+    "1": "input_orders.csv"
+  },
+  "node": {
+    "tool_id": "1",
+    "type": "input",
+    "config": {
+      "source": "sales/orders.yxdb",
+      "format": "yxdb",
+      "query": null,
+      "alias": null,
+      "csv": null,
+      "record_limit": null
+    }
+  },
+  "edges": [],
+  "compare": [
+    {
+      "stream": "1_Output",
+      "sql": "query.sql",
+      "keys": []
+    }
+  ]
+}

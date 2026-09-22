@@ -1,0 +1,4 @@
+duckdb>=1.4
+sqlglot>=30
+pyyaml>=6
+pytest>=8

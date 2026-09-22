@@ -1,0 +1,20 @@
+{
+  "tool": "unique",
+  "inputs": {
+    "1": "input.csv"
+  },
+  "node": {
+    "tool_id": "2",
+    "type": "unique",
+    "config": {
+      "fields": ["ACCT", "DAY"]
+    }
+  },
+  "edges": [
+    ["1", "Output", "2", "Input"]
+  ],
+  "compare": [
+    { "stream": "2_U", "sql": "query_u.sql", "keys": ["ACCT", "DAY"] },
+    { "stream": "2_D", "sql": "query_d.sql", "keys": [] }
+  ]
+}

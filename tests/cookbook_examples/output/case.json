@@ -1,0 +1,31 @@
+{
+  "tool": "output",
+  "inputs": {
+    "1": "input_customers.csv"
+  },
+  "node": {
+    "tool_id": "2",
+    "type": "output",
+    "config": {
+      "source": "<scrubbed:analytics>",
+      "format": "db",
+      "alias": "analytics",
+      "table": "CURATED.CUSTOMERS_OUT",
+      "write_mode": "overwrite",
+      "keys": [],
+      "pre_sql": null,
+      "post_sql": null
+    }
+  },
+  "edges": [
+    ["1", "Output", "2", "Input"]
+  ],
+  "compare": [
+    {
+      "stream": "2_Output",
+      "sql": "query.sql",
+      "keys": [],
+      "table": "MIG_COOKBOOK.OUT_2"
+    }
+  ]
+}

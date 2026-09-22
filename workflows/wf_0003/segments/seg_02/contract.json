@@ -1,0 +1,121 @@
+{
+  "workflow": "wf_0003",
+  "segment": "seg_02",
+  "inputs": [
+    {
+      "from": "seg_01",
+      "stream": "3_Output",
+      "table": "MIG_WORK.WF0003_SEG_01_OUT",
+      "columns": [
+        { "name": "ACCT", "type": "VARCHAR(20)", "nullable": true },
+        { "name": "PERIOD", "type": "VARCHAR(7)", "nullable": true },
+        { "name": "POSTED", "type": "VARCHAR(10)", "nullable": true },
+        { "name": "AMOUNT", "type": "NUMBER(19,2)", "nullable": false },
+        { "name": "REGION", "type": "VARCHAR(10)", "nullable": false },
+        { "name": "ENTRY_ID", "type": "NUMBER(38,0)", "nullable": true },
+        { "name": "POSTED_DT", "type": "TIMESTAMP_NTZ", "nullable": true }
+      ],
+      "keys": [],
+      "expected_rows": { "min": 0, "max": 20000000 },
+      "large": true
+    }
+  ],
+  "outputs": [
+    {
+      "stream": "9_Output",
+      "kind": "target",
+      "tool_id": "10",
+      "logical": "GL_SUMMARY",
+      "table": null,
+      "write_mode": "update_insert",
+      "columns": [
+        { "name": "ACCT", "type": "VARCHAR(20)", "nullable": true },
+        { "name": "PERIOD", "type": "VARCHAR(7)", "nullable": true },
+        { "name": "TOTAL", "type": "NUMBER(19,2)", "nullable": true },
+        { "name": "CLOSING_BAL", "type": "FLOAT", "nullable": true },
+        { "name": "ENTRIES", "type": "NUMBER(38,0)", "nullable": true },
+        { "name": "HAS_PERIOD_END", "type": "VARCHAR(1)", "nullable": true },
+        { "name": "LOADED_FLAG", "type": "VARCHAR(1)", "nullable": true }
+      ],
+      "keys": ["ACCT", "PERIOD"]
+    }
+  ],
+  "output": {
+    "stream": "9_Output",
+    "kind": "target",
+    "tool_id": "10",
+    "logical": "GL_SUMMARY",
+    "table": null,
+    "write_mode": "update_insert",
+    "columns": [
+      { "name": "ACCT", "type": "VARCHAR(20)", "nullable": true },
+      { "name": "PERIOD", "type": "VARCHAR(7)", "nullable": true },
+      { "name": "TOTAL", "type": "NUMBER(19,2)", "nullable": true },
+      { "name": "CLOSING_BAL", "type": "FLOAT", "nullable": true },
+      { "name": "ENTRIES", "type": "NUMBER(38,0)", "nullable": true },
+      { "name": "HAS_PERIOD_END", "type": "VARCHAR(1)", "nullable": true },
+      { "name": "LOADED_FLAG", "type": "VARCHAR(1)", "nullable": true }
+    ],
+    "keys": ["ACCT", "PERIOD"]
+  },
+  "row_relation": "aggregate",
+  "ordering": {
+    "keys": ["ACCT", "POSTED_DT", "ENTRY_ID"],
+    "alteryx_deterministic": true,
+    "order_dependent_columns": ["CLOSING_BAL"]
+  },
+  "tolerances": {},
+  "normalizations": [],
+  "parity_risks": [
+    {
+      "tool_id": "4",
+      "class": "ORDERING",
+      "note": "The Sort is not cosmetic: tools 5, 6, 7 and 9 all read its row order, which is why the segmenter kept 4-9 together. NULL sorts first ascending and last descending, so every window's ORDER BY spells the NULLS placement out."
+    },
+    {
+      "tool_id": "5",
+      "class": "LOGIC",
+      "note": "Unique keeps the FIRST row of each (ACCT, POSTED_DT) in incoming order, and incoming order is the Sort's ENTRY_ID DESC, so the surviving duplicate is the one with the LARGEST ENTRY_ID. A row number taken in any other order changes which row's AMOUNT reaches the Summarize."
+    },
+    {
+      "tool_id": "5",
+      "class": "NULL_SEMANTICS",
+      "note": "Unique compares key values exactly, and two NULL POSTED_DT rows of the same ACCT count as the same key. PARTITION BY treats NULLs as one group, which is the same rule."
+    },
+    {
+      "tool_id": "6",
+      "class": "ROUNDING",
+      "note": "RUN_BAL is a Double field, so the model adds the exact decimal amounts and converts to a binary double when it stores each row. The translation sums the NUMBER column in a window and casts once, which agrees for every amount in the golden sets; a running total long enough to lose a double's precision would not."
+    },
+    {
+      "tool_id": "7",
+      "class": "ORDERING",
+      "note": "Record ID numbers rows in incoming order, so its value depends entirely on the Sort. It never reaches the target -- the Summarize drops it -- but CLOSING_BAL is defined as the last row by that number, so ordering.order_dependent_columns names CLOSING_BAL."
+    },
+    {
+      "tool_id": "8",
+      "class": "NULL_SEMANTICS",
+      "note": "IIF's condition is NULL when POSTED_DT is NULL, and a NULL condition takes the else branch in both Alteryx and SQL, so those rows are flagged 'N' rather than NULL."
+    },
+    {
+      "tool_id": "9",
+      "class": "LOGIC",
+      "note": "Alteryx's Count counts ROWS, not values, so ENTRIES is COUNT(*) and the edge set's NULL-ENTRY_ID row still counts as one."
+    },
+    {
+      "tool_id": "9",
+      "class": "ORDERING",
+      "note": "Last takes the group's last row in incoming order, including a NULL. There is no ordered aggregate for it in either dialect, so the translation takes the value at the largest RECORD_ID; that is the same row as long as RECORD_ID is unique, which it is because it is a row number."
+    },
+    {
+      "tool_id": "10",
+      "class": "NULL_SEMANTICS",
+      "note": "Update; Insert if new maps columns to the target by NAME and writes only the six the Summarize produces. LOADED_FLAG is left untouched on a matched row and arrives NULL on an inserted one, which is precisely what the PostSQL then fills. A NULL update key matches nothing, so the edge set's NULL-ACCT group is inserted rather than merged."
+    },
+    {
+      "tool_id": "10",
+      "class": "LOGIC",
+      "note": "The golden output is the target's state AFTER PreSQL, write and PostSQL -- not this run's rows. A row the run does not touch (9999) stays exactly as it was, and PERIOD < '2020-01' is deleted before anything is written."
+    }
+  ]
+}

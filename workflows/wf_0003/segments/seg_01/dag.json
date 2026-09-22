@@ -1,0 +1,258 @@
+{
+  "workflow": "wf_0003",
+  "segment": "seg_01",
+  "nodes": [
+    {
+      "tool_id": "1",
+      "type": "input",
+      "plugin": "AlteryxBasePluginsGui.DbFileInput.DbFileInput",
+      "container_id": "100",
+      "config": {
+        "source": "<scrubbed:prod_fin>",
+        "format": "db",
+        "query": "SELECT ACCT, PERIOD, POSTED, AMOUNT, REGION, ENTRY_ID FROM dbo.GL_LEDGER WHERE AMOUNT <> 0",
+        "alias": "prod_fin",
+        "csv": null,
+        "record_limit": null
+      },
+      "raw_config": "<Configuration>\n              <Passwords />\n              <File OutputFileName=\"\" RecordLimit=\"\" SearchSubDirs=\"False\" FileFormat=\"23\">&lt;scrubbed:prod_fin&gt;|||SELECT ACCT, PERIOD, POSTED, AMOUNT, REGION, ENTRY_ID FROM dbo.GL_LEDGER WHERE AMOUNT &lt;&gt; 0</File>\n              <FormatSpecificOptions>\n                <ODBCVersion>3</ODBCVersion>\n              </FormatSpecificOptions>\n            </Configuration>",
+      "annotation": "GL ledger extract",
+      "in_anchors": [],
+      "out_anchors": [
+        "Output"
+      ],
+      "meta": {
+        "Output": [
+          {
+            "name": "ACCT",
+            "type": "V_String",
+            "size": 20,
+            "scale": null
+          },
+          {
+            "name": "PERIOD",
+            "type": "V_String",
+            "size": 7,
+            "scale": null
+          },
+          {
+            "name": "POSTED",
+            "type": "V_String",
+            "size": 10,
+            "scale": null
+          },
+          {
+            "name": "AMOUNT",
+            "type": "FixedDecimal",
+            "size": 19,
+            "scale": 2
+          },
+          {
+            "name": "REGION",
+            "type": "V_String",
+            "size": 10,
+            "scale": null
+          },
+          {
+            "name": "ENTRY_ID",
+            "type": "Int64",
+            "size": 8,
+            "scale": null
+          }
+        ]
+      }
+    },
+    {
+      "tool_id": "2",
+      "type": "filter",
+      "plugin": "AlteryxBasePluginsGui.Filter.Filter",
+      "container_id": "100",
+      "config": {
+        "expression": "[REGION] = [User.Region]"
+      },
+      "raw_config": "<Configuration>\n              <Expression>[REGION] = [User.Region]</Expression>\n              <Mode>Custom</Mode>\n            </Configuration>",
+      "annotation": "Keep the run's region",
+      "in_anchors": [
+        "Input"
+      ],
+      "out_anchors": [
+        "T",
+        "F"
+      ],
+      "meta": {
+        "T": [
+          {
+            "name": "ACCT",
+            "type": "V_String",
+            "size": 20,
+            "scale": null
+          },
+          {
+            "name": "PERIOD",
+            "type": "V_String",
+            "size": 7,
+            "scale": null
+          },
+          {
+            "name": "POSTED",
+            "type": "V_String",
+            "size": 10,
+            "scale": null
+          },
+          {
+            "name": "AMOUNT",
+            "type": "FixedDecimal",
+            "size": 19,
+            "scale": 2
+          },
+          {
+            "name": "REGION",
+            "type": "V_String",
+            "size": 10,
+            "scale": null
+          },
+          {
+            "name": "ENTRY_ID",
+            "type": "Int64",
+            "size": 8,
+            "scale": null
+          }
+        ],
+        "F": [
+          {
+            "name": "ACCT",
+            "type": "V_String",
+            "size": 20,
+            "scale": null
+          },
+          {
+            "name": "PERIOD",
+            "type": "V_String",
+            "size": 7,
+            "scale": null
+          },
+          {
+            "name": "POSTED",
+            "type": "V_String",
+            "size": 10,
+            "scale": null
+          },
+          {
+            "name": "AMOUNT",
+            "type": "FixedDecimal",
+            "size": 19,
+            "scale": 2
+          },
+          {
+            "name": "REGION",
+            "type": "V_String",
+            "size": 10,
+            "scale": null
+          },
+          {
+            "name": "ENTRY_ID",
+            "type": "Int64",
+            "size": 8,
+            "scale": null
+          }
+        ]
+      }
+    },
+    {
+      "tool_id": "3",
+      "type": "datetime",
+      "plugin": "AlteryxBasePluginsGui.DateTime.DateTime",
+      "container_id": "100",
+      "config": {
+        "direction": "to_datetime",
+        "field": "POSTED",
+        "format": "%d/%m/%Y",
+        "out_field": "POSTED_DT"
+      },
+      "raw_config": "<Configuration>\n              <IsFrom value=\"False\" />\n              <InputFieldName>POSTED</InputFieldName>\n              <Format>%d/%m/%Y</Format>\n              <OutputFieldName>POSTED_DT</OutputFieldName>\n              <Language>English</Language>\n            </Configuration>",
+      "annotation": "POSTED is dd/mm/yyyy text",
+      "in_anchors": [
+        "Input"
+      ],
+      "out_anchors": [
+        "Output"
+      ],
+      "meta": {
+        "Output": [
+          {
+            "name": "ACCT",
+            "type": "V_String",
+            "size": 20,
+            "scale": null
+          },
+          {
+            "name": "PERIOD",
+            "type": "V_String",
+            "size": 7,
+            "scale": null
+          },
+          {
+            "name": "POSTED",
+            "type": "V_String",
+            "size": 10,
+            "scale": null
+          },
+          {
+            "name": "AMOUNT",
+            "type": "FixedDecimal",
+            "size": 19,
+            "scale": 2
+          },
+          {
+            "name": "REGION",
+            "type": "V_String",
+            "size": 10,
+            "scale": null
+          },
+          {
+            "name": "ENTRY_ID",
+            "type": "Int64",
+            "size": 8,
+            "scale": null
+          },
+          {
+            "name": "POSTED_DT",
+            "type": "DateTime",
+            "size": 19,
+            "scale": null
+          }
+        ]
+      }
+    }
+  ],
+  "edges": [
+    {
+      "src": "1",
+      "src_anchor": "Output",
+      "dst": "2",
+      "dst_anchor": "Input",
+      "dst_order": 1,
+      "wireless": false
+    },
+    {
+      "src": "2",
+      "src_anchor": "T",
+      "dst": "3",
+      "dst_anchor": "Input",
+      "dst_order": 1,
+      "wireless": false
+    }
+  ],
+  "inbound": [],
+  "outbound": [
+    {
+      "src": "3",
+      "src_anchor": "Output",
+      "dst": "4",
+      "dst_anchor": "Input",
+      "dst_order": 1,
+      "wireless": false,
+      "to_segment": "seg_02"
+    }
+  ]
+}

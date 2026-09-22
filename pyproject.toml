@@ -1,0 +1,10 @@
+[project]
+name = "alteryx-to-snowflake-migration"
+version = "0.1.0"
+requires-python = ">=3.12"
+
+[tool.pytest.ini_options]
+pythonpath = ["scripts", "."]
+testpaths = ["tests"]
+addopts = "-q"
+markers = ["e2e: runs whole sample workflows through DuckDB"]

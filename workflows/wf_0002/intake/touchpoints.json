@@ -1,0 +1,152 @@
+[
+  {
+    "id": "Q1",
+    "kind": "input",
+    "tool_id": "1",
+    "annotation": "CRM customers",
+    "format": "yxdb",
+    "source": "\\\\fileserver\\crm\\customers.yxdb",
+    "key": "crm/customers.yxdb",
+    "fields": [
+      "CUST_ID",
+      "NAME",
+      "CITY",
+      "TIER"
+    ],
+    "field_source": "yxdb_header",
+    "record_count": 6,
+    "query": null,
+    "table": null,
+    "write_mode": null,
+    "keys": [],
+    "pre_sql": null,
+    "post_sql": null,
+    "blocking": true,
+    "resolved": null,
+    "candidates": [
+      {
+        "snowflake": "CRM.RAW.CUSTOMERS",
+        "matched": 4,
+        "of": 4,
+        "missing": [],
+        "score": 1.0,
+        "row_count": 52310,
+        "basis": "columns"
+      },
+      {
+        "snowflake": "ANALYTICS.CURATED.CUSTOMER_ORDER_FACT",
+        "matched": 4,
+        "of": 4,
+        "missing": [],
+        "score": 0.8,
+        "row_count": 118442,
+        "basis": "columns"
+      },
+      {
+        "snowflake": "ANALYTICS.RAW.CUSTOMERS",
+        "basis": "naming"
+      }
+    ]
+  },
+  {
+    "id": "Q2",
+    "kind": "input",
+    "tool_id": "3",
+    "annotation": "Nightly orders export",
+    "format": "csv",
+    "source": "\\\\fileserver\\crm\\orders_export.csv",
+    "key": "crm/orders_export.csv",
+    "fields": [
+      "ORDER_ID",
+      "CUST_ID",
+      "AMOUNT",
+      "ORDER_DATE"
+    ],
+    "field_source": "meta",
+    "record_count": null,
+    "query": null,
+    "table": null,
+    "write_mode": null,
+    "keys": [],
+    "pre_sql": null,
+    "post_sql": null,
+    "blocking": true,
+    "resolved": null,
+    "candidates": [
+      {
+        "snowflake": "CRM.RAW.ORDERS_EXPORT",
+        "matched": 4,
+        "of": 4,
+        "missing": [],
+        "score": 1.0,
+        "row_count": 914220,
+        "basis": "columns"
+      },
+      {
+        "snowflake": "ANALYTICS.CURATED.CUSTOMER_ORDER_FACT",
+        "matched": 4,
+        "of": 4,
+        "missing": [],
+        "score": 0.8,
+        "row_count": 118442,
+        "basis": "columns"
+      },
+      {
+        "snowflake": "SALES.RAW.ORDERS",
+        "matched": 2,
+        "of": 4,
+        "missing": [
+          "CUST_ID",
+          "AMOUNT"
+        ],
+        "score": 0.5,
+        "row_count": 1204551,
+        "basis": "columns"
+      },
+      {
+        "snowflake": "ANALYTICS.RAW.ORDERS_EXPORT",
+        "basis": "naming"
+      }
+    ]
+  },
+  {
+    "id": "Q3",
+    "kind": "output",
+    "tool_id": "10",
+    "annotation": "dbo.CUSTOMER_ORDER_FACT",
+    "format": "db",
+    "source": "<scrubbed:dw_sales>",
+    "key": "alias:dw_sales/dbo.customer_order_fact",
+    "fields": [
+      "CUST_ID",
+      "NAME",
+      "CITY",
+      "TIER",
+      "ORDER_ID",
+      "AMOUNT",
+      "ORDER_DATE",
+      "MATCH_FLAG"
+    ],
+    "field_source": "meta",
+    "record_count": null,
+    "query": null,
+    "table": "dbo.CUSTOMER_ORDER_FACT",
+    "write_mode": "append",
+    "keys": [],
+    "pre_sql": null,
+    "post_sql": null,
+    "blocking": true,
+    "resolved": null,
+    "candidates": [
+      {
+        "snowflake": "ANALYTICS.CURATED.CUSTOMER_ORDER_FACT",
+        "matched": 8,
+        "of": 8,
+        "missing": [],
+        "score": 1.0,
+        "row_count": 118442,
+        "basis": "columns"
+      }
+    ]
+  }
+]

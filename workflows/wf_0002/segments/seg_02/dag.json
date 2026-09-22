@@ -1,0 +1,155 @@
+{
+  "workflow": "wf_0002",
+  "segment": "seg_02",
+  "nodes": [
+    {
+      "tool_id": "3",
+      "type": "input",
+      "plugin": "AlteryxBasePluginsGui.DbFileInput.DbFileInput",
+      "container_id": "210",
+      "config": {
+        "source": "\\\\fileserver\\crm\\orders_export.csv",
+        "format": "csv",
+        "query": null,
+        "alias": null,
+        "csv": {
+          "delimiter": ",",
+          "header": true,
+          "codepage": "28591"
+        },
+        "record_limit": null
+      },
+      "raw_config": "<Configuration>\n                  <Passwords />\n                  <File OutputFileName=\"\" RecordLimit=\"\" SearchSubDirs=\"False\" FileFormat=\"0\">\\\\fileserver\\crm\\orders_export.csv</File>\n                  <FormatSpecificOptions>\n                    <HeaderRow>True</HeaderRow>\n                    <IgnoreErrors>False</IgnoreErrors>\n                    <AllowShareWrite>False</AllowShareWrite>\n                    <ImportLine>1</ImportLine>\n                    <FieldLen>254</FieldLen>\n                    <SingleThreadRead>False</SingleThreadRead>\n                    <IgnoreQuotes>DoubleQuotes</IgnoreQuotes>\n                    <Delimeter>,</Delimeter>\n                    <QuoteRecordBreak>False</QuoteRecordBreak>\n                    <CodePage>28591</CodePage>\n                  </FormatSpecificOptions>\n                </Configuration>",
+      "annotation": "Nightly orders export",
+      "in_anchors": [],
+      "out_anchors": [
+        "Output"
+      ],
+      "meta": {
+        "Output": [
+          {
+            "name": "ORDER_ID",
+            "type": "V_String",
+            "size": 254,
+            "scale": null
+          },
+          {
+            "name": "CUST_ID",
+            "type": "V_String",
+            "size": 254,
+            "scale": null
+          },
+          {
+            "name": "AMOUNT",
+            "type": "V_String",
+            "size": 254,
+            "scale": null
+          },
+          {
+            "name": "ORDER_DATE",
+            "type": "V_String",
+            "size": 254,
+            "scale": null
+          }
+        ]
+      }
+    },
+    {
+      "tool_id": "4",
+      "type": "select",
+      "plugin": "AlteryxBasePluginsGui.AlteryxSelect.AlteryxSelect",
+      "container_id": "210",
+      "config": {
+        "fields": [
+          {
+            "name": "ORDER_ID",
+            "selected": true,
+            "rename": null,
+            "type": "Int32",
+            "size": 4
+          },
+          {
+            "name": "CUST_ID",
+            "selected": true,
+            "rename": null,
+            "type": "Int32",
+            "size": 4
+          },
+          {
+            "name": "AMOUNT",
+            "selected": true,
+            "rename": null,
+            "type": "Double",
+            "size": 8
+          },
+          {
+            "name": "ORDER_DATE",
+            "selected": true,
+            "rename": null,
+            "type": "Date",
+            "size": 10
+          }
+        ],
+        "unknown_selected": false
+      },
+      "raw_config": "<Configuration>\n                  <OrderChanged value=\"False\" />\n                  <CommaDecimal value=\"False\" />\n                  <SelectFields>\n                    <SelectField field=\"ORDER_ID\" selected=\"True\" type=\"Int32\" size=\"4\" />\n                    <SelectField field=\"CUST_ID\" selected=\"True\" type=\"Int32\" size=\"4\" />\n                    <SelectField field=\"AMOUNT\" selected=\"True\" type=\"Double\" size=\"8\" />\n                    <SelectField field=\"ORDER_DATE\" selected=\"True\" type=\"Date\" size=\"10\" />\n                    <SelectField field=\"*Unknown\" selected=\"False\" />\n                  </SelectFields>\n                </Configuration>",
+      "annotation": "Strings to numbers and dates",
+      "in_anchors": [
+        "Input"
+      ],
+      "out_anchors": [
+        "Output"
+      ],
+      "meta": {
+        "Output": [
+          {
+            "name": "ORDER_ID",
+            "type": "Int32",
+            "size": 4,
+            "scale": null
+          },
+          {
+            "name": "CUST_ID",
+            "type": "Int32",
+            "size": 4,
+            "scale": null
+          },
+          {
+            "name": "AMOUNT",
+            "type": "Double",
+            "size": 8,
+            "scale": null
+          },
+          {
+            "name": "ORDER_DATE",
+            "type": "Date",
+            "size": 10,
+            "scale": null
+          }
+        ]
+      }
+    }
+  ],
+  "edges": [
+    {
+      "src": "3",
+      "src_anchor": "Output",
+      "dst": "4",
+      "dst_anchor": "Input",
+      "dst_order": 1,
+      "wireless": false
+    }
+  ],
+  "inbound": [],
+  "outbound": [
+    {
+      "src": "4",
+      "src_anchor": "Output",
+      "dst": "5",
+      "dst_anchor": "Right",
+      "dst_order": 1,
+      "wireless": false,
+      "to_segment": "seg_03"
+    }
+  ]
+}

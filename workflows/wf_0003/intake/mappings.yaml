@@ -1,0 +1,23 @@
+sources:
+  alias:prod_fin:
+    snowflake: FINANCE.RAW.GL_LEDGER
+    logical: GL_LEDGER
+    tool_ids:
+    - '1'
+    confirmed_by: automation
+outputs:
+  alias:prod_fin/dbo.gl_summary:
+    snowflake: ANALYTICS.CURATED.GL_SUMMARY
+    logical: GL_SUMMARY
+    tool_ids:
+    - '10'
+    confirmed_by: automation
+    mode: merge
+    keys:
+    - ACCT
+    - PERIOD
+constants:
+  User.Region: EMEA
+  User.PeriodEnd: '2026-08-31'
+parameters: {}
+macros: {}

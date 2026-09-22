@@ -1,0 +1,72 @@
+{
+  "workflow": "wf_0002",
+  "segment": "seg_01",
+  "inputs": [
+    {
+      "logical": "CUSTOMERS",
+      "tool_id": "1",
+      "columns": [
+        { "name": "CUST_ID", "type": "NUMBER(38,0)", "nullable": true },
+        { "name": "NAME", "type": "VARCHAR(60)", "nullable": true },
+        { "name": "CITY", "type": "VARCHAR(40)", "nullable": true },
+        { "name": "TIER", "type": "VARCHAR(10)", "nullable": true }
+      ],
+      "keys": [],
+      "expected_rows": { "min": 0, "max": 500000 },
+      "large": false
+    }
+  ],
+  "outputs": [
+    {
+      "stream": "2_Output",
+      "kind": "work",
+      "table": "MIG_WORK.WF0002_SEG_01_OUT",
+      "logical": null,
+      "columns": [
+        { "name": "CUST_ID", "type": "NUMBER(38,0)", "nullable": true },
+        { "name": "NAME", "type": "VARCHAR(60)", "nullable": false },
+        { "name": "CITY", "type": "VARCHAR(40)", "nullable": false },
+        { "name": "TIER", "type": "VARCHAR(10)", "nullable": true }
+      ],
+      "keys": []
+    }
+  ],
+  "output": {
+    "stream": "2_Output",
+    "kind": "work",
+    "table": "MIG_WORK.WF0002_SEG_01_OUT",
+    "logical": null,
+    "columns": [
+      { "name": "CUST_ID", "type": "NUMBER(38,0)", "nullable": true },
+      { "name": "NAME", "type": "VARCHAR(60)", "nullable": false },
+      { "name": "CITY", "type": "VARCHAR(40)", "nullable": false },
+      { "name": "TIER", "type": "VARCHAR(10)", "nullable": true }
+    ],
+    "keys": []
+  },
+  "row_relation": "1:1",
+  "ordering": {
+    "keys": [],
+    "alteryx_deterministic": true,
+    "order_dependent_columns": []
+  },
+  "tolerances": {},
+  "normalizations": [],
+  "parity_risks": [
+    {
+      "tool_id": "2",
+      "class": "NULL_SEMANTICS",
+      "note": "Data Cleansing replaces NULL strings with blank before trimming, so NAME and CITY are never NULL downstream -- that is why both are declared NOT NULL on this stream."
+    },
+    {
+      "tool_id": "2",
+      "class": "LOGIC",
+      "note": "The options run in the macro's own order (replace nulls, trim, modify case); applying UPPER before TRIM would agree here but not once a case-changing option is combined with a character-removing one."
+    },
+    {
+      "tool_id": "2",
+      "class": "LOGIC",
+      "note": "UPPER is applied by Snowflake's own Unicode case rules, which are not guaranteed to match Alteryx's for every script; the edge golden set exercises Latin Extended and CJK text."
+    }
+  ]
+}

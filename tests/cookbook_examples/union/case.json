@@ -1,0 +1,21 @@
+{
+  "tool": "union",
+  "inputs": {
+    "1": "input_a.csv",
+    "2": "input_b.csv"
+  },
+  "node": {
+    "tool_id": "3",
+    "type": "union",
+    "config": {
+      "mode": "name"
+    }
+  },
+  "edges": [
+    ["1", "Output", "3", "Input", 1],
+    ["2", "Output", "3", "Input", 2]
+  ],
+  "compare": [
+    { "stream": "3_Output", "sql": "query.sql", "keys": [] }
+  ]
+}

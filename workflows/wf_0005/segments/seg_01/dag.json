@@ -1,0 +1,203 @@
+{
+  "workflow": "wf_0005",
+  "segment": "seg_01",
+  "nodes": [
+    {
+      "tool_id": "1",
+      "type": "input",
+      "plugin": "AlteryxBasePluginsGui.DbFileInput.DbFileInput",
+      "container_id": null,
+      "config": {
+        "source": "C:\\data\\vendor\\accounts.yxdb",
+        "format": "yxdb",
+        "query": null,
+        "alias": null,
+        "csv": null,
+        "record_limit": null
+      },
+      "raw_config": "<Configuration>\n          <Passwords />\n          <File OutputFileName=\"\" RecordLimit=\"\" SearchSubDirs=\"False\" FileFormat=\"19\">C:\\data\\vendor\\accounts.yxdb</File>\n          <FormatSpecificOptions />\n        </Configuration>",
+      "annotation": "Vendor accounts",
+      "in_anchors": [],
+      "out_anchors": [
+        "Output"
+      ],
+      "meta": {
+        "Output": [
+          {
+            "name": "ACCT",
+            "type": "V_String",
+            "size": 20,
+            "scale": null
+          },
+          {
+            "name": "UPDATED",
+            "type": "Date",
+            "size": 10,
+            "scale": null
+          },
+          {
+            "name": "BALANCE",
+            "type": "Double",
+            "size": 8,
+            "scale": null
+          }
+        ]
+      }
+    },
+    {
+      "tool_id": "2",
+      "type": "unknown",
+      "plugin": "AcmeAnalytics.Dedupe.DedupeTool",
+      "container_id": null,
+      "config": {
+        "key_field": "ACCT",
+        "keep": "MaxDate",
+        "date_field": "UPDATED"
+      },
+      "raw_config": "<Configuration>\n          <KeyField>ACCT</KeyField>\n          <Keep>MaxDate</Keep>\n          <DateField>UPDATED</DateField>\n        </Configuration>",
+      "annotation": "Acme Dedupe (third party)",
+      "in_anchors": [
+        "Input"
+      ],
+      "out_anchors": [
+        "Output"
+      ],
+      "meta": {
+        "Output": [
+          {
+            "name": "ACCT",
+            "type": "V_String",
+            "size": 20,
+            "scale": null
+          },
+          {
+            "name": "UPDATED",
+            "type": "Date",
+            "size": 10,
+            "scale": null
+          },
+          {
+            "name": "BALANCE",
+            "type": "Double",
+            "size": 8,
+            "scale": null
+          }
+        ]
+      },
+      "behavior": "Third-party tool AcmeAnalytics.Dedupe.DedupeTool (AcmeDedupe.dll). Its configuration names ACCT as the key, MaxDate as what to keep and by UPDATED, which reads as one row per ACCT chosen by UPDATED. The XML does not say what happens to a row whose date is NULL, what happens when two rows tie on it, or whether the comparison is by date or by full timestamp, so the tool is left unknown rather than mapped onto Unique or a window function. A human who knows the vendor tool should settle those three questions before anyone writes SQL for it.",
+      "confidence": 0.5
+    },
+    {
+      "tool_id": "3",
+      "type": "run_command",
+      "plugin": "AlteryxBasePluginsGui.RunCommand.RunCommand",
+      "container_id": null,
+      "config": {
+        "command": "C:\\scripts\\notify.bat",
+        "args": null
+      },
+      "raw_config": "<Configuration>\n          <Command>C:\\scripts\\notify.bat</Command>\n          <CommandArguments />\n          <WorkingDir />\n          <ReadOutput value=\"False\" />\n          <RunMinimized value=\"False\" />\n        </Configuration>",
+      "annotation": "Tell the vendor team",
+      "in_anchors": [
+        "Input"
+      ],
+      "out_anchors": [
+        "Output"
+      ],
+      "meta": {
+        "Output": [
+          {
+            "name": "ACCT",
+            "type": "V_String",
+            "size": 20,
+            "scale": null
+          },
+          {
+            "name": "UPDATED",
+            "type": "Date",
+            "size": 10,
+            "scale": null
+          },
+          {
+            "name": "BALANCE",
+            "type": "Double",
+            "size": 8,
+            "scale": null
+          }
+        ]
+      }
+    },
+    {
+      "tool_id": "4",
+      "type": "output",
+      "plugin": "AlteryxBasePluginsGui.DbFileOutput.DbFileOutput",
+      "container_id": null,
+      "config": {
+        "source": "C:\\data\\out\\accounts_clean.yxdb",
+        "format": "yxdb",
+        "alias": null,
+        "table": null,
+        "write_mode": "overwrite",
+        "keys": [],
+        "pre_sql": null,
+        "post_sql": null
+      },
+      "raw_config": "<Configuration>\n          <Passwords />\n          <File MaxRecords=\"\" FileFormat=\"19\">C:\\data\\out\\accounts_clean.yxdb</File>\n          <FormatSpecificOptions>\n            <OutputOption>Overwrite</OutputOption>\n          </FormatSpecificOptions>\n          <MultiFile value=\"False\" />\n        </Configuration>",
+      "annotation": "accounts_clean.yxdb",
+      "in_anchors": [
+        "Input"
+      ],
+      "out_anchors": [],
+      "meta": {
+        "Output": [
+          {
+            "name": "ACCT",
+            "type": "V_String",
+            "size": 20,
+            "scale": null
+          },
+          {
+            "name": "UPDATED",
+            "type": "Date",
+            "size": 10,
+            "scale": null
+          },
+          {
+            "name": "BALANCE",
+            "type": "Double",
+            "size": 8,
+            "scale": null
+          }
+        ]
+      }
+    }
+  ],
+  "edges": [
+    {
+      "src": "1",
+      "src_anchor": "Output",
+      "dst": "2",
+      "dst_anchor": "Input",
+      "dst_order": 1,
+      "wireless": false
+    },
+    {
+      "src": "2",
+      "src_anchor": "Output",
+      "dst": "3",
+      "dst_anchor": "Input",
+      "dst_order": 1,
+      "wireless": false
+    },
+    {
+      "src": "3",
+      "src_anchor": "Output",
+      "dst": "4",
+      "dst_anchor": "Input",
+      "dst_order": 1,
+      "wireless": false
+    }
+  ],
+  "inbound": [],
+  "outbound": []
+}

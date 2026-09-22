@@ -1,0 +1,29 @@
+[
+  {
+    "segment": "seg_01",
+    "file": "01_filter_false_drops_null_region.sql",
+    "golden_set": "normal",
+    "expect": { "class": "NULL_SEMANTICS", "columns": ["REGION"], "stream": "3_F" },
+    "note": "Stream 3_F declares no keys (the edge golden set holds two byte-identical ORDER_ID 103 rows), so the missing order is a surplus row of the multiset difference. Since Task 7b that surplus row is fetched and, with nothing on the actual side to pair it with, goes through the same row-presence rule the keyed path uses: REGION is NULL in every missing row and is not NULL throughout the golden data, so REGION is the column that explains it. Suspect CTE t3_filter."
+  },
+  {
+    "segment": "seg_01",
+    "file": "02_select_customer_not_truncated.sql",
+    "golden_set": "normal",
+    "expect": { "class": "TRUNCATION", "columns": ["CUSTOMER"], "stream": "3_F" },
+    "note": "Keyless like the row above: the one surplus row on each side differs in CUSTOMER alone ('Echo Suppl' against 'Echo Supplies'), so Task 7b's nearest-match pairing puts them together and the keyed path's own classification calls it TRUNCATION. The cluster carries paired_by: nearest_match, because nothing keyed those two rows to each other."
+  },
+  {
+    "segment": "seg_01",
+    "file": "03_net_rounds_the_raw_float.sql",
+    "golden_set": "normal",
+    "expect": { "class": "ROUNDING", "columns": ["TOTAL_NET"], "stream": "6_Output" }
+  },
+  {
+    "segment": "seg_01",
+    "file": "04_filter_true_keeps_null_region.sql",
+    "golden_set": "normal",
+    "expect": { "class": "NULL_SEMANTICS", "columns": ["REGION"], "stream": "6_Output" },
+    "note": "The mirror of variant 01, added so the NULL-to-False rule is demonstrated on a keyed stream: the NULL-region rows reach the Summarize and open a group whose REGION is NULL, in a column the contract declares NOT NULL."
+  }
+]

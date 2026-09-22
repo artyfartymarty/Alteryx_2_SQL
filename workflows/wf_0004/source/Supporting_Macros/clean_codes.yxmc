@@ -1,0 +1,211 @@
+<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2023.1">
+  <Nodes>
+    <Node ToolID="1">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.MacroInput.MacroInput">
+        <Position x="54" y="66" />
+      </GuiSettings>
+      <Properties>
+        <Configuration>
+          <Name>Input</Name>
+          <AbbrevName>Input</AbbrevName>
+          <TextName>Input</TextName>
+          <Optional value="False" />
+          <ShowFieldMap value="False" />
+        </Configuration>
+        <Annotation DisplayMode="0">
+          <Name />
+          <DefaultAnnotationText>Stock rows</DefaultAnnotationText>
+        </Annotation>
+        <MetaInfo connection="Output">
+          <RecordInfo>
+            <Field name="SKU" type="V_String" size="30" source="MacroInput: Input" />
+            <Field name="WAREHOUSE" type="V_String" size="10" source="MacroInput: Input" />
+            <Field name="QTY" type="Int32" size="4" source="MacroInput: Input" />
+            <Field name="NOTE" type="V_String" size="100" source="MacroInput: Input" />
+          </RecordInfo>
+        </MetaInfo>
+      </Properties>
+      <EngineSettings EngineDll="AlteryxBasePluginsEngine.dll" EngineDllEntryPoint="AlteryxMacroInput" />
+    </Node>
+    <Node ToolID="2">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.RegEx.RegEx">
+        <Position x="162" y="66" />
+      </GuiSettings>
+      <Properties>
+        <Configuration>
+          <Field>SKU</Field>
+          <RegExExpression value="^\s*([A-Za-z]+)[- ]?(\d+)\s*$" />
+          <CaseInsensitve value="True" />
+          <Method>Replace</Method>
+          <Replace expression="$1-$2">
+            <CopyUnmatched value="True" />
+          </Replace>
+          <ErrorHandling>Ignore</ErrorHandling>
+        </Configuration>
+        <Annotation DisplayMode="0">
+          <Name />
+          <DefaultAnnotationText>Normalise to FAMILY-NUMBER</DefaultAnnotationText>
+        </Annotation>
+        <MetaInfo connection="Output">
+          <RecordInfo>
+            <Field name="SKU" type="V_String" size="30" source="RegEx: SKU" />
+            <Field name="WAREHOUSE" type="V_String" size="10" source="MacroInput: Input" />
+            <Field name="QTY" type="Int32" size="4" source="MacroInput: Input" />
+            <Field name="NOTE" type="V_String" size="100" source="MacroInput: Input" />
+          </RecordInfo>
+        </MetaInfo>
+      </Properties>
+      <EngineSettings EngineDll="AlteryxBasePluginsEngine.dll" EngineDllEntryPoint="AlteryxRegex" />
+    </Node>
+    <Node ToolID="3">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.Formula.Formula">
+        <Position x="270" y="66" />
+      </GuiSettings>
+      <Properties>
+        <Configuration>
+          <FormulaFields>
+            <FormulaField expression="Uppercase([SKU])" field="SKU" size="30" type="V_String" />
+          </FormulaFields>
+        </Configuration>
+        <Annotation DisplayMode="0">
+          <Name />
+          <DefaultAnnotationText>Upper-case the code</DefaultAnnotationText>
+        </Annotation>
+        <MetaInfo connection="Output">
+          <RecordInfo>
+            <Field name="SKU" type="V_String" size="30" source="Formula: SKU" />
+            <Field name="WAREHOUSE" type="V_String" size="10" source="MacroInput: Input" />
+            <Field name="QTY" type="Int32" size="4" source="MacroInput: Input" />
+            <Field name="NOTE" type="V_String" size="100" source="MacroInput: Input" />
+          </RecordInfo>
+        </MetaInfo>
+      </Properties>
+      <EngineSettings EngineDll="AlteryxBasePluginsEngine.dll" EngineDllEntryPoint="AlteryxFormula" />
+    </Node>
+    <Node ToolID="4">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.Filter.Filter">
+        <Position x="378" y="66" />
+      </GuiSettings>
+      <Properties>
+        <Configuration>
+          <Expression>[QTY] &gt;= [%Question.MinQty%]</Expression>
+          <Mode>Custom</Mode>
+        </Configuration>
+        <Annotation DisplayMode="0">
+          <Name />
+          <DefaultAnnotationText>Drop stock below MinQty</DefaultAnnotationText>
+        </Annotation>
+        <MetaInfo connection="True">
+          <RecordInfo>
+            <Field name="SKU" type="V_String" size="30" source="Formula: SKU" />
+            <Field name="WAREHOUSE" type="V_String" size="10" source="MacroInput: Input" />
+            <Field name="QTY" type="Int32" size="4" source="MacroInput: Input" />
+            <Field name="NOTE" type="V_String" size="100" source="MacroInput: Input" />
+          </RecordInfo>
+        </MetaInfo>
+        <MetaInfo connection="False">
+          <RecordInfo>
+            <Field name="SKU" type="V_String" size="30" source="Formula: SKU" />
+            <Field name="WAREHOUSE" type="V_String" size="10" source="MacroInput: Input" />
+            <Field name="QTY" type="Int32" size="4" source="MacroInput: Input" />
+            <Field name="NOTE" type="V_String" size="100" source="MacroInput: Input" />
+          </RecordInfo>
+        </MetaInfo>
+      </Properties>
+      <EngineSettings EngineDll="AlteryxBasePluginsEngine.dll" EngineDllEntryPoint="AlteryxFilter" />
+    </Node>
+    <Node ToolID="5">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.MacroOutput.MacroOutput">
+        <Position x="486" y="66" />
+      </GuiSettings>
+      <Properties>
+        <Configuration>
+          <Name>Output</Name>
+          <AbbrevName>Output</AbbrevName>
+          <TextName>Output</TextName>
+        </Configuration>
+        <Annotation DisplayMode="0">
+          <Name />
+          <DefaultAnnotationText>Cleaned stock rows</DefaultAnnotationText>
+        </Annotation>
+        <MetaInfo connection="Output">
+          <RecordInfo>
+            <Field name="SKU" type="V_String" size="30" source="Formula: SKU" />
+            <Field name="WAREHOUSE" type="V_String" size="10" source="MacroInput: Input" />
+            <Field name="QTY" type="Int32" size="4" source="MacroInput: Input" />
+            <Field name="NOTE" type="V_String" size="100" source="MacroInput: Input" />
+          </RecordInfo>
+        </MetaInfo>
+      </Properties>
+      <EngineSettings EngineDll="AlteryxBasePluginsEngine.dll" EngineDllEntryPoint="AlteryxMacroOutput" />
+    </Node>
+    <Node ToolID="10">
+      <GuiSettings Plugin="AlteryxGuiToolkit.Questions.NumericUpDown.NumericUpDown">
+        <Position x="378" y="174" />
+      </GuiSettings>
+      <Properties>
+        <Configuration>
+          <Question>
+            <Type>NumericUpDown</Type>
+            <Description>Minimum quantity to keep</Description>
+            <Name>MinQty</Name>
+            <ToolId value="10" />
+          </Question>
+          <Default>0</Default>
+          <Min>0</Min>
+          <Max>1000000</Max>
+          <Step>1</Step>
+        </Configuration>
+        <Annotation DisplayMode="0">
+          <Name />
+          <DefaultAnnotationText>MinQty</DefaultAnnotationText>
+        </Annotation>
+      </Properties>
+      <EngineSettings />
+    </Node>
+  </Nodes>
+  <Connections>
+    <Connection>
+      <Origin ToolID="1" Connection="Output" />
+      <Destination ToolID="2" Connection="Input" />
+    </Connection>
+    <Connection>
+      <Origin ToolID="2" Connection="Output" />
+      <Destination ToolID="3" Connection="Input" />
+    </Connection>
+    <Connection>
+      <Origin ToolID="3" Connection="Output" />
+      <Destination ToolID="4" Connection="Input" />
+    </Connection>
+    <Connection>
+      <Origin ToolID="4" Connection="True" />
+      <Destination ToolID="5" Connection="Input" />
+    </Connection>
+  </Connections>
+  <Properties>
+    <Memory default="True" />
+    <GlobalRecordLimit value="0" />
+    <TempFiles default="True" />
+    <Annotation on="True" includeToolName="False" />
+    <ConvErrorLimit value="10" />
+    <ConvErrorLimit_Stopped value="False" />
+    <CancelOnError value="False" />
+    <DisableBrowse value="False" />
+    <EnablePerformanceProfiling value="False" />
+    <DisableAllOutput value="False" />
+    <ShowAllMacroMessages value="False" />
+    <ShowConnectionStatusIsOn value="True" />
+    <ShowConnectionStatusOnlyWhenRunning value="True" />
+    <ZoomLevel value="0" />
+    <LayoutType>Horizontal</LayoutType>
+    <Constants />
+    <RuntimeProperties>
+      <Actions />
+      <Questions />
+      <ModuleType>Macro</ModuleType>
+      <MacroCustomHelp value="False" />
+      <RunE2 value="False" />
+    </RuntimeProperties>
+  </Properties>
+</AlteryxDocument>

@@ -1,0 +1,25 @@
+sources:
+  crm/customers.yxdb:
+    snowflake: CRM.RAW.CUSTOMERS
+    logical: CUSTOMERS
+    tool_ids:
+    - '1'
+    confirmed_by: automation
+  crm/orders_export.csv:
+    snowflake: CRM.RAW.ORDERS_EXPORT
+    logical: ORDERS_EXPORT
+    tool_ids:
+    - '3'
+    confirmed_by: automation
+outputs:
+  alias:dw_sales/dbo.customer_order_fact:
+    snowflake: ANALYTICS.CURATED.CUSTOMER_ORDER_FACT
+    logical: CUSTOMER_ORDER_FACT
+    tool_ids:
+    - '10'
+    confirmed_by: automation
+    mode: append
+    keys: []
+constants: {}
+parameters: {}
+macros: {}

@@ -1,0 +1,8 @@
+- This repo migrates Alteryx workflows to Snowflake. Never deploy, never write outside the current workflow's folder.
+- Sandbox schemas: MIG_WORK (procedures under test), MIG_GOLDEN (golden data). Never reference production schemas by name in SQL.
+- Sources come only from workflows/<id>/intake/mappings.yaml or mappings/global.yaml.
+- Numbers about data (counts, diffs, tolerances) come only from scripts/compare.py output. Never estimate.
+- One CTE per Alteryx tool, named t<toolid>_<tooltype>, with the tool id in a comment.
+- If you are unsure what a tool does, mark it unknown and stop; do not guess semantics.
+- Procedures follow docs/reference/dag-contract.md and plan contract C4: linear statement list, logical source and target names only.
+- Run every Python script with the venv interpreter, never bare `python`: `.venv/Scripts/python.exe` on Windows, `.venv/bin/python` elsewhere.

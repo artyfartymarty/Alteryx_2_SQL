@@ -1,0 +1,48 @@
+{
+  "id": "wf_0003",
+  "status": {
+    "parse": "PARSED",
+    "intake": "READY",
+    "analyze": "DONE",
+    "golden": "DONE",
+    "translate": "VALIDATED",
+    "document": "DONE"
+  },
+  "metrics": {},
+  "source": {
+    "file": "gl_period_close.yxmd",
+    "alteryx_version": "2023.1",
+    "engine": "AMP",
+    "server_schedule": "0 6 * * 1-5",
+    "owner": "wf_owner",
+    "consumers": []
+  },
+  "segmentation": {
+    "min_tools": 3,
+    "max_tools": 40
+  },
+  "updated_at": "2026-09-20T01:32:53.902Z",
+  "parse": {
+    "attempts": 1,
+    "extensions": []
+  },
+  "answers": {
+    "Q1": "FINANCE.RAW.GL_LEDGER",
+    "Q2": "ANALYTICS.CURATED.GL_SUMMARY"
+  },
+  "segments": [
+    "seg_01",
+    "seg_02"
+  ],
+  "tier": "T1",
+  "golden_sets": [
+    "normal",
+    "period_end",
+    "empty",
+    "edge"
+  ],
+  "segment_status": {
+    "seg_01": "PASS",
+    "seg_02": "PASS"
+  }
+}

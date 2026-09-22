@@ -1,0 +1,27 @@
+sources:
+  sales/orders.yxdb:
+    snowflake: SALES.RAW.ORDERS
+    logical: ORDERS
+    tool_ids:
+    - '1'
+    confirmed_by: automation
+outputs:
+  out/sales_summary.yxdb:
+    snowflake: ANALYTICS.CURATED.SALES_SUMMARY
+    logical: SALES_SUMMARY
+    tool_ids:
+    - '7'
+    confirmed_by: automation
+    mode: overwrite
+    keys: []
+  out/excluded_orders.csv:
+    snowflake: ANALYTICS.CURATED.EXCLUDED_ORDERS
+    logical: EXCLUDED_ORDERS
+    tool_ids:
+    - '8'
+    confirmed_by: automation
+    mode: overwrite
+    keys: []
+constants: {}
+parameters: {}
+macros: {}

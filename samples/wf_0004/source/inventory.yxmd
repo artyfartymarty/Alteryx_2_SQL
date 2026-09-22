@@ -1,0 +1,254 @@
+<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2023.1">
+  <Nodes>
+    <Node ToolID="1">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.DbFileInput.DbFileInput">
+        <Position x="54" y="66" />
+      </GuiSettings>
+      <Properties>
+        <Configuration>
+          <Passwords />
+          <File OutputFileName="" RecordLimit="" SearchSubDirs="False" FileFormat="19">C:\data\wh\stock.yxdb</File>
+          <FormatSpecificOptions />
+        </Configuration>
+        <Annotation DisplayMode="0">
+          <Name />
+          <DefaultAnnotationText>Warehouse stock</DefaultAnnotationText>
+        </Annotation>
+        <MetaInfo connection="Output">
+          <RecordInfo>
+            <Field name="SKU" type="V_String" size="30" source="File: C:\data\wh\stock.yxdb" />
+            <Field name="WAREHOUSE" type="V_String" size="10" source="File: C:\data\wh\stock.yxdb" />
+            <Field name="QTY" type="Int32" size="4" source="File: C:\data\wh\stock.yxdb" />
+            <Field name="NOTE" type="V_String" size="100" source="File: C:\data\wh\stock.yxdb" />
+          </RecordInfo>
+        </MetaInfo>
+      </Properties>
+      <EngineSettings EngineDll="AlteryxBasePluginsEngine.dll" EngineDllEntryPoint="AlteryxDbFileInput" />
+    </Node>
+    <Node ToolID="2">
+      <GuiSettings>
+        <Position x="162" y="66" />
+      </GuiSettings>
+      <Properties>
+        <Configuration>
+          <Value name="MinQty">1</Value>
+        </Configuration>
+        <Annotation DisplayMode="0">
+          <Name />
+          <DefaultAnnotationText>Clean SKU codes, drop empty stock</DefaultAnnotationText>
+        </Annotation>
+        <MetaInfo connection="Output5">
+          <RecordInfo>
+            <Field name="SKU" type="V_String" size="30" source="Macro: clean_codes.yxmc" />
+            <Field name="WAREHOUSE" type="V_String" size="10" source="File: C:\data\wh\stock.yxdb" />
+            <Field name="QTY" type="Int32" size="4" source="File: C:\data\wh\stock.yxdb" />
+            <Field name="NOTE" type="V_String" size="100" source="File: C:\data\wh\stock.yxdb" />
+          </RecordInfo>
+        </MetaInfo>
+      </Properties>
+      <EngineSettings Macro="Supporting_Macros\clean_codes.yxmc" />
+    </Node>
+    <Node ToolID="3">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.RegEx.RegEx">
+        <Position x="270" y="66" />
+      </GuiSettings>
+      <Properties>
+        <Configuration>
+          <Field>SKU</Field>
+          <RegExExpression value="^([A-Z]+)-(\d+)$" />
+          <CaseInsensitve value="False" />
+          <Method>Parse</Method>
+          <ParseFields>
+            <Field field="FAMILY" type="V_String" size="20" />
+            <Field field="ITEM_NO" type="V_String" size="10" />
+          </ParseFields>
+          <ErrorHandling>Ignore</ErrorHandling>
+        </Configuration>
+        <Annotation DisplayMode="0">
+          <Name />
+          <DefaultAnnotationText>Split SKU into family and item</DefaultAnnotationText>
+        </Annotation>
+        <MetaInfo connection="Output">
+          <RecordInfo>
+            <Field name="SKU" type="V_String" size="30" source="Macro: clean_codes.yxmc" />
+            <Field name="WAREHOUSE" type="V_String" size="10" source="File: C:\data\wh\stock.yxdb" />
+            <Field name="QTY" type="Int32" size="4" source="File: C:\data\wh\stock.yxdb" />
+            <Field name="NOTE" type="V_String" size="100" source="File: C:\data\wh\stock.yxdb" />
+            <Field name="FAMILY" type="V_String" size="20" source="RegEx: FAMILY" />
+            <Field name="ITEM_NO" type="V_String" size="10" source="RegEx: ITEM_NO" />
+          </RecordInfo>
+        </MetaInfo>
+      </Properties>
+      <EngineSettings EngineDll="AlteryxBasePluginsEngine.dll" EngineDllEntryPoint="AlteryxRegex" />
+    </Node>
+    <Node ToolID="4">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.CrossTab.CrossTab">
+        <Position x="378" y="66" />
+      </GuiSettings>
+      <Properties>
+        <Configuration>
+          <GroupFields>
+            <Field field="SKU" />
+            <Field field="FAMILY" />
+          </GroupFields>
+          <HeaderField field="WAREHOUSE" />
+          <DataField field="QTY" />
+          <Methods>
+            <Method method="Sum" />
+          </Methods>
+        </Configuration>
+        <Annotation DisplayMode="0">
+          <Name />
+          <DefaultAnnotationText>Quantity per warehouse</DefaultAnnotationText>
+        </Annotation>
+        <MetaInfo connection="Output">
+          <RecordInfo>
+            <Field name="SKU" type="V_String" size="30" source="Macro: clean_codes.yxmc" />
+            <Field name="FAMILY" type="V_String" size="20" source="RegEx: FAMILY" />
+            <Field name="EAST" type="Double" size="8" source="CrossTab: EAST" />
+            <Field name="NORTH" type="Double" size="8" source="CrossTab: NORTH" />
+            <Field name="WEST" type="Double" size="8" source="CrossTab: WEST" />
+          </RecordInfo>
+        </MetaInfo>
+      </Properties>
+      <EngineSettings EngineDll="AlteryxBasePluginsEngine.dll" EngineDllEntryPoint="AlteryxCrossTab" />
+    </Node>
+    <Node ToolID="5">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.Transpose.Transpose">
+        <Position x="486" y="138" />
+      </GuiSettings>
+      <Properties>
+        <Configuration>
+          <KeyFields>
+            <Field field="SKU" />
+          </KeyFields>
+          <DataFields>
+            <Field field="EAST" selected="True" />
+            <Field field="NORTH" selected="True" />
+            <Field field="WEST" selected="True" />
+          </DataFields>
+        </Configuration>
+        <Annotation DisplayMode="0">
+          <Name />
+          <DefaultAnnotationText>Back to one row per warehouse</DefaultAnnotationText>
+        </Annotation>
+        <MetaInfo connection="Output">
+          <RecordInfo>
+            <Field name="SKU" type="V_String" size="30" source="Macro: clean_codes.yxmc" />
+            <Field name="Name" type="V_String" size="255" source="Transpose: Name" />
+            <Field name="Value" type="Double" size="8" source="Transpose: Value" />
+          </RecordInfo>
+        </MetaInfo>
+      </Properties>
+      <EngineSettings EngineDll="AlteryxBasePluginsEngine.dll" EngineDllEntryPoint="AlteryxTranspose" />
+    </Node>
+    <Node ToolID="6">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.DbFileOutput.DbFileOutput">
+        <Position x="486" y="18" />
+      </GuiSettings>
+      <Properties>
+        <Configuration>
+          <Passwords />
+          <File MaxRecords="" FileFormat="19">C:\data\out\inventory_by_wh.yxdb</File>
+          <FormatSpecificOptions>
+            <OutputOption>Overwrite</OutputOption>
+          </FormatSpecificOptions>
+          <MultiFile value="False" />
+        </Configuration>
+        <Annotation DisplayMode="0">
+          <Name />
+          <DefaultAnnotationText>inventory_by_wh.yxdb</DefaultAnnotationText>
+        </Annotation>
+        <MetaInfo connection="Output">
+          <RecordInfo>
+            <Field name="SKU" type="V_String" size="30" source="Macro: clean_codes.yxmc" />
+            <Field name="FAMILY" type="V_String" size="20" source="RegEx: FAMILY" />
+            <Field name="EAST" type="Double" size="8" source="CrossTab: EAST" />
+            <Field name="NORTH" type="Double" size="8" source="CrossTab: NORTH" />
+            <Field name="WEST" type="Double" size="8" source="CrossTab: WEST" />
+          </RecordInfo>
+        </MetaInfo>
+      </Properties>
+      <EngineSettings EngineDll="AlteryxBasePluginsEngine.dll" EngineDllEntryPoint="AlteryxDbFileOutput" />
+    </Node>
+    <Node ToolID="7">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.DbFileOutput.DbFileOutput">
+        <Position x="594" y="138" />
+      </GuiSettings>
+      <Properties>
+        <Configuration>
+          <Passwords />
+          <File MaxRecords="" FileFormat="19">C:\data\out\inventory_long.yxdb</File>
+          <FormatSpecificOptions>
+            <OutputOption>Overwrite</OutputOption>
+          </FormatSpecificOptions>
+          <MultiFile value="False" />
+        </Configuration>
+        <Annotation DisplayMode="0">
+          <Name />
+          <DefaultAnnotationText>inventory_long.yxdb</DefaultAnnotationText>
+        </Annotation>
+        <MetaInfo connection="Output">
+          <RecordInfo>
+            <Field name="SKU" type="V_String" size="30" source="Macro: clean_codes.yxmc" />
+            <Field name="Name" type="V_String" size="255" source="Transpose: Name" />
+            <Field name="Value" type="Double" size="8" source="Transpose: Value" />
+          </RecordInfo>
+        </MetaInfo>
+      </Properties>
+      <EngineSettings EngineDll="AlteryxBasePluginsEngine.dll" EngineDllEntryPoint="AlteryxDbFileOutput" />
+    </Node>
+  </Nodes>
+  <Connections>
+    <Connection>
+      <Origin ToolID="1" Connection="Output" />
+      <Destination ToolID="2" Connection="Input1" />
+    </Connection>
+    <Connection>
+      <Origin ToolID="2" Connection="Output5" />
+      <Destination ToolID="3" Connection="Input" />
+    </Connection>
+    <Connection>
+      <Origin ToolID="3" Connection="Output" />
+      <Destination ToolID="4" Connection="Input" />
+    </Connection>
+    <Connection>
+      <Origin ToolID="4" Connection="Output" />
+      <Destination ToolID="5" Connection="Input" />
+    </Connection>
+    <Connection>
+      <Origin ToolID="4" Connection="Output" />
+      <Destination ToolID="6" Connection="Input" />
+    </Connection>
+    <Connection>
+      <Origin ToolID="5" Connection="Output" />
+      <Destination ToolID="7" Connection="Input" />
+    </Connection>
+  </Connections>
+  <Properties>
+    <Memory default="True" />
+    <GlobalRecordLimit value="0" />
+    <TempFiles default="True" />
+    <Annotation on="True" includeToolName="False" />
+    <ConvErrorLimit value="10" />
+    <ConvErrorLimit_Stopped value="False" />
+    <CancelOnError value="False" />
+    <DisableBrowse value="False" />
+    <EnablePerformanceProfiling value="False" />
+    <DisableAllOutput value="False" />
+    <ShowAllMacroMessages value="False" />
+    <ShowConnectionStatusIsOn value="True" />
+    <ShowConnectionStatusOnlyWhenRunning value="True" />
+    <ZoomLevel value="0" />
+    <LayoutType>Horizontal</LayoutType>
+    <Constants />
+    <RuntimeProperties>
+      <Actions />
+      <Questions />
+      <ModuleType>Wizard</ModuleType>
+      <MacroCustomHelp value="False" />
+      <RunE2 value="False" />
+    </RuntimeProperties>
+  </Properties>
+</AlteryxDocument>

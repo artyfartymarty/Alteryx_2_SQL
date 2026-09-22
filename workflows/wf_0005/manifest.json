@@ -1,0 +1,38 @@
+{
+  "id": "wf_0005",
+  "status": {
+    "parse": "PARSED",
+    "intake": "READY",
+    "analyze": "DONE",
+    "translate": "MANUAL"
+  },
+  "metrics": {},
+  "source": {
+    "file": "vendor_dedupe.yxmd",
+    "alteryx_version": "2023.1",
+    "engine": "E1",
+    "server_schedule": "0 6 * * 1-5",
+    "owner": "wf_owner",
+    "consumers": []
+  },
+  "segmentation": {
+    "min_tools": 3,
+    "max_tools": 40
+  },
+  "updated_at": "2026-09-20T01:32:53.906Z",
+  "parse": {
+    "attempts": 2,
+    "extensions": []
+  },
+  "answers": {
+    "Q1": "VENDOR.RAW.ACCOUNTS",
+    "Q4": "ANALYTICS.CURATED.ACCOUNTS_CLEAN"
+  },
+  "segments": [
+    "seg_01"
+  ],
+  "tier": "T3",
+  "reasons": {
+    "translate": "tier-T3"
+  }
+}

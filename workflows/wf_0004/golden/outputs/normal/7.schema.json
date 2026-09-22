@@ -1,0 +1,20 @@
+[
+  {
+    "name": "SKU",
+    "type": "V_String",
+    "size": 30,
+    "scale": null
+  },
+  {
+    "name": "Name",
+    "type": "V_String",
+    "size": 255,
+    "scale": null
+  },
+  {
+    "name": "Value",
+    "type": "Double",
+    "size": 8,
+    "scale": null
+  }
+]

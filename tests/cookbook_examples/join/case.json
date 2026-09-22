@@ -1,0 +1,29 @@
+{
+  "tool": "join",
+  "inputs": {
+    "1": "input_customers.csv",
+    "2": "input_orders.csv"
+  },
+  "node": {
+    "tool_id": "3",
+    "type": "join",
+    "config": {
+      "keys": [
+        { "left": "CUST_ID", "right": "CUST_ID" }
+      ],
+      "select": {
+        "fields": [],
+        "unknown_selected": true
+      }
+    }
+  },
+  "edges": [
+    ["1", "Output", "3", "Left"],
+    ["2", "Output", "3", "Right"]
+  ],
+  "compare": [
+    { "stream": "3_J", "sql": "query_j.sql", "keys": [] },
+    { "stream": "3_L", "sql": "query_l.sql", "keys": [] },
+    { "stream": "3_R", "sql": "query_r.sql", "keys": [] }
+  ]
+}

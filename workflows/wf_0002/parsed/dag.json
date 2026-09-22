@@ -1,0 +1,923 @@
+{
+  "workflow": "wf_0002",
+  "yxmd_version": "2023.1",
+  "engine": "E1",
+  "constants": {},
+  "file_kind": "yxmd",
+  "source_file": "customer_orders.yxmd",
+  "nodes": [
+    {
+      "tool_id": "100",
+      "type": "container",
+      "plugin": "AlteryxGuiToolkit.ToolContainer.ToolContainer",
+      "container_id": null,
+      "config": {},
+      "raw_config": "<Configuration>\n          <Caption>Prep customers</Caption>\n          <Style TextColor=\"#314c4a\" FillColor=\"#ecf2f2\" BorderColor=\"#314c4a\" Transparency=\"25\" Margin=\"25\" />\n          <Disabled value=\"False\" />\n          <Folded value=\"False\" />\n        </Configuration>",
+      "annotation": "Prep customers",
+      "in_anchors": [],
+      "out_anchors": [],
+      "meta": {}
+    },
+    {
+      "tool_id": "1",
+      "type": "input",
+      "plugin": "AlteryxBasePluginsGui.DbFileInput.DbFileInput",
+      "container_id": "100",
+      "config": {
+        "source": "\\\\fileserver\\crm\\customers.yxdb",
+        "format": "yxdb",
+        "query": null,
+        "alias": null,
+        "csv": null,
+        "record_limit": null
+      },
+      "raw_config": "<Configuration>\n              <Passwords />\n              <File OutputFileName=\"\" RecordLimit=\"\" SearchSubDirs=\"False\" FileFormat=\"19\">\\\\fileserver\\crm\\customers.yxdb</File>\n              <FormatSpecificOptions />\n            </Configuration>",
+      "annotation": "CRM customers",
+      "in_anchors": [],
+      "out_anchors": [
+        "Output"
+      ],
+      "meta": {
+        "Output": [
+          {
+            "name": "CUST_ID",
+            "type": "Int32",
+            "size": 4,
+            "scale": null
+          },
+          {
+            "name": "NAME",
+            "type": "V_WString",
+            "size": 60,
+            "scale": null
+          },
+          {
+            "name": "CITY",
+            "type": "V_String",
+            "size": 40,
+            "scale": null
+          },
+          {
+            "name": "TIER",
+            "type": "V_String",
+            "size": 10,
+            "scale": null
+          }
+        ]
+      }
+    },
+    {
+      "tool_id": "2",
+      "type": "data_cleansing",
+      "plugin": null,
+      "container_id": "100",
+      "config": {
+        "fields": [
+          "NAME",
+          "CITY"
+        ],
+        "replace_null_strings_blank": true,
+        "replace_null_numeric_zero": false,
+        "trim_whitespace": true,
+        "remove_tabs_linebreaks_dupspaces": false,
+        "remove_all_whitespace": false,
+        "remove_letters": false,
+        "remove_numbers": false,
+        "remove_punctuation": false,
+        "modify_case": "upper"
+      },
+      "raw_config": "<Configuration>\n              <Value name=\"List Box (11)\">\"NAME\",\"CITY\"</Value>\n              <Value name=\"Check Box (84)\">True</Value>\n              <Value name=\"Check Box (117)\">False</Value>\n              <Value name=\"Check Box (15)\">True</Value>\n              <Value name=\"Check Box (109)\">False</Value>\n              <Value name=\"Check Box (122)\">False</Value>\n              <Value name=\"Check Box (53)\">False</Value>\n              <Value name=\"Check Box (58)\">False</Value>\n              <Value name=\"Check Box (70)\">False</Value>\n              <Value name=\"Check Box (77)\">True</Value>\n              <Value name=\"Drop Down (81)\">upper</Value>\n            </Configuration>",
+      "annotation": "Trim and upper-case NAME, CITY",
+      "in_anchors": [
+        "Input"
+      ],
+      "out_anchors": [
+        "Output"
+      ],
+      "meta": {
+        "Output": [
+          {
+            "name": "CUST_ID",
+            "type": "Int32",
+            "size": 4,
+            "scale": null
+          },
+          {
+            "name": "NAME",
+            "type": "V_WString",
+            "size": 60,
+            "scale": null
+          },
+          {
+            "name": "CITY",
+            "type": "V_String",
+            "size": 40,
+            "scale": null
+          },
+          {
+            "name": "TIER",
+            "type": "V_String",
+            "size": 10,
+            "scale": null
+          }
+        ]
+      }
+    },
+    {
+      "tool_id": "200",
+      "type": "container",
+      "plugin": "AlteryxGuiToolkit.ToolContainer.ToolContainer",
+      "container_id": null,
+      "config": {},
+      "raw_config": "<Configuration>\n          <Caption>Prep orders</Caption>\n          <Style TextColor=\"#514c31\" FillColor=\"#f2f1ec\" BorderColor=\"#514c31\" Transparency=\"25\" Margin=\"25\" />\n          <Disabled value=\"False\" />\n          <Folded value=\"False\" />\n        </Configuration>",
+      "annotation": "Prep orders",
+      "in_anchors": [],
+      "out_anchors": [],
+      "meta": {}
+    },
+    {
+      "tool_id": "210",
+      "type": "container",
+      "plugin": "AlteryxGuiToolkit.ToolContainer.ToolContainer",
+      "container_id": "200",
+      "config": {},
+      "raw_config": "<Configuration>\n              <Caption>Type the CSV export</Caption>\n              <Style TextColor=\"#4c3151\" FillColor=\"#f1ecf2\" BorderColor=\"#4c3151\" Transparency=\"25\" Margin=\"25\" />\n              <Disabled value=\"False\" />\n              <Folded value=\"False\" />\n            </Configuration>",
+      "annotation": "Type the CSV export",
+      "in_anchors": [],
+      "out_anchors": [],
+      "meta": {}
+    },
+    {
+      "tool_id": "3",
+      "type": "input",
+      "plugin": "AlteryxBasePluginsGui.DbFileInput.DbFileInput",
+      "container_id": "210",
+      "config": {
+        "source": "\\\\fileserver\\crm\\orders_export.csv",
+        "format": "csv",
+        "query": null,
+        "alias": null,
+        "csv": {
+          "delimiter": ",",
+          "header": true,
+          "codepage": "28591"
+        },
+        "record_limit": null
+      },
+      "raw_config": "<Configuration>\n                  <Passwords />\n                  <File OutputFileName=\"\" RecordLimit=\"\" SearchSubDirs=\"False\" FileFormat=\"0\">\\\\fileserver\\crm\\orders_export.csv</File>\n                  <FormatSpecificOptions>\n                    <HeaderRow>True</HeaderRow>\n                    <IgnoreErrors>False</IgnoreErrors>\n                    <AllowShareWrite>False</AllowShareWrite>\n                    <ImportLine>1</ImportLine>\n                    <FieldLen>254</FieldLen>\n                    <SingleThreadRead>False</SingleThreadRead>\n                    <IgnoreQuotes>DoubleQuotes</IgnoreQuotes>\n                    <Delimeter>,</Delimeter>\n                    <QuoteRecordBreak>False</QuoteRecordBreak>\n                    <CodePage>28591</CodePage>\n                  </FormatSpecificOptions>\n                </Configuration>",
+      "annotation": "Nightly orders export",
+      "in_anchors": [],
+      "out_anchors": [
+        "Output"
+      ],
+      "meta": {
+        "Output": [
+          {
+            "name": "ORDER_ID",
+            "type": "V_String",
+            "size": 254,
+            "scale": null
+          },
+          {
+            "name": "CUST_ID",
+            "type": "V_String",
+            "size": 254,
+            "scale": null
+          },
+          {
+            "name": "AMOUNT",
+            "type": "V_String",
+            "size": 254,
+            "scale": null
+          },
+          {
+            "name": "ORDER_DATE",
+            "type": "V_String",
+            "size": 254,
+            "scale": null
+          }
+        ]
+      }
+    },
+    {
+      "tool_id": "4",
+      "type": "select",
+      "plugin": "AlteryxBasePluginsGui.AlteryxSelect.AlteryxSelect",
+      "container_id": "210",
+      "config": {
+        "fields": [
+          {
+            "name": "ORDER_ID",
+            "selected": true,
+            "rename": null,
+            "type": "Int32",
+            "size": 4
+          },
+          {
+            "name": "CUST_ID",
+            "selected": true,
+            "rename": null,
+            "type": "Int32",
+            "size": 4
+          },
+          {
+            "name": "AMOUNT",
+            "selected": true,
+            "rename": null,
+            "type": "Double",
+            "size": 8
+          },
+          {
+            "name": "ORDER_DATE",
+            "selected": true,
+            "rename": null,
+            "type": "Date",
+            "size": 10
+          }
+        ],
+        "unknown_selected": false
+      },
+      "raw_config": "<Configuration>\n                  <OrderChanged value=\"False\" />\n                  <CommaDecimal value=\"False\" />\n                  <SelectFields>\n                    <SelectField field=\"ORDER_ID\" selected=\"True\" type=\"Int32\" size=\"4\" />\n                    <SelectField field=\"CUST_ID\" selected=\"True\" type=\"Int32\" size=\"4\" />\n                    <SelectField field=\"AMOUNT\" selected=\"True\" type=\"Double\" size=\"8\" />\n                    <SelectField field=\"ORDER_DATE\" selected=\"True\" type=\"Date\" size=\"10\" />\n                    <SelectField field=\"*Unknown\" selected=\"False\" />\n                  </SelectFields>\n                </Configuration>",
+      "annotation": "Strings to numbers and dates",
+      "in_anchors": [
+        "Input"
+      ],
+      "out_anchors": [
+        "Output"
+      ],
+      "meta": {
+        "Output": [
+          {
+            "name": "ORDER_ID",
+            "type": "Int32",
+            "size": 4,
+            "scale": null
+          },
+          {
+            "name": "CUST_ID",
+            "type": "Int32",
+            "size": 4,
+            "scale": null
+          },
+          {
+            "name": "AMOUNT",
+            "type": "Double",
+            "size": 8,
+            "scale": null
+          },
+          {
+            "name": "ORDER_DATE",
+            "type": "Date",
+            "size": 10,
+            "scale": null
+          }
+        ]
+      }
+    },
+    {
+      "tool_id": "5",
+      "type": "join",
+      "plugin": "AlteryxBasePluginsGui.Join.Join",
+      "container_id": null,
+      "config": {
+        "keys": [
+          {
+            "left": "CUST_ID",
+            "right": "CUST_ID"
+          }
+        ],
+        "select": {
+          "fields": [
+            {
+              "name": "Right_CUST_ID",
+              "selected": false,
+              "rename": null,
+              "type": null,
+              "size": null
+            }
+          ],
+          "unknown_selected": true
+        }
+      },
+      "raw_config": "<Configuration>\n          <JoinInfo connection=\"Left\">\n            <Field field=\"CUST_ID\" />\n          </JoinInfo>\n          <JoinInfo connection=\"Right\">\n            <Field field=\"CUST_ID\" />\n          </JoinInfo>\n          <JoinByRecordPos value=\"False\" />\n          <SelectConfiguration>\n            <Configuration outputConnection=\"Join\">\n              <OrderChanged value=\"False\" />\n              <CommaDecimal value=\"False\" />\n              <SelectFields>\n                <SelectField field=\"Right_CUST_ID\" selected=\"False\" />\n                <SelectField field=\"*Unknown\" selected=\"True\" />\n              </SelectFields>\n            </Configuration>\n          </SelectConfiguration>\n        </Configuration>",
+      "annotation": "Customers to orders on CUST_ID",
+      "in_anchors": [
+        "Left",
+        "Right"
+      ],
+      "out_anchors": [
+        "L",
+        "J",
+        "R"
+      ],
+      "meta": {
+        "L": [
+          {
+            "name": "CUST_ID",
+            "type": "Int32",
+            "size": 4,
+            "scale": null
+          },
+          {
+            "name": "NAME",
+            "type": "V_WString",
+            "size": 60,
+            "scale": null
+          },
+          {
+            "name": "CITY",
+            "type": "V_String",
+            "size": 40,
+            "scale": null
+          },
+          {
+            "name": "TIER",
+            "type": "V_String",
+            "size": 10,
+            "scale": null
+          }
+        ],
+        "J": [
+          {
+            "name": "CUST_ID",
+            "type": "Int32",
+            "size": 4,
+            "scale": null
+          },
+          {
+            "name": "NAME",
+            "type": "V_WString",
+            "size": 60,
+            "scale": null
+          },
+          {
+            "name": "CITY",
+            "type": "V_String",
+            "size": 40,
+            "scale": null
+          },
+          {
+            "name": "TIER",
+            "type": "V_String",
+            "size": 10,
+            "scale": null
+          },
+          {
+            "name": "ORDER_ID",
+            "type": "Int32",
+            "size": 4,
+            "scale": null
+          },
+          {
+            "name": "AMOUNT",
+            "type": "Double",
+            "size": 8,
+            "scale": null
+          },
+          {
+            "name": "ORDER_DATE",
+            "type": "Date",
+            "size": 10,
+            "scale": null
+          }
+        ],
+        "R": [
+          {
+            "name": "ORDER_ID",
+            "type": "Int32",
+            "size": 4,
+            "scale": null
+          },
+          {
+            "name": "CUST_ID",
+            "type": "Int32",
+            "size": 4,
+            "scale": null
+          },
+          {
+            "name": "AMOUNT",
+            "type": "Double",
+            "size": 8,
+            "scale": null
+          },
+          {
+            "name": "ORDER_DATE",
+            "type": "Date",
+            "size": 10,
+            "scale": null
+          }
+        ]
+      }
+    },
+    {
+      "tool_id": "6",
+      "type": "formula",
+      "plugin": "AlteryxBasePluginsGui.Formula.Formula",
+      "container_id": null,
+      "config": {
+        "formulas": [
+          {
+            "field": "MATCH_FLAG",
+            "expression": "\"MATCHED\"",
+            "type": "V_String",
+            "size": 12
+          }
+        ]
+      },
+      "raw_config": "<Configuration>\n          <FormulaFields>\n            <FormulaField expression=\"&quot;MATCHED&quot;\" field=\"MATCH_FLAG\" size=\"12\" type=\"V_String\" />\n          </FormulaFields>\n        </Configuration>",
+      "annotation": "MATCHED",
+      "in_anchors": [
+        "Input"
+      ],
+      "out_anchors": [
+        "Output"
+      ],
+      "meta": {
+        "Output": [
+          {
+            "name": "CUST_ID",
+            "type": "Int32",
+            "size": 4,
+            "scale": null
+          },
+          {
+            "name": "NAME",
+            "type": "V_WString",
+            "size": 60,
+            "scale": null
+          },
+          {
+            "name": "CITY",
+            "type": "V_String",
+            "size": 40,
+            "scale": null
+          },
+          {
+            "name": "TIER",
+            "type": "V_String",
+            "size": 10,
+            "scale": null
+          },
+          {
+            "name": "ORDER_ID",
+            "type": "Int32",
+            "size": 4,
+            "scale": null
+          },
+          {
+            "name": "AMOUNT",
+            "type": "Double",
+            "size": 8,
+            "scale": null
+          },
+          {
+            "name": "ORDER_DATE",
+            "type": "Date",
+            "size": 10,
+            "scale": null
+          },
+          {
+            "name": "MATCH_FLAG",
+            "type": "V_String",
+            "size": 12,
+            "scale": null
+          }
+        ]
+      }
+    },
+    {
+      "tool_id": "7",
+      "type": "formula",
+      "plugin": "AlteryxBasePluginsGui.Formula.Formula",
+      "container_id": null,
+      "config": {
+        "formulas": [
+          {
+            "field": "MATCH_FLAG",
+            "expression": "\"NO_ORDERS\"",
+            "type": "V_String",
+            "size": 12
+          }
+        ]
+      },
+      "raw_config": "<Configuration>\n          <FormulaFields>\n            <FormulaField expression=\"&quot;NO_ORDERS&quot;\" field=\"MATCH_FLAG\" size=\"12\" type=\"V_String\" />\n          </FormulaFields>\n        </Configuration>",
+      "annotation": "NO_ORDERS",
+      "in_anchors": [
+        "Input"
+      ],
+      "out_anchors": [
+        "Output"
+      ],
+      "meta": {
+        "Output": [
+          {
+            "name": "CUST_ID",
+            "type": "Int32",
+            "size": 4,
+            "scale": null
+          },
+          {
+            "name": "NAME",
+            "type": "V_WString",
+            "size": 60,
+            "scale": null
+          },
+          {
+            "name": "CITY",
+            "type": "V_String",
+            "size": 40,
+            "scale": null
+          },
+          {
+            "name": "TIER",
+            "type": "V_String",
+            "size": 10,
+            "scale": null
+          },
+          {
+            "name": "MATCH_FLAG",
+            "type": "V_String",
+            "size": 12,
+            "scale": null
+          }
+        ]
+      }
+    },
+    {
+      "tool_id": "8",
+      "type": "formula",
+      "plugin": "AlteryxBasePluginsGui.Formula.Formula",
+      "container_id": null,
+      "config": {
+        "formulas": [
+          {
+            "field": "MATCH_FLAG",
+            "expression": "\"ORPHAN\"",
+            "type": "V_String",
+            "size": 12
+          }
+        ]
+      },
+      "raw_config": "<Configuration>\n          <FormulaFields>\n            <FormulaField expression=\"&quot;ORPHAN&quot;\" field=\"MATCH_FLAG\" size=\"12\" type=\"V_String\" />\n          </FormulaFields>\n        </Configuration>",
+      "annotation": "ORPHAN",
+      "in_anchors": [
+        "Input"
+      ],
+      "out_anchors": [
+        "Output"
+      ],
+      "meta": {
+        "Output": [
+          {
+            "name": "ORDER_ID",
+            "type": "Int32",
+            "size": 4,
+            "scale": null
+          },
+          {
+            "name": "CUST_ID",
+            "type": "Int32",
+            "size": 4,
+            "scale": null
+          },
+          {
+            "name": "AMOUNT",
+            "type": "Double",
+            "size": 8,
+            "scale": null
+          },
+          {
+            "name": "ORDER_DATE",
+            "type": "Date",
+            "size": 10,
+            "scale": null
+          },
+          {
+            "name": "MATCH_FLAG",
+            "type": "V_String",
+            "size": 12,
+            "scale": null
+          }
+        ]
+      }
+    },
+    {
+      "tool_id": "9",
+      "type": "union",
+      "plugin": "AlteryxBasePluginsGui.Union.Union",
+      "container_id": null,
+      "config": {
+        "mode": "name"
+      },
+      "raw_config": "<Configuration>\n          <ByName_ErrorMode>Warning</ByName_ErrorMode>\n          <ByName_OutputMode>All</ByName_OutputMode>\n          <Mode>ByName</Mode>\n          <SetOutputOrder value=\"False\" />\n          <OutputOrder />\n        </Configuration>",
+      "annotation": "Stack the three flags",
+      "in_anchors": [
+        "Input"
+      ],
+      "out_anchors": [
+        "Output"
+      ],
+      "meta": {
+        "Output": [
+          {
+            "name": "CUST_ID",
+            "type": "Int32",
+            "size": 4,
+            "scale": null
+          },
+          {
+            "name": "NAME",
+            "type": "V_WString",
+            "size": 60,
+            "scale": null
+          },
+          {
+            "name": "CITY",
+            "type": "V_String",
+            "size": 40,
+            "scale": null
+          },
+          {
+            "name": "TIER",
+            "type": "V_String",
+            "size": 10,
+            "scale": null
+          },
+          {
+            "name": "ORDER_ID",
+            "type": "Int32",
+            "size": 4,
+            "scale": null
+          },
+          {
+            "name": "AMOUNT",
+            "type": "Double",
+            "size": 8,
+            "scale": null
+          },
+          {
+            "name": "ORDER_DATE",
+            "type": "Date",
+            "size": 10,
+            "scale": null
+          },
+          {
+            "name": "MATCH_FLAG",
+            "type": "V_String",
+            "size": 12,
+            "scale": null
+          }
+        ]
+      }
+    },
+    {
+      "tool_id": "10",
+      "type": "output",
+      "plugin": "AlteryxBasePluginsGui.DbFileOutput.DbFileOutput",
+      "container_id": null,
+      "config": {
+        "source": "<scrubbed:dw_sales>",
+        "format": "db",
+        "alias": "dw_sales",
+        "table": "dbo.CUSTOMER_ORDER_FACT",
+        "write_mode": "append",
+        "keys": [],
+        "pre_sql": null,
+        "post_sql": null
+      },
+      "raw_config": "<Configuration>\n          <Passwords />\n          <File MaxRecords=\"\" FileFormat=\"23\">&lt;scrubbed:dw_sales&gt;|||dbo.CUSTOMER_ORDER_FACT</File>\n          <FormatSpecificOptions>\n            <OutputOption>Append Existing</OutputOption>\n            <TableStyle>Quoted</TableStyle>\n            <TransactionSize>0</TransactionSize>\n          </FormatSpecificOptions>\n          <MultiFile value=\"False\" />\n        </Configuration>",
+      "annotation": "dbo.CUSTOMER_ORDER_FACT",
+      "in_anchors": [
+        "Input"
+      ],
+      "out_anchors": [],
+      "meta": {
+        "Output": [
+          {
+            "name": "CUST_ID",
+            "type": "Int32",
+            "size": 4,
+            "scale": null
+          },
+          {
+            "name": "NAME",
+            "type": "V_WString",
+            "size": 60,
+            "scale": null
+          },
+          {
+            "name": "CITY",
+            "type": "V_String",
+            "size": 40,
+            "scale": null
+          },
+          {
+            "name": "TIER",
+            "type": "V_String",
+            "size": 10,
+            "scale": null
+          },
+          {
+            "name": "ORDER_ID",
+            "type": "Int32",
+            "size": 4,
+            "scale": null
+          },
+          {
+            "name": "AMOUNT",
+            "type": "Double",
+            "size": 8,
+            "scale": null
+          },
+          {
+            "name": "ORDER_DATE",
+            "type": "Date",
+            "size": 10,
+            "scale": null
+          },
+          {
+            "name": "MATCH_FLAG",
+            "type": "V_String",
+            "size": 12,
+            "scale": null
+          }
+        ]
+      }
+    },
+    {
+      "tool_id": "11",
+      "type": "browse",
+      "plugin": "AlteryxBasePluginsGui.BrowseV2.BrowseV2",
+      "container_id": null,
+      "config": {},
+      "raw_config": "<Configuration>\n          <TempFile />\n          <Layout>\n            <ViewMode>Single</ViewMode>\n            <ViewSize value=\"100\" />\n          </Layout>\n        </Configuration>",
+      "annotation": "Eyeball the union",
+      "in_anchors": [
+        "Input"
+      ],
+      "out_anchors": [],
+      "meta": {
+        "Output": [
+          {
+            "name": "CUST_ID",
+            "type": "Int32",
+            "size": 4,
+            "scale": null
+          },
+          {
+            "name": "NAME",
+            "type": "V_WString",
+            "size": 60,
+            "scale": null
+          },
+          {
+            "name": "CITY",
+            "type": "V_String",
+            "size": 40,
+            "scale": null
+          },
+          {
+            "name": "TIER",
+            "type": "V_String",
+            "size": 10,
+            "scale": null
+          },
+          {
+            "name": "ORDER_ID",
+            "type": "Int32",
+            "size": 4,
+            "scale": null
+          },
+          {
+            "name": "AMOUNT",
+            "type": "Double",
+            "size": 8,
+            "scale": null
+          },
+          {
+            "name": "ORDER_DATE",
+            "type": "Date",
+            "size": 10,
+            "scale": null
+          },
+          {
+            "name": "MATCH_FLAG",
+            "type": "V_String",
+            "size": 12,
+            "scale": null
+          }
+        ]
+      }
+    },
+    {
+      "tool_id": "300",
+      "type": "comment",
+      "plugin": "AlteryxGuiToolkit.TextBox.TextBox",
+      "container_id": null,
+      "config": {},
+      "raw_config": "<Configuration>\n          <Text>Customers come from the CRM yxdb; orders arrive as a nightly CSV export, so every column lands as text and tool 4 types it. Unmatched rows on either side are kept and flagged rather than dropped.</Text>\n          <Font name=\"Segoe UI\" size=\"8.25\" style=\"0\" />\n          <TextColor name=\"Black\" />\n          <FillColor name=\"Custom\" red=\"255\" green=\"255\" blue=\"255\" />\n          <Shape shape=\"0\" />\n          <Justification Justification=\"4\" />\n        </Configuration>",
+      "annotation": null,
+      "in_anchors": [],
+      "out_anchors": [],
+      "meta": {}
+    }
+  ],
+  "edges": [
+    {
+      "src": "1",
+      "src_anchor": "Output",
+      "dst": "2",
+      "dst_anchor": "Input",
+      "dst_order": 1,
+      "wireless": false
+    },
+    {
+      "src": "2",
+      "src_anchor": "Output",
+      "dst": "5",
+      "dst_anchor": "Left",
+      "dst_order": 1,
+      "wireless": false
+    },
+    {
+      "src": "3",
+      "src_anchor": "Output",
+      "dst": "4",
+      "dst_anchor": "Input",
+      "dst_order": 1,
+      "wireless": false
+    },
+    {
+      "src": "4",
+      "src_anchor": "Output",
+      "dst": "5",
+      "dst_anchor": "Right",
+      "dst_order": 1,
+      "wireless": false
+    },
+    {
+      "src": "5",
+      "src_anchor": "J",
+      "dst": "6",
+      "dst_anchor": "Input",
+      "dst_order": 1,
+      "wireless": false
+    },
+    {
+      "src": "5",
+      "src_anchor": "L",
+      "dst": "7",
+      "dst_anchor": "Input",
+      "dst_order": 1,
+      "wireless": false
+    },
+    {
+      "src": "5",
+      "src_anchor": "R",
+      "dst": "8",
+      "dst_anchor": "Input",
+      "dst_order": 1,
+      "wireless": false
+    },
+    {
+      "src": "6",
+      "src_anchor": "Output",
+      "dst": "9",
+      "dst_anchor": "Input",
+      "dst_order": 1,
+      "wireless": false
+    },
+    {
+      "src": "7",
+      "src_anchor": "Output",
+      "dst": "9",
+      "dst_anchor": "Input",
+      "dst_order": 2,
+      "wireless": false
+    },
+    {
+      "src": "8",
+      "src_anchor": "Output",
+      "dst": "9",
+      "dst_anchor": "Input",
+      "dst_order": 3,
+      "wireless": false
+    },
+    {
+      "src": "9",
+      "src_anchor": "Output",
+      "dst": "10",
+      "dst_anchor": "Input",
+      "dst_order": 1,
+      "wireless": false
+    },
+    {
+      "src": "9",
+      "src_anchor": "Output",
+      "dst": "11",
+      "dst_anchor": "Input",
+      "dst_order": 1,
+      "wireless": false
+    }
+  ]
+}

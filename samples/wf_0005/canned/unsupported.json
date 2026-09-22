@@ -1,0 +1,29 @@
+{
+  "tier": "T3",
+  "unsupported": [
+    {
+      "tool_id": "3",
+      "type": "run_command",
+      "plugin": "AlteryxBasePluginsGui.RunCommand.RunCommand",
+      "class": "manual",
+      "reason": "A Run Command shells out to C:\\scripts\\notify.bat. Snowflake has no equivalent: a stored procedure cannot start a process on a host. The notification has to be rebuilt outside the warehouse (a task, an external function, or a step in whatever orchestrates the load), which is a human decision about the estate, not a translation.",
+      "blocks_migration": true
+    },
+    {
+      "tool_id": "2",
+      "type": "unknown",
+      "plugin": "AcmeAnalytics.Dedupe.DedupeTool",
+      "class": "unknown",
+      "reason": "A third-party plugin the parser does not know. scripts/parsers/ext/acme_dedupe.py explains what its configuration appears to do (key ACCT, keep MaxDate by UPDATED) and deliberately stops there: the XML does not say what happens to a NULL date, what happens on a tie, or whether the comparison is by date or by full timestamp. Until a human who knows the vendor tool answers those three questions, no SQL can be written for it.",
+      "blocks_migration": true
+    }
+  ],
+  "unknown": [
+    {
+      "tool_id": "2",
+      "plugin": "AcmeAnalytics.Dedupe.DedupeTool",
+      "confidence": 0.5,
+      "behavior": "See parsed/dag.json: the parser extension records the tool's own configuration and a plain-language description of what it appears to do. Nothing here decides what it means."
+    }
+  ]
+}

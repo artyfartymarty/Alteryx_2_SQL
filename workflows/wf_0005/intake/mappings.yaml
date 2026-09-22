@@ -1,0 +1,19 @@
+sources:
+  vendor/accounts.yxdb:
+    snowflake: VENDOR.RAW.ACCOUNTS
+    logical: ACCOUNTS
+    tool_ids:
+    - '1'
+    confirmed_by: automation
+outputs:
+  out/accounts_clean.yxdb:
+    snowflake: ANALYTICS.CURATED.ACCOUNTS_CLEAN
+    logical: ACCOUNTS_CLEAN
+    tool_ids:
+    - '4'
+    confirmed_by: automation
+    mode: overwrite
+    keys: []
+constants: {}
+parameters: {}
+macros: {}

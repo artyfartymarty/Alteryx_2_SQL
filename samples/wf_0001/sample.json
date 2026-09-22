@@ -1,0 +1,21 @@
+{
+  "id": "wf_0001",
+  "title": "Sales summary by region and size band",
+  "owner": "wf_owner",
+  "schedule": "0 6 * * 1-5",
+  "segmentation": {
+    "min_tools": 3,
+    "max_tools": 40
+  },
+  "expected_terminal": "VALIDATED",
+  "answers": {
+    "sales/orders.yxdb": "SALES.RAW.ORDERS",
+    "out/sales_summary.yxdb": "ANALYTICS.CURATED.SALES_SUMMARY",
+    "out/excluded_orders.csv": "ANALYTICS.CURATED.EXCLUDED_ORDERS"
+  },
+  "logical": {
+    "1": "ORDERS",
+    "7": "SALES_SUMMARY",
+    "8": "EXCLUDED_ORDERS"
+  }
+}

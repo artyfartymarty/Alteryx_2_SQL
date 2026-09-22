@@ -1,0 +1,104 @@
+{
+  "workflow": "wf_0002",
+  "segment": "seg_03",
+  "inputs": [
+    {
+      "from": "seg_01",
+      "stream": "2_Output",
+      "table": "MIG_WORK.WF0002_SEG_01_OUT",
+      "columns": [
+        { "name": "CUST_ID", "type": "NUMBER(38,0)", "nullable": true },
+        { "name": "NAME", "type": "VARCHAR(60)", "nullable": false },
+        { "name": "CITY", "type": "VARCHAR(40)", "nullable": false },
+        { "name": "TIER", "type": "VARCHAR(10)", "nullable": true }
+      ],
+      "keys": [],
+      "expected_rows": { "min": 0, "max": 500000 },
+      "large": false
+    },
+    {
+      "from": "seg_02",
+      "stream": "4_Output",
+      "table": "MIG_WORK.WF0002_SEG_02_OUT",
+      "columns": [
+        { "name": "ORDER_ID", "type": "NUMBER(38,0)", "nullable": true },
+        { "name": "CUST_ID", "type": "NUMBER(38,0)", "nullable": true },
+        { "name": "AMOUNT", "type": "FLOAT", "nullable": true },
+        { "name": "ORDER_DATE", "type": "DATE", "nullable": true }
+      ],
+      "keys": [],
+      "expected_rows": { "min": 0, "max": 5000000 },
+      "large": false
+    }
+  ],
+  "outputs": [
+    {
+      "stream": "9_Output",
+      "kind": "target",
+      "tool_id": "10",
+      "logical": "CUSTOMER_ORDER_FACT",
+      "table": null,
+      "write_mode": "append",
+      "columns": [
+        { "name": "CUST_ID", "type": "NUMBER(38,0)", "nullable": true },
+        { "name": "NAME", "type": "VARCHAR(60)", "nullable": true },
+        { "name": "CITY", "type": "VARCHAR(40)", "nullable": true },
+        { "name": "TIER", "type": "VARCHAR(10)", "nullable": true },
+        { "name": "ORDER_ID", "type": "NUMBER(38,0)", "nullable": true },
+        { "name": "AMOUNT", "type": "FLOAT", "nullable": true },
+        { "name": "ORDER_DATE", "type": "DATE", "nullable": true },
+        { "name": "MATCH_FLAG", "type": "VARCHAR(12)", "nullable": false }
+      ],
+      "keys": []
+    }
+  ],
+  "output": {
+    "stream": "9_Output",
+    "kind": "target",
+    "tool_id": "10",
+    "logical": "CUSTOMER_ORDER_FACT",
+    "table": null,
+    "write_mode": "append",
+    "columns": [
+      { "name": "CUST_ID", "type": "NUMBER(38,0)", "nullable": true },
+      { "name": "NAME", "type": "VARCHAR(60)", "nullable": true },
+      { "name": "CITY", "type": "VARCHAR(40)", "nullable": true },
+      { "name": "TIER", "type": "VARCHAR(10)", "nullable": true },
+      { "name": "ORDER_ID", "type": "NUMBER(38,0)", "nullable": true },
+      { "name": "AMOUNT", "type": "FLOAT", "nullable": true },
+      { "name": "ORDER_DATE", "type": "DATE", "nullable": true },
+      { "name": "MATCH_FLAG", "type": "VARCHAR(12)", "nullable": false }
+    ],
+    "keys": []
+  },
+  "row_relation": "expand",
+  "ordering": {
+    "keys": [],
+    "alteryx_deterministic": true,
+    "order_dependent_columns": []
+  },
+  "tolerances": {},
+  "normalizations": [],
+  "parity_risks": [
+    {
+      "tool_id": "5",
+      "class": "NULL_SEMANTICS",
+      "note": "A NULL join key matches nothing, so a NULL-CUST_ID customer leaves on L and a NULL-CUST_ID order leaves on R; the anti-joins use NOT EXISTS, which keeps that behaviour, where a NOT IN would drop every row once the other side held a NULL."
+    },
+    {
+      "tool_id": "5",
+      "class": "LOGIC",
+      "note": "Join key comparison is exact and case-sensitive -- no trimming, no case folding, no numeric coercion of text; both sides are already NUMBER here."
+    },
+    {
+      "tool_id": "9",
+      "class": "LOGIC",
+      "note": "Union by name: the output keeps input #1's field order and a field an input lacks arrives NULL, so every branch is projected into tool 6's column list with typed NULLs before the UNION ALL."
+    },
+    {
+      "tool_id": "10",
+      "class": "LOGIC",
+      "note": "Append Existing adds to whatever the target already holds and maps columns to it by name, so the golden output is the target's state AFTER the append, not just this run's rows."
+    }
+  ]
+}

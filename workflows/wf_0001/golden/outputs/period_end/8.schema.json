@@ -1,0 +1,44 @@
+[
+  {
+    "name": "CUSTOMER",
+    "type": "String",
+    "size": 10,
+    "scale": null
+  },
+  {
+    "name": "ORDER_STATUS",
+    "type": "V_String",
+    "size": 10,
+    "scale": null
+  },
+  {
+    "name": "ORDER_ID",
+    "type": "Int32",
+    "size": 4,
+    "scale": null
+  },
+  {
+    "name": "REGION",
+    "type": "V_String",
+    "size": 20,
+    "scale": null
+  },
+  {
+    "name": "AMOUNT_TXT",
+    "type": "V_String",
+    "size": 20,
+    "scale": null
+  },
+  {
+    "name": "QTY",
+    "type": "Int32",
+    "size": 4,
+    "scale": null
+  },
+  {
+    "name": "ORDER_DATE",
+    "type": "Date",
+    "size": 10,
+    "scale": null
+  }
+]

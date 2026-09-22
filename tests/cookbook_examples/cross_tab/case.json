@@ -1,0 +1,30 @@
+{
+  "tool": "cross_tab",
+  "inputs": {
+    "1": "input.csv"
+  },
+  "node": {
+    "tool_id": "2",
+    "type": "cross_tab",
+    "config": {
+      "group_by": ["SKU"],
+      "header_field": "WH",
+      "data_field": "QTY",
+      "methods": ["Sum"]
+    },
+    "meta": {
+      "Output": [
+        { "name": "SKU", "type": "V_String", "size": 10, "scale": null },
+        { "name": "EAST", "type": "Double", "size": 8, "scale": null },
+        { "name": "NORTH", "type": "Double", "size": 8, "scale": null },
+        { "name": "WEST", "type": "Double", "size": 8, "scale": null }
+      ]
+    }
+  },
+  "edges": [
+    ["1", "Output", "2", "Input"]
+  ],
+  "compare": [
+    { "stream": "2_Output", "sql": "query.sql", "keys": ["SKU"] }
+  ]
+}

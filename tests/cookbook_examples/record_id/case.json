@@ -1,0 +1,22 @@
+{
+  "tool": "record_id",
+  "inputs": {
+    "1": "input.csv"
+  },
+  "node": {
+    "tool_id": "2",
+    "type": "record_id",
+    "config": {
+      "field": "RID",
+      "start": 100,
+      "type": "Int32",
+      "position": "first"
+    }
+  },
+  "edges": [
+    ["1", "Output", "2", "Input"]
+  ],
+  "compare": [
+    { "stream": "2_Output", "sql": "query.sql", "keys": ["RID"] }
+  ]
+}

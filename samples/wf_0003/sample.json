@@ -1,0 +1,19 @@
+{
+  "id": "wf_0003",
+  "title": "GL period close",
+  "owner": "wf_owner",
+  "schedule": "0 6 * * 1-5",
+  "segmentation": {
+    "min_tools": 3,
+    "max_tools": 40
+  },
+  "expected_terminal": "VALIDATED",
+  "answers": {
+    "1": "FINANCE.RAW.GL_LEDGER",
+    "10": "ANALYTICS.CURATED.GL_SUMMARY"
+  },
+  "logical": {
+    "1": "GL_LEDGER",
+    "10": "GL_SUMMARY"
+  }
+}

@@ -1,0 +1,6 @@
+CUSTOMER,STATUS,NOTE,ORDER_ID,REGION
+Acme Corporation,OPEN,n1,101,EAST
+Acme Corporation,OPEN,n1,101,EAST
+Globex,\N,n2,102,WEST
+Bó Zhāng Résumé,PENDING,n3,103,\N
+TenCharsX!,PENDING,n4,104,SOUTH

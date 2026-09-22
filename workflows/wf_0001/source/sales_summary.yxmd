@@ -1,0 +1,317 @@
+<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2023.1">
+  <Nodes>
+    <Node ToolID="1">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.DbFileInput.DbFileInput">
+        <Position x="54" y="66" />
+      </GuiSettings>
+      <Properties>
+        <Configuration>
+          <Passwords />
+          <File OutputFileName="" RecordLimit="" SearchSubDirs="False" FileFormat="19">C:\data\sales\orders.yxdb</File>
+          <FormatSpecificOptions />
+        </Configuration>
+        <Annotation DisplayMode="0">
+          <Name />
+          <DefaultAnnotationText>Orders extract</DefaultAnnotationText>
+        </Annotation>
+        <MetaInfo connection="Output">
+          <RecordInfo>
+            <Field name="ORDER_ID" type="Int32" size="4" source="File: C:\data\sales\orders.yxdb" />
+            <Field name="CUSTOMER" type="V_String" size="50" source="File: C:\data\sales\orders.yxdb" />
+            <Field name="REGION" type="V_String" size="20" source="File: C:\data\sales\orders.yxdb" />
+            <Field name="AMOUNT_TXT" type="V_String" size="20" source="File: C:\data\sales\orders.yxdb" />
+            <Field name="QTY" type="Int32" size="4" source="File: C:\data\sales\orders.yxdb" />
+            <Field name="ORDER_DATE" type="Date" size="10" source="File: C:\data\sales\orders.yxdb" />
+            <Field name="STATUS" type="V_String" size="10" source="File: C:\data\sales\orders.yxdb" />
+          </RecordInfo>
+        </MetaInfo>
+      </Properties>
+      <EngineSettings EngineDll="AlteryxBasePluginsEngine.dll" EngineDllEntryPoint="AlteryxDbFileInput" />
+    </Node>
+    <Node ToolID="2">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.AlteryxSelect.AlteryxSelect">
+        <Position x="162" y="66" />
+      </GuiSettings>
+      <Properties>
+        <Configuration>
+          <OrderChanged value="True" />
+          <CommaDecimal value="False" />
+          <SelectFields>
+            <SelectField field="CUSTOMER" selected="True" type="String" size="10" />
+            <SelectField field="STATUS" selected="True" rename="ORDER_STATUS" />
+            <SelectField field="*Unknown" selected="True" />
+          </SelectFields>
+        </Configuration>
+        <Annotation DisplayMode="0">
+          <Name />
+          <DefaultAnnotationText>Shorten CUSTOMER, rename STATUS</DefaultAnnotationText>
+        </Annotation>
+        <MetaInfo connection="Output">
+          <RecordInfo>
+            <Field name="CUSTOMER" type="String" size="10" source="File: C:\data\sales\orders.yxdb" />
+            <Field name="ORDER_STATUS" type="V_String" size="10" source="File: C:\data\sales\orders.yxdb" />
+            <Field name="ORDER_ID" type="Int32" size="4" source="File: C:\data\sales\orders.yxdb" />
+            <Field name="REGION" type="V_String" size="20" source="File: C:\data\sales\orders.yxdb" />
+            <Field name="AMOUNT_TXT" type="V_String" size="20" source="File: C:\data\sales\orders.yxdb" />
+            <Field name="QTY" type="Int32" size="4" source="File: C:\data\sales\orders.yxdb" />
+            <Field name="ORDER_DATE" type="Date" size="10" source="File: C:\data\sales\orders.yxdb" />
+          </RecordInfo>
+        </MetaInfo>
+      </Properties>
+      <EngineSettings EngineDll="AlteryxBasePluginsEngine.dll" EngineDllEntryPoint="AlteryxSelect" />
+    </Node>
+    <Node ToolID="3">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.Filter.Filter">
+        <Position x="270" y="66" />
+      </GuiSettings>
+      <Properties>
+        <Configuration>
+          <Expression>[REGION] != "WEST"</Expression>
+          <Mode>Custom</Mode>
+        </Configuration>
+        <Annotation DisplayMode="0">
+          <Name />
+          <DefaultAnnotationText>Exclude WEST</DefaultAnnotationText>
+        </Annotation>
+        <MetaInfo connection="True">
+          <RecordInfo>
+            <Field name="CUSTOMER" type="String" size="10" source="File: C:\data\sales\orders.yxdb" />
+            <Field name="ORDER_STATUS" type="V_String" size="10" source="File: C:\data\sales\orders.yxdb" />
+            <Field name="ORDER_ID" type="Int32" size="4" source="File: C:\data\sales\orders.yxdb" />
+            <Field name="REGION" type="V_String" size="20" source="File: C:\data\sales\orders.yxdb" />
+            <Field name="AMOUNT_TXT" type="V_String" size="20" source="File: C:\data\sales\orders.yxdb" />
+            <Field name="QTY" type="Int32" size="4" source="File: C:\data\sales\orders.yxdb" />
+            <Field name="ORDER_DATE" type="Date" size="10" source="File: C:\data\sales\orders.yxdb" />
+          </RecordInfo>
+        </MetaInfo>
+        <MetaInfo connection="False">
+          <RecordInfo>
+            <Field name="CUSTOMER" type="String" size="10" source="File: C:\data\sales\orders.yxdb" />
+            <Field name="ORDER_STATUS" type="V_String" size="10" source="File: C:\data\sales\orders.yxdb" />
+            <Field name="ORDER_ID" type="Int32" size="4" source="File: C:\data\sales\orders.yxdb" />
+            <Field name="REGION" type="V_String" size="20" source="File: C:\data\sales\orders.yxdb" />
+            <Field name="AMOUNT_TXT" type="V_String" size="20" source="File: C:\data\sales\orders.yxdb" />
+            <Field name="QTY" type="Int32" size="4" source="File: C:\data\sales\orders.yxdb" />
+            <Field name="ORDER_DATE" type="Date" size="10" source="File: C:\data\sales\orders.yxdb" />
+          </RecordInfo>
+        </MetaInfo>
+      </Properties>
+      <EngineSettings EngineDll="AlteryxBasePluginsEngine.dll" EngineDllEntryPoint="AlteryxFilter" />
+    </Node>
+    <Node ToolID="4">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.Formula.Formula">
+        <Position x="378" y="18" />
+      </GuiSettings>
+      <Properties>
+        <Configuration>
+          <FormulaFields>
+            <FormulaField expression="ToNumber([AMOUNT_TXT])" field="AMOUNT" size="8" type="Double" />
+            <FormulaField expression="Round([AMOUNT] * IIF([QTY] &gt;= 10, 0.9, 1), 0.01)" field="NET" size="8" type="Double" />
+            <FormulaField expression="IF [AMOUNT] &gt;= 1000 THEN &quot;LARGE&quot; ELSEIF [AMOUNT] &gt;= 100 THEN &quot;MEDIUM&quot; ELSE &quot;SMALL&quot; ENDIF" field="SIZE_BAND" size="10" type="V_String" />
+          </FormulaFields>
+        </Configuration>
+        <Annotation DisplayMode="0">
+          <Name />
+          <DefaultAnnotationText>AMOUNT, NET, SIZE_BAND</DefaultAnnotationText>
+        </Annotation>
+        <MetaInfo connection="Output">
+          <RecordInfo>
+            <Field name="CUSTOMER" type="String" size="10" source="File: C:\data\sales\orders.yxdb" />
+            <Field name="ORDER_STATUS" type="V_String" size="10" source="File: C:\data\sales\orders.yxdb" />
+            <Field name="ORDER_ID" type="Int32" size="4" source="File: C:\data\sales\orders.yxdb" />
+            <Field name="REGION" type="V_String" size="20" source="File: C:\data\sales\orders.yxdb" />
+            <Field name="AMOUNT_TXT" type="V_String" size="20" source="File: C:\data\sales\orders.yxdb" />
+            <Field name="QTY" type="Int32" size="4" source="File: C:\data\sales\orders.yxdb" />
+            <Field name="ORDER_DATE" type="Date" size="10" source="File: C:\data\sales\orders.yxdb" />
+            <Field name="AMOUNT" type="Double" size="8" source="Formula: ToNumber([AMOUNT_TXT])" />
+            <Field name="NET" type="Double" size="8" source="Formula: Round([AMOUNT] * IIF([QTY] &gt;= 10, 0.9, 1), 0.01)" />
+            <Field name="SIZE_BAND" type="V_String" size="10" source="Formula: SIZE_BAND" />
+          </RecordInfo>
+        </MetaInfo>
+      </Properties>
+      <EngineSettings EngineDll="AlteryxBasePluginsEngine.dll" EngineDllEntryPoint="AlteryxFormula" />
+    </Node>
+    <Node ToolID="5">
+      <GuiSettings Plugin="AlteryxSpatialPluginsGui.Summarize.Summarize">
+        <Position x="486" y="18" />
+      </GuiSettings>
+      <Properties>
+        <Configuration>
+          <SummarizeFields>
+            <SummarizeField field="REGION" action="GroupBy" rename="REGION" />
+            <SummarizeField field="SIZE_BAND" action="GroupBy" rename="SIZE_BAND" />
+            <SummarizeField field="NET" action="Sum" rename="TOTAL_NET" />
+            <SummarizeField field="ORDER_ID" action="Count" rename="ORDERS" />
+            <SummarizeField field="AMOUNT" action="CountNonNull" rename="PRICED_ORDERS" />
+            <SummarizeField field="ORDER_DATE" action="Max" rename="LAST_ORDER" />
+          </SummarizeFields>
+        </Configuration>
+        <Annotation DisplayMode="0">
+          <Name />
+          <DefaultAnnotationText>Totals by region and band</DefaultAnnotationText>
+        </Annotation>
+        <MetaInfo connection="Output">
+          <RecordInfo>
+            <Field name="REGION" type="V_String" size="20" source="Summarize: GroupBy_REGION" />
+            <Field name="SIZE_BAND" type="V_String" size="10" source="Summarize: GroupBy_SIZE_BAND" />
+            <Field name="TOTAL_NET" type="Double" size="8" source="Summarize: Sum_NET" />
+            <Field name="ORDERS" type="Int64" size="8" source="Summarize: Count_ORDER_ID" />
+            <Field name="PRICED_ORDERS" type="Int64" size="8" source="Summarize: CountNonNull_AMOUNT" />
+            <Field name="LAST_ORDER" type="Date" size="10" source="Summarize: Max_ORDER_DATE" />
+          </RecordInfo>
+        </MetaInfo>
+      </Properties>
+      <EngineSettings EngineDll="AlteryxSpatialPluginsEngine.dll" EngineDllEntryPoint="AlteryxSummarize" />
+    </Node>
+    <Node ToolID="6">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.Sort.Sort">
+        <Position x="594" y="18" />
+      </GuiSettings>
+      <Properties>
+        <Configuration>
+          <SortInfo>
+            <Field field="TOTAL_NET" order="Descending" />
+            <Field field="REGION" order="Ascending" />
+          </SortInfo>
+        </Configuration>
+        <Annotation DisplayMode="0">
+          <Name />
+          <DefaultAnnotationText>Biggest totals first</DefaultAnnotationText>
+        </Annotation>
+        <MetaInfo connection="Output">
+          <RecordInfo>
+            <Field name="REGION" type="V_String" size="20" source="Summarize: GroupBy_REGION" />
+            <Field name="SIZE_BAND" type="V_String" size="10" source="Summarize: GroupBy_SIZE_BAND" />
+            <Field name="TOTAL_NET" type="Double" size="8" source="Summarize: Sum_NET" />
+            <Field name="ORDERS" type="Int64" size="8" source="Summarize: Count_ORDER_ID" />
+            <Field name="PRICED_ORDERS" type="Int64" size="8" source="Summarize: CountNonNull_AMOUNT" />
+            <Field name="LAST_ORDER" type="Date" size="10" source="Summarize: Max_ORDER_DATE" />
+          </RecordInfo>
+        </MetaInfo>
+      </Properties>
+      <EngineSettings EngineDll="AlteryxBasePluginsEngine.dll" EngineDllEntryPoint="AlteryxSort" />
+    </Node>
+    <Node ToolID="7">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.DbFileOutput.DbFileOutput">
+        <Position x="702" y="18" />
+      </GuiSettings>
+      <Properties>
+        <Configuration>
+          <Passwords />
+          <File MaxRecords="" FileFormat="19">C:\data\out\sales_summary.yxdb</File>
+          <FormatSpecificOptions>
+            <OutputOption>Overwrite</OutputOption>
+          </FormatSpecificOptions>
+          <MultiFile value="False" />
+        </Configuration>
+        <Annotation DisplayMode="0">
+          <Name />
+          <DefaultAnnotationText>sales_summary.yxdb</DefaultAnnotationText>
+        </Annotation>
+        <MetaInfo connection="Output">
+          <RecordInfo>
+            <Field name="REGION" type="V_String" size="20" source="Summarize: GroupBy_REGION" />
+            <Field name="SIZE_BAND" type="V_String" size="10" source="Summarize: GroupBy_SIZE_BAND" />
+            <Field name="TOTAL_NET" type="Double" size="8" source="Summarize: Sum_NET" />
+            <Field name="ORDERS" type="Int64" size="8" source="Summarize: Count_ORDER_ID" />
+            <Field name="PRICED_ORDERS" type="Int64" size="8" source="Summarize: CountNonNull_AMOUNT" />
+            <Field name="LAST_ORDER" type="Date" size="10" source="Summarize: Max_ORDER_DATE" />
+          </RecordInfo>
+        </MetaInfo>
+      </Properties>
+      <EngineSettings EngineDll="AlteryxBasePluginsEngine.dll" EngineDllEntryPoint="AlteryxDbFileOutput" />
+    </Node>
+    <Node ToolID="8">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.DbFileOutput.DbFileOutput">
+        <Position x="378" y="150" />
+      </GuiSettings>
+      <Properties>
+        <Configuration>
+          <Passwords />
+          <File MaxRecords="" FileFormat="0">C:\data\out\excluded_orders.csv</File>
+          <FormatSpecificOptions>
+            <OutputOption>Overwrite</OutputOption>
+            <LineEndStyle>CRLF</LineEndStyle>
+            <Delimeter>,</Delimeter>
+            <ForceQuotes>False</ForceQuotes>
+            <HeaderRow>True</HeaderRow>
+            <CodePage>28591</CodePage>
+          </FormatSpecificOptions>
+          <MultiFile value="False" />
+        </Configuration>
+        <Annotation DisplayMode="0">
+          <Name />
+          <DefaultAnnotationText>excluded_orders.csv</DefaultAnnotationText>
+        </Annotation>
+        <MetaInfo connection="Output">
+          <RecordInfo>
+            <Field name="CUSTOMER" type="String" size="10" source="File: C:\data\sales\orders.yxdb" />
+            <Field name="ORDER_STATUS" type="V_String" size="10" source="File: C:\data\sales\orders.yxdb" />
+            <Field name="ORDER_ID" type="Int32" size="4" source="File: C:\data\sales\orders.yxdb" />
+            <Field name="REGION" type="V_String" size="20" source="File: C:\data\sales\orders.yxdb" />
+            <Field name="AMOUNT_TXT" type="V_String" size="20" source="File: C:\data\sales\orders.yxdb" />
+            <Field name="QTY" type="Int32" size="4" source="File: C:\data\sales\orders.yxdb" />
+            <Field name="ORDER_DATE" type="Date" size="10" source="File: C:\data\sales\orders.yxdb" />
+          </RecordInfo>
+        </MetaInfo>
+      </Properties>
+      <EngineSettings EngineDll="AlteryxBasePluginsEngine.dll" EngineDllEntryPoint="AlteryxDbFileOutput" />
+    </Node>
+  </Nodes>
+  <Connections>
+    <Connection>
+      <Origin ToolID="1" Connection="Output" />
+      <Destination ToolID="2" Connection="Input" />
+    </Connection>
+    <Connection>
+      <Origin ToolID="2" Connection="Output" />
+      <Destination ToolID="3" Connection="Input" />
+    </Connection>
+    <Connection>
+      <Origin ToolID="3" Connection="True" />
+      <Destination ToolID="4" Connection="Input" />
+    </Connection>
+    <Connection>
+      <Origin ToolID="3" Connection="False" />
+      <Destination ToolID="8" Connection="Input" />
+    </Connection>
+    <Connection>
+      <Origin ToolID="4" Connection="Output" />
+      <Destination ToolID="5" Connection="Input" />
+    </Connection>
+    <Connection>
+      <Origin ToolID="5" Connection="Output" />
+      <Destination ToolID="6" Connection="Input" />
+    </Connection>
+    <Connection>
+      <Origin ToolID="6" Connection="Output" />
+      <Destination ToolID="7" Connection="Input" />
+    </Connection>
+  </Connections>
+  <Properties>
+    <Memory default="True" />
+    <GlobalRecordLimit value="0" />
+    <TempFiles default="True" />
+    <Annotation on="True" includeToolName="False" />
+    <ConvErrorLimit value="10" />
+    <ConvErrorLimit_Stopped value="False" />
+    <CancelOnError value="False" />
+    <DisableBrowse value="False" />
+    <EnablePerformanceProfiling value="False" />
+    <DisableAllOutput value="False" />
+    <ShowAllMacroMessages value="False" />
+    <ShowConnectionStatusIsOn value="True" />
+    <ShowConnectionStatusOnlyWhenRunning value="True" />
+    <ZoomLevel value="0" />
+    <LayoutType>Horizontal</LayoutType>
+    <Constants />
+    <RuntimeProperties>
+      <Actions />
+      <Questions />
+      <ModuleType>Wizard</ModuleType>
+      <MacroCustomHelp value="False" />
+      <RunE2 value="True" />
+    </RuntimeProperties>
+  </Properties>
+</AlteryxDocument>

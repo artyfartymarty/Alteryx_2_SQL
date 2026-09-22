@@ -1,0 +1,21 @@
+{
+  "tool": "sample",
+  "inputs": {
+    "1": "input.csv"
+  },
+  "node": {
+    "tool_id": "2",
+    "type": "sample",
+    "config": {
+      "mode": "first",
+      "n": 2,
+      "group_by": ["GRP"]
+    }
+  },
+  "edges": [
+    ["1", "Output", "2", "Input"]
+  ],
+  "compare": [
+    { "stream": "2_Output", "sql": "query.sql", "keys": [] }
+  ]
+}

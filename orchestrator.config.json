@@ -1,0 +1,38 @@
+{
+  "python": ".venv/Scripts/python.exe",
+  "samplesDir": "samples",
+  "parallelism": 3,
+  "maxFixIterations": 3,
+  "maxParseRecovery": 2,
+  "sessionTimeoutMs": 1200000,
+  "golden": {
+    "producer": "simulator"
+  },
+  "budgets": {
+    "maxToolCallsPerWorkflow": 400
+  },
+  "policy": {
+    "sandboxDatabases": ["MIGDB"]
+  },
+  "profiles": {
+    "local": {
+      "provider": {
+        "type": "openai",
+        "baseUrl": "http://127.0.0.1:8080/v1",
+        "apiKey": "local"
+      },
+      "model": "ternary-bonsai-2-27b",
+      "reasoningEffort": "medium"
+    },
+    "hosted": {
+      "model": "gpt-5.6-luna",
+      "roleModels": {
+        "intake": "gpt-6-astra",
+        "analyzer": "gpt-6-astra",
+        "translator": "gpt-6-astra",
+        "fixer": "gpt-6-astra",
+        "parser-recovery": "gpt-6-astra"
+      }
+    }
+  }
+}

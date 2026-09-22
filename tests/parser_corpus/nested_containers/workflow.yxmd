@@ -1,0 +1,152 @@
+<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2023.1">
+  <Nodes>
+    <Node ToolID="100">
+      <GuiSettings Plugin="AlteryxGuiToolkit.ToolContainer.ToolContainer">
+        <Position x="30" y="30" width="330" height="200" />
+      </GuiSettings>
+      <Properties>
+        <Configuration>
+          <Caption>Outer</Caption>
+          <Style TextColor="#314c4a" FillColor="#ecf2f2" BorderColor="#314c4a" Transparency="25" Margin="25" />
+          <Disabled value="False" />
+          <Folded value="False" />
+        </Configuration>
+        <Annotation DisplayMode="0">
+          <Name />
+          <DefaultAnnotationText />
+        </Annotation>
+      </Properties>
+      <ChildNodes>
+        <Node ToolID="110">
+          <GuiSettings Plugin="AlteryxGuiToolkit.ToolContainer.ToolContainer">
+            <Position x="42" y="54" width="300" height="160" />
+          </GuiSettings>
+          <Properties>
+            <Configuration>
+              <Caption>Middle</Caption>
+              <Style TextColor="#514c31" FillColor="#f2f1ec" BorderColor="#514c31" Transparency="25" Margin="25" />
+              <Disabled value="False" />
+              <Folded value="False" />
+            </Configuration>
+            <Annotation DisplayMode="0">
+              <Name />
+              <DefaultAnnotationText />
+            </Annotation>
+          </Properties>
+          <ChildNodes>
+            <Node ToolID="120">
+              <GuiSettings Plugin="AlteryxGuiToolkit.ToolContainer.ToolContainer">
+                <Position x="54" y="78" width="260" height="120" />
+              </GuiSettings>
+              <Properties>
+                <Configuration>
+                  <Caption>Inner</Caption>
+                  <Style TextColor="#4c3151" FillColor="#f1ecf2" BorderColor="#4c3151" Transparency="25" Margin="25" />
+                  <Disabled value="False" />
+                  <Folded value="False" />
+                </Configuration>
+                <Annotation DisplayMode="0">
+                  <Name />
+                  <DefaultAnnotationText />
+                </Annotation>
+              </Properties>
+              <ChildNodes>
+                <Node ToolID="1">
+                  <GuiSettings Plugin="AlteryxBasePluginsGui.DbFileInput.DbFileInput">
+                    <Position x="66" y="102" />
+                  </GuiSettings>
+                  <Properties>
+                    <Configuration>
+                      <Passwords />
+                      <File OutputFileName="" RecordLimit="" SearchSubDirs="False" FileFormat="19">C:\data\hr\people.yxdb</File>
+                      <FormatSpecificOptions />
+                    </Configuration>
+                    <Annotation DisplayMode="0">
+                      <Name />
+                      <DefaultAnnotationText>People</DefaultAnnotationText>
+                    </Annotation>
+                    <MetaInfo connection="Output">
+                      <RecordInfo>
+                        <Field name="EMP_ID" type="Int32" size="4" source="File: C:\data\hr\people.yxdb" />
+                        <Field name="DEPT" type="V_String" size="20" source="File: C:\data\hr\people.yxdb" />
+                      </RecordInfo>
+                    </MetaInfo>
+                  </Properties>
+                  <EngineSettings EngineDll="AlteryxBasePluginsEngine.dll" EngineDllEntryPoint="AlteryxDbFileInput" />
+                </Node>
+                <Node ToolID="2">
+                  <GuiSettings Plugin="AlteryxBasePluginsGui.Sort.Sort">
+                    <Position x="174" y="102" />
+                  </GuiSettings>
+                  <Properties>
+                    <Configuration>
+                      <SortInfo>
+                        <Field field="DEPT" order="Ascending" />
+                      </SortInfo>
+                    </Configuration>
+                    <Annotation DisplayMode="0">
+                      <Name />
+                      <DefaultAnnotationText>By department</DefaultAnnotationText>
+                    </Annotation>
+                    <MetaInfo connection="Output">
+                      <RecordInfo>
+                        <Field name="EMP_ID" type="Int32" size="4" source="File: C:\data\hr\people.yxdb" />
+                        <Field name="DEPT" type="V_String" size="20" source="File: C:\data\hr\people.yxdb" />
+                      </RecordInfo>
+                    </MetaInfo>
+                  </Properties>
+                  <EngineSettings EngineDll="AlteryxBasePluginsEngine.dll" EngineDllEntryPoint="AlteryxSort" />
+                </Node>
+              </ChildNodes>
+            </Node>
+          </ChildNodes>
+        </Node>
+      </ChildNodes>
+    </Node>
+    <Node ToolID="3">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.DbFileOutput.DbFileOutput">
+        <Position x="402" y="102" />
+      </GuiSettings>
+      <Properties>
+        <Configuration>
+          <Passwords />
+          <File MaxRecords="" FileFormat="19">C:\data\out\people_sorted.yxdb</File>
+          <FormatSpecificOptions>
+            <OutputOption>Overwrite</OutputOption>
+          </FormatSpecificOptions>
+          <MultiFile value="False" />
+        </Configuration>
+        <Annotation DisplayMode="0">
+          <Name />
+          <DefaultAnnotationText>people_sorted.yxdb</DefaultAnnotationText>
+        </Annotation>
+        <MetaInfo connection="Output">
+          <RecordInfo>
+            <Field name="EMP_ID" type="Int32" size="4" source="File: C:\data\hr\people.yxdb" />
+            <Field name="DEPT" type="V_String" size="20" source="File: C:\data\hr\people.yxdb" />
+          </RecordInfo>
+        </MetaInfo>
+      </Properties>
+      <EngineSettings EngineDll="AlteryxBasePluginsEngine.dll" EngineDllEntryPoint="AlteryxDbFileOutput" />
+    </Node>
+  </Nodes>
+  <Connections>
+    <Connection>
+      <Origin ToolID="1" Connection="Output" />
+      <Destination ToolID="2" Connection="Input" />
+    </Connection>
+    <Connection>
+      <Origin ToolID="2" Connection="Output" />
+      <Destination ToolID="3" Connection="Input" />
+    </Connection>
+  </Connections>
+  <Properties>
+    <Memory default="True" />
+    <Constants />
+    <RuntimeProperties>
+      <ModuleType>Wizard</ModuleType>
+      <RunE2 value="False" />
+    </RuntimeProperties>
+  </Properties>
+</AlteryxDocument>

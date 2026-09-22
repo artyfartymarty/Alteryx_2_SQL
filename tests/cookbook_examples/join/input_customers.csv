@@ -1,0 +1,6 @@
+CUST_ID,NAME,TIER
+1,Acme,GOLD
+1,Acme,GOLD
+2,Globex,\N
+\N,Orphan Cust,SILVER
+3,Zeta,BRONZE

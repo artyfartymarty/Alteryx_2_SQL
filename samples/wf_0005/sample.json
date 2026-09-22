@@ -1,0 +1,19 @@
+{
+  "id": "wf_0005",
+  "title": "Vendor account dedupe",
+  "owner": "wf_owner",
+  "schedule": "0 6 * * 1-5",
+  "segmentation": {
+    "min_tools": 3,
+    "max_tools": 40
+  },
+  "expected_terminal": "MANUAL",
+  "answers": {
+    "vendor/accounts.yxdb": "VENDOR.RAW.ACCOUNTS",
+    "out/accounts_clean.yxdb": "ANALYTICS.CURATED.ACCOUNTS_CLEAN"
+  },
+  "logical": {
+    "1": "ACCOUNTS",
+    "4": "ACCOUNTS_CLEAN"
+  }
+}

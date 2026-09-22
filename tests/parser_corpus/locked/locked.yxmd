@@ -1,0 +1,14 @@
+<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2023.1">
+  <Locked>U3ludGhldGljIG5vaXNlOiB0aGlzIGlzIG5vdCBhbiBlbmNyeXB0ZWQgQWx0ZXJ5eCB3b3JrZmxvdywganVz
+dCBiYXNlNjQgd2Ugd3JvdGUgYnkgaGFuZCBzbyB0aGUgcGFyc2VyIGhhcyBzb21ldGhpbmcgdG8gcXVh
+cmFudGluZS4gTm8gTm9kZXMgZWxlbWVudCBleGlzdHMgaW4gdGhpcyBmaWxlLg==</Locked>
+  <Properties>
+    <Memory default="True" />
+    <Constants />
+    <RuntimeProperties>
+      <ModuleType>Wizard</ModuleType>
+      <RunE2 value="False" />
+    </RuntimeProperties>
+  </Properties>
+</AlteryxDocument>

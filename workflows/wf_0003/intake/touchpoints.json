@@ -1,0 +1,127 @@
+[
+  {
+    "id": "Q1",
+    "kind": "input",
+    "tool_id": "1",
+    "annotation": "GL ledger extract",
+    "format": "db",
+    "source": "<scrubbed:prod_fin>",
+    "key": "alias:prod_fin",
+    "fields": [
+      "ACCT",
+      "PERIOD",
+      "POSTED",
+      "AMOUNT",
+      "REGION",
+      "ENTRY_ID"
+    ],
+    "field_source": "meta",
+    "record_count": null,
+    "query": "SELECT ACCT, PERIOD, POSTED, AMOUNT, REGION, ENTRY_ID FROM dbo.GL_LEDGER WHERE AMOUNT <> 0",
+    "table": "dbo.GL_LEDGER",
+    "write_mode": null,
+    "keys": [],
+    "pre_sql": null,
+    "post_sql": null,
+    "blocking": true,
+    "resolved": null,
+    "candidates": [
+      {
+        "snowflake": "FINANCE.RAW.GL_LEDGER",
+        "matched": 6,
+        "of": 6,
+        "missing": [],
+        "score": 1.0,
+        "row_count": 15208763,
+        "basis": "columns"
+      },
+      {
+        "snowflake": "ANALYTICS.RAW.GL_LEDGER",
+        "basis": "naming"
+      }
+    ]
+  },
+  {
+    "id": "Q2",
+    "kind": "output",
+    "tool_id": "10",
+    "annotation": "dbo.GL_SUMMARY",
+    "format": "db",
+    "source": "<scrubbed:prod_fin>",
+    "key": "alias:prod_fin/dbo.gl_summary",
+    "fields": [
+      "ACCT",
+      "PERIOD",
+      "TOTAL",
+      "CLOSING_BAL",
+      "ENTRIES",
+      "HAS_PERIOD_END"
+    ],
+    "field_source": "meta",
+    "record_count": null,
+    "query": null,
+    "table": "dbo.GL_SUMMARY",
+    "write_mode": "update_insert",
+    "keys": [
+      "ACCT",
+      "PERIOD"
+    ],
+    "pre_sql": "DELETE FROM dbo.GL_SUMMARY WHERE PERIOD < '2020-01'",
+    "post_sql": "UPDATE dbo.GL_SUMMARY SET LOADED_FLAG = 'Y' WHERE LOADED_FLAG IS NULL",
+    "blocking": true,
+    "resolved": null,
+    "candidates": [
+      {
+        "snowflake": "ANALYTICS.CURATED.GL_SUMMARY",
+        "matched": 6,
+        "of": 6,
+        "missing": [],
+        "score": 1.0,
+        "row_count": 41876,
+        "basis": "columns"
+      }
+    ]
+  },
+  {
+    "id": "Q3",
+    "kind": "constant",
+    "tool_id": null,
+    "annotation": null,
+    "format": null,
+    "source": "EMEA",
+    "key": "User.Region",
+    "fields": [],
+    "field_source": null,
+    "record_count": null,
+    "query": null,
+    "table": null,
+    "write_mode": null,
+    "keys": [],
+    "pre_sql": null,
+    "post_sql": null,
+    "blocking": false,
+    "resolved": null,
+    "candidates": []
+  },
+  {
+    "id": "Q4",
+    "kind": "constant",
+    "tool_id": null,
+    "annotation": null,
+    "format": null,
+    "source": "2026-08-31",
+    "key": "User.PeriodEnd",
+    "fields": [],
+    "field_source": null,
+    "record_count": null,
+    "query": null,
+    "table": null,
+    "write_mode": null,
+    "keys": [],
+    "pre_sql": null,
+    "post_sql": null,
+    "blocking": false,
+    "resolved": null,
+    "candidates": []
+  }
+]

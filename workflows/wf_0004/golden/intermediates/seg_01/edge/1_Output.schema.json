@@ -1,0 +1,26 @@
+[
+  {
+    "name": "SKU",
+    "type": "V_String",
+    "size": 30,
+    "scale": null
+  },
+  {
+    "name": "WAREHOUSE",
+    "type": "V_String",
+    "size": 10,
+    "scale": null
+  },
+  {
+    "name": "QTY",
+    "type": "Int32",
+    "size": 4,
+    "scale": null
+  },
+  {
+    "name": "NOTE",
+    "type": "V_String",
+    "size": 100,
+    "scale": null
+  }
+]

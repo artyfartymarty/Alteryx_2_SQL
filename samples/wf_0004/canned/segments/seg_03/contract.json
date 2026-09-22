@@ -1,0 +1,118 @@
+{
+  "workflow": "wf_0004",
+  "segment": "seg_03",
+  "inputs": [
+    {
+      "from": "seg_02",
+      "stream": "2_Output5",
+      "table": "MIG_WORK.WF0004_SEG_02_OUT",
+      "columns": [
+        { "name": "SKU", "type": "VARCHAR(30)", "nullable": false },
+        { "name": "WAREHOUSE", "type": "VARCHAR(10)", "nullable": false },
+        { "name": "QTY", "type": "NUMBER(38,0)", "nullable": false },
+        { "name": "NOTE", "type": "VARCHAR(100)", "nullable": true }
+      ],
+      "keys": [],
+      "expected_rows": { "min": 0, "max": 5000000 },
+      "large": false
+    }
+  ],
+  "outputs": [
+    {
+      "stream": "4_Output",
+      "kind": "target",
+      "tool_id": "6",
+      "logical": "INVENTORY_BY_WH",
+      "table": null,
+      "write_mode": "overwrite",
+      "columns": [
+        { "name": "SKU", "type": "VARCHAR(30)", "nullable": false },
+        { "name": "FAMILY", "type": "VARCHAR(20)", "nullable": true },
+        { "name": "EAST", "type": "FLOAT", "nullable": true },
+        { "name": "NORTH", "type": "FLOAT", "nullable": true },
+        { "name": "WEST", "type": "FLOAT", "nullable": true }
+      ],
+      "keys": ["SKU", "FAMILY"]
+    },
+    {
+      "stream": "5_Output",
+      "kind": "target",
+      "tool_id": "7",
+      "logical": "INVENTORY_LONG",
+      "table": null,
+      "write_mode": "overwrite",
+      "columns": [
+        { "name": "SKU", "type": "VARCHAR(30)", "nullable": false },
+        { "name": "NAME", "type": "VARCHAR(255)", "nullable": false },
+        { "name": "VALUE", "type": "FLOAT", "nullable": true }
+      ],
+      "keys": ["SKU", "NAME"]
+    }
+  ],
+  "output": {
+    "stream": "4_Output",
+    "kind": "target",
+    "tool_id": "6",
+    "logical": "INVENTORY_BY_WH",
+    "table": null,
+    "write_mode": "overwrite",
+    "columns": [
+      { "name": "SKU", "type": "VARCHAR(30)", "nullable": false },
+      { "name": "FAMILY", "type": "VARCHAR(20)", "nullable": true },
+      { "name": "EAST", "type": "FLOAT", "nullable": true },
+      { "name": "NORTH", "type": "FLOAT", "nullable": true },
+      { "name": "WEST", "type": "FLOAT", "nullable": true }
+    ],
+    "keys": ["SKU", "FAMILY"]
+  },
+  "row_relation": "aggregate",
+  "ordering": {
+    "keys": ["SKU", "FAMILY"],
+    "alteryx_deterministic": true,
+    "order_dependent_columns": []
+  },
+  "tolerances": {},
+  "normalizations": [],
+  "parity_risks": [
+    {
+      "tool_id": "3",
+      "class": "NULL_SEMANTICS",
+      "note": "RegEx Parse never drops a row: a SKU the pattern does not match keeps its row and leaves FAMILY and ITEM_NO NULL. On Snowflake REGEXP_SUBSTR returns NULL for that row; the local DuckDB double returns an empty string, so the match is tested with REGEXP_LIKE and the NULL written out explicitly."
+    },
+    {
+      "tool_id": "3",
+      "class": "LOGIC",
+      "note": "This RegEx is case-SENSITIVE (^([A-Z]+)-(\\d+)$), unlike the macro's. Every SKU reaching it has already been upper-cased inside the macro, so the flag changes nothing on this data -- but a non-ASCII initial (the edge set's ÄB-12) is outside [A-Z] under either flag, which is what leaves its FAMILY NULL."
+    },
+    {
+      "tool_id": "4",
+      "class": "NULL_SEMANTICS",
+      "note": "A group/header combination with no rows is NULL, not zero. SUM over an empty set already gives NULL, so nothing may wrap the pivot in COALESCE -- and a row whose only value for a warehouse is NULL sums to NULL too."
+    },
+    {
+      "tool_id": "4",
+      "class": "LOGIC",
+      "note": "The header columns are frozen by the tool's MetaInfo (EAST, NORTH, WEST) rather than discovered from the data, so the pivot is one conditional aggregate per column and a warehouse outside that list has no column and is dropped. Data with a fourth warehouse would silently lose it -- in Alteryx as well as here."
+    },
+    {
+      "tool_id": "4",
+      "class": "ROUNDING",
+      "note": "Cross Tab's Sum produces a Double whatever the data field's type, so the integer quantities land in a FLOAT column. The sum is taken over the exact NUMBER values and cast once."
+    },
+    {
+      "tool_id": "5",
+      "class": "NULL_SEMANTICS",
+      "note": "Transpose keeps NULL values. A bare UNPIVOT drops a row whose value is NULL, but UNPIVOT INCLUDE NULLS keeps it too (see cookbook/transpose.md). This segment instead stacks three projections with UNION ALL, which also keeps every cell -- half the rows of this target."
+    },
+    {
+      "tool_id": "5",
+      "class": "LOGIC",
+      "note": "The key field is SKU only, so FAMILY is dropped from the long table; the Name/Value pair is emitted per incoming row in the configured field order EAST, NORTH, WEST."
+    },
+    {
+      "tool_id": "6",
+      "class": "LOGIC",
+      "note": "Two Output tools terminate two branches of one chain, so tools 3 and 4 appear as CTEs in both statements. Contract C4 allows no variable to hold the shared result and no work table is declared for it, so the duplication is deliberate and documented."
+    }
+  ]
+}

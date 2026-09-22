@@ -1,0 +1,923 @@
+{
+  "workflow": "wf_0003",
+  "yxmd_version": "2023.1",
+  "engine": "AMP",
+  "constants": {
+    "User.Region": "EMEA",
+    "User.PeriodEnd": "2026-08-31"
+  },
+  "file_kind": "yxmd",
+  "source_file": "gl_period_close.yxmd",
+  "nodes": [
+    {
+      "tool_id": "100",
+      "type": "container",
+      "plugin": "AlteryxGuiToolkit.ToolContainer.ToolContainer",
+      "container_id": null,
+      "config": {},
+      "raw_config": "<Configuration>\n          <Caption>Extract</Caption>\n          <Style TextColor=\"#314c4a\" FillColor=\"#ecf2f2\" BorderColor=\"#314c4a\" Transparency=\"25\" Margin=\"25\" />\n          <Disabled value=\"False\" />\n          <Folded value=\"False\" />\n        </Configuration>",
+      "annotation": "Extract",
+      "in_anchors": [],
+      "out_anchors": [],
+      "meta": {}
+    },
+    {
+      "tool_id": "1",
+      "type": "input",
+      "plugin": "AlteryxBasePluginsGui.DbFileInput.DbFileInput",
+      "container_id": "100",
+      "config": {
+        "source": "<scrubbed:prod_fin>",
+        "format": "db",
+        "query": "SELECT ACCT, PERIOD, POSTED, AMOUNT, REGION, ENTRY_ID FROM dbo.GL_LEDGER WHERE AMOUNT <> 0",
+        "alias": "prod_fin",
+        "csv": null,
+        "record_limit": null
+      },
+      "raw_config": "<Configuration>\n              <Passwords />\n              <File OutputFileName=\"\" RecordLimit=\"\" SearchSubDirs=\"False\" FileFormat=\"23\">&lt;scrubbed:prod_fin&gt;|||SELECT ACCT, PERIOD, POSTED, AMOUNT, REGION, ENTRY_ID FROM dbo.GL_LEDGER WHERE AMOUNT &lt;&gt; 0</File>\n              <FormatSpecificOptions>\n                <ODBCVersion>3</ODBCVersion>\n              </FormatSpecificOptions>\n            </Configuration>",
+      "annotation": "GL ledger extract",
+      "in_anchors": [],
+      "out_anchors": [
+        "Output"
+      ],
+      "meta": {
+        "Output": [
+          {
+            "name": "ACCT",
+            "type": "V_String",
+            "size": 20,
+            "scale": null
+          },
+          {
+            "name": "PERIOD",
+            "type": "V_String",
+            "size": 7,
+            "scale": null
+          },
+          {
+            "name": "POSTED",
+            "type": "V_String",
+            "size": 10,
+            "scale": null
+          },
+          {
+            "name": "AMOUNT",
+            "type": "FixedDecimal",
+            "size": 19,
+            "scale": 2
+          },
+          {
+            "name": "REGION",
+            "type": "V_String",
+            "size": 10,
+            "scale": null
+          },
+          {
+            "name": "ENTRY_ID",
+            "type": "Int64",
+            "size": 8,
+            "scale": null
+          }
+        ]
+      }
+    },
+    {
+      "tool_id": "2",
+      "type": "filter",
+      "plugin": "AlteryxBasePluginsGui.Filter.Filter",
+      "container_id": "100",
+      "config": {
+        "expression": "[REGION] = [User.Region]"
+      },
+      "raw_config": "<Configuration>\n              <Expression>[REGION] = [User.Region]</Expression>\n              <Mode>Custom</Mode>\n            </Configuration>",
+      "annotation": "Keep the run's region",
+      "in_anchors": [
+        "Input"
+      ],
+      "out_anchors": [
+        "T",
+        "F"
+      ],
+      "meta": {
+        "T": [
+          {
+            "name": "ACCT",
+            "type": "V_String",
+            "size": 20,
+            "scale": null
+          },
+          {
+            "name": "PERIOD",
+            "type": "V_String",
+            "size": 7,
+            "scale": null
+          },
+          {
+            "name": "POSTED",
+            "type": "V_String",
+            "size": 10,
+            "scale": null
+          },
+          {
+            "name": "AMOUNT",
+            "type": "FixedDecimal",
+            "size": 19,
+            "scale": 2
+          },
+          {
+            "name": "REGION",
+            "type": "V_String",
+            "size": 10,
+            "scale": null
+          },
+          {
+            "name": "ENTRY_ID",
+            "type": "Int64",
+            "size": 8,
+            "scale": null
+          }
+        ],
+        "F": [
+          {
+            "name": "ACCT",
+            "type": "V_String",
+            "size": 20,
+            "scale": null
+          },
+          {
+            "name": "PERIOD",
+            "type": "V_String",
+            "size": 7,
+            "scale": null
+          },
+          {
+            "name": "POSTED",
+            "type": "V_String",
+            "size": 10,
+            "scale": null
+          },
+          {
+            "name": "AMOUNT",
+            "type": "FixedDecimal",
+            "size": 19,
+            "scale": 2
+          },
+          {
+            "name": "REGION",
+            "type": "V_String",
+            "size": 10,
+            "scale": null
+          },
+          {
+            "name": "ENTRY_ID",
+            "type": "Int64",
+            "size": 8,
+            "scale": null
+          }
+        ]
+      }
+    },
+    {
+      "tool_id": "3",
+      "type": "datetime",
+      "plugin": "AlteryxBasePluginsGui.DateTime.DateTime",
+      "container_id": "100",
+      "config": {
+        "direction": "to_datetime",
+        "field": "POSTED",
+        "format": "%d/%m/%Y",
+        "out_field": "POSTED_DT"
+      },
+      "raw_config": "<Configuration>\n              <IsFrom value=\"False\" />\n              <InputFieldName>POSTED</InputFieldName>\n              <Format>%d/%m/%Y</Format>\n              <OutputFieldName>POSTED_DT</OutputFieldName>\n              <Language>English</Language>\n            </Configuration>",
+      "annotation": "POSTED is dd/mm/yyyy text",
+      "in_anchors": [
+        "Input"
+      ],
+      "out_anchors": [
+        "Output"
+      ],
+      "meta": {
+        "Output": [
+          {
+            "name": "ACCT",
+            "type": "V_String",
+            "size": 20,
+            "scale": null
+          },
+          {
+            "name": "PERIOD",
+            "type": "V_String",
+            "size": 7,
+            "scale": null
+          },
+          {
+            "name": "POSTED",
+            "type": "V_String",
+            "size": 10,
+            "scale": null
+          },
+          {
+            "name": "AMOUNT",
+            "type": "FixedDecimal",
+            "size": 19,
+            "scale": 2
+          },
+          {
+            "name": "REGION",
+            "type": "V_String",
+            "size": 10,
+            "scale": null
+          },
+          {
+            "name": "ENTRY_ID",
+            "type": "Int64",
+            "size": 8,
+            "scale": null
+          },
+          {
+            "name": "POSTED_DT",
+            "type": "DateTime",
+            "size": 19,
+            "scale": null
+          }
+        ]
+      }
+    },
+    {
+      "tool_id": "4",
+      "type": "sort",
+      "plugin": "AlteryxBasePluginsGui.Sort.Sort",
+      "container_id": null,
+      "config": {
+        "fields": [
+          {
+            "field": "ACCT",
+            "order": "asc"
+          },
+          {
+            "field": "POSTED_DT",
+            "order": "asc"
+          },
+          {
+            "field": "ENTRY_ID",
+            "order": "desc"
+          }
+        ]
+      },
+      "raw_config": "<Configuration>\n          <SortInfo>\n            <Field field=\"ACCT\" order=\"Ascending\" />\n            <Field field=\"POSTED_DT\" order=\"Ascending\" />\n            <Field field=\"ENTRY_ID\" order=\"Descending\" />\n          </SortInfo>\n        </Configuration>",
+      "annotation": "Latest entry per posting first",
+      "in_anchors": [
+        "Input"
+      ],
+      "out_anchors": [
+        "Output"
+      ],
+      "meta": {
+        "Output": [
+          {
+            "name": "ACCT",
+            "type": "V_String",
+            "size": 20,
+            "scale": null
+          },
+          {
+            "name": "PERIOD",
+            "type": "V_String",
+            "size": 7,
+            "scale": null
+          },
+          {
+            "name": "POSTED",
+            "type": "V_String",
+            "size": 10,
+            "scale": null
+          },
+          {
+            "name": "AMOUNT",
+            "type": "FixedDecimal",
+            "size": 19,
+            "scale": 2
+          },
+          {
+            "name": "REGION",
+            "type": "V_String",
+            "size": 10,
+            "scale": null
+          },
+          {
+            "name": "ENTRY_ID",
+            "type": "Int64",
+            "size": 8,
+            "scale": null
+          },
+          {
+            "name": "POSTED_DT",
+            "type": "DateTime",
+            "size": 19,
+            "scale": null
+          }
+        ]
+      }
+    },
+    {
+      "tool_id": "5",
+      "type": "unique",
+      "plugin": "AlteryxBasePluginsGui.Unique.Unique",
+      "container_id": null,
+      "config": {
+        "fields": [
+          "ACCT",
+          "POSTED_DT"
+        ]
+      },
+      "raw_config": "<Configuration>\n          <UniqueFields>\n            <Field field=\"ACCT\" />\n            <Field field=\"POSTED_DT\" />\n          </UniqueFields>\n        </Configuration>",
+      "annotation": "One entry per ACCT and day",
+      "in_anchors": [
+        "Input"
+      ],
+      "out_anchors": [
+        "U",
+        "D"
+      ],
+      "meta": {
+        "U": [
+          {
+            "name": "ACCT",
+            "type": "V_String",
+            "size": 20,
+            "scale": null
+          },
+          {
+            "name": "PERIOD",
+            "type": "V_String",
+            "size": 7,
+            "scale": null
+          },
+          {
+            "name": "POSTED",
+            "type": "V_String",
+            "size": 10,
+            "scale": null
+          },
+          {
+            "name": "AMOUNT",
+            "type": "FixedDecimal",
+            "size": 19,
+            "scale": 2
+          },
+          {
+            "name": "REGION",
+            "type": "V_String",
+            "size": 10,
+            "scale": null
+          },
+          {
+            "name": "ENTRY_ID",
+            "type": "Int64",
+            "size": 8,
+            "scale": null
+          },
+          {
+            "name": "POSTED_DT",
+            "type": "DateTime",
+            "size": 19,
+            "scale": null
+          }
+        ],
+        "D": [
+          {
+            "name": "ACCT",
+            "type": "V_String",
+            "size": 20,
+            "scale": null
+          },
+          {
+            "name": "PERIOD",
+            "type": "V_String",
+            "size": 7,
+            "scale": null
+          },
+          {
+            "name": "POSTED",
+            "type": "V_String",
+            "size": 10,
+            "scale": null
+          },
+          {
+            "name": "AMOUNT",
+            "type": "FixedDecimal",
+            "size": 19,
+            "scale": 2
+          },
+          {
+            "name": "REGION",
+            "type": "V_String",
+            "size": 10,
+            "scale": null
+          },
+          {
+            "name": "ENTRY_ID",
+            "type": "Int64",
+            "size": 8,
+            "scale": null
+          },
+          {
+            "name": "POSTED_DT",
+            "type": "DateTime",
+            "size": 19,
+            "scale": null
+          }
+        ]
+      }
+    },
+    {
+      "tool_id": "6",
+      "type": "multi_row_formula",
+      "plugin": "AlteryxBasePluginsGui.MultiRowFormula.MultiRowFormula",
+      "container_id": null,
+      "config": {
+        "field": "RUN_BAL",
+        "update_existing": false,
+        "type": "Double",
+        "size": 8,
+        "num_rows": 1,
+        "expression": "[Row-1:RUN_BAL] + [AMOUNT]",
+        "group_by": [
+          "ACCT"
+        ],
+        "unknown_rows": "zero"
+      },
+      "raw_config": "<Configuration>\n          <UpdateField value=\"False\" />\n          <UpdateField_Name />\n          <CreateField_Name>RUN_BAL</CreateField_Name>\n          <CreateField_Type>Double</CreateField_Type>\n          <CreateField_Size>8</CreateField_Size>\n          <NumRows value=\"1\" />\n          <OtherRows>0</OtherRows>\n          <GroupByFields>\n            <Field field=\"ACCT\" />\n          </GroupByFields>\n          <Expression>[Row-1:RUN_BAL] + [AMOUNT]</Expression>\n        </Configuration>",
+      "annotation": "Running balance per ACCT",
+      "in_anchors": [
+        "Input"
+      ],
+      "out_anchors": [
+        "Output"
+      ],
+      "meta": {
+        "Output": [
+          {
+            "name": "ACCT",
+            "type": "V_String",
+            "size": 20,
+            "scale": null
+          },
+          {
+            "name": "PERIOD",
+            "type": "V_String",
+            "size": 7,
+            "scale": null
+          },
+          {
+            "name": "POSTED",
+            "type": "V_String",
+            "size": 10,
+            "scale": null
+          },
+          {
+            "name": "AMOUNT",
+            "type": "FixedDecimal",
+            "size": 19,
+            "scale": 2
+          },
+          {
+            "name": "REGION",
+            "type": "V_String",
+            "size": 10,
+            "scale": null
+          },
+          {
+            "name": "ENTRY_ID",
+            "type": "Int64",
+            "size": 8,
+            "scale": null
+          },
+          {
+            "name": "POSTED_DT",
+            "type": "DateTime",
+            "size": 19,
+            "scale": null
+          },
+          {
+            "name": "RUN_BAL",
+            "type": "Double",
+            "size": 8,
+            "scale": null
+          }
+        ]
+      }
+    },
+    {
+      "tool_id": "7",
+      "type": "record_id",
+      "plugin": "AlteryxBasePluginsGui.RecordID.RecordID",
+      "container_id": null,
+      "config": {
+        "field": "RecordID",
+        "start": 1,
+        "type": "Int32",
+        "position": "first"
+      },
+      "raw_config": "<Configuration>\n          <FieldName>RecordID</FieldName>\n          <StartValue>1</StartValue>\n          <FieldType>Int32</FieldType>\n          <Position>0</Position>\n        </Configuration>",
+      "annotation": "Number the closing rows",
+      "in_anchors": [
+        "Input"
+      ],
+      "out_anchors": [
+        "Output"
+      ],
+      "meta": {
+        "Output": [
+          {
+            "name": "RecordID",
+            "type": "Int32",
+            "size": 4,
+            "scale": null
+          },
+          {
+            "name": "ACCT",
+            "type": "V_String",
+            "size": 20,
+            "scale": null
+          },
+          {
+            "name": "PERIOD",
+            "type": "V_String",
+            "size": 7,
+            "scale": null
+          },
+          {
+            "name": "POSTED",
+            "type": "V_String",
+            "size": 10,
+            "scale": null
+          },
+          {
+            "name": "AMOUNT",
+            "type": "FixedDecimal",
+            "size": 19,
+            "scale": 2
+          },
+          {
+            "name": "REGION",
+            "type": "V_String",
+            "size": 10,
+            "scale": null
+          },
+          {
+            "name": "ENTRY_ID",
+            "type": "Int64",
+            "size": 8,
+            "scale": null
+          },
+          {
+            "name": "POSTED_DT",
+            "type": "DateTime",
+            "size": 19,
+            "scale": null
+          },
+          {
+            "name": "RUN_BAL",
+            "type": "Double",
+            "size": 8,
+            "scale": null
+          }
+        ]
+      }
+    },
+    {
+      "tool_id": "8",
+      "type": "formula",
+      "plugin": "AlteryxBasePluginsGui.Formula.Formula",
+      "container_id": null,
+      "config": {
+        "formulas": [
+          {
+            "field": "PERIOD_END_FLAG",
+            "expression": "IIF(DateTimeFormat([POSTED_DT], \"%Y-%m-%d\") = [User.PeriodEnd], \"Y\", \"N\")",
+            "type": "V_String",
+            "size": 1
+          }
+        ]
+      },
+      "raw_config": "<Configuration>\n          <FormulaFields>\n            <FormulaField expression=\"IIF(DateTimeFormat([POSTED_DT], &quot;%Y-%m-%d&quot;) = [User.PeriodEnd], &quot;Y&quot;, &quot;N&quot;)\" field=\"PERIOD_END_FLAG\" size=\"1\" type=\"V_String\" />\n          </FormulaFields>\n        </Configuration>",
+      "annotation": "Flag the period end posting",
+      "in_anchors": [
+        "Input"
+      ],
+      "out_anchors": [
+        "Output"
+      ],
+      "meta": {
+        "Output": [
+          {
+            "name": "RecordID",
+            "type": "Int32",
+            "size": 4,
+            "scale": null
+          },
+          {
+            "name": "ACCT",
+            "type": "V_String",
+            "size": 20,
+            "scale": null
+          },
+          {
+            "name": "PERIOD",
+            "type": "V_String",
+            "size": 7,
+            "scale": null
+          },
+          {
+            "name": "POSTED",
+            "type": "V_String",
+            "size": 10,
+            "scale": null
+          },
+          {
+            "name": "AMOUNT",
+            "type": "FixedDecimal",
+            "size": 19,
+            "scale": 2
+          },
+          {
+            "name": "REGION",
+            "type": "V_String",
+            "size": 10,
+            "scale": null
+          },
+          {
+            "name": "ENTRY_ID",
+            "type": "Int64",
+            "size": 8,
+            "scale": null
+          },
+          {
+            "name": "POSTED_DT",
+            "type": "DateTime",
+            "size": 19,
+            "scale": null
+          },
+          {
+            "name": "RUN_BAL",
+            "type": "Double",
+            "size": 8,
+            "scale": null
+          },
+          {
+            "name": "PERIOD_END_FLAG",
+            "type": "V_String",
+            "size": 1,
+            "scale": null
+          }
+        ]
+      }
+    },
+    {
+      "tool_id": "200",
+      "type": "container",
+      "plugin": "AlteryxGuiToolkit.ToolContainer.ToolContainer",
+      "container_id": null,
+      "config": {},
+      "raw_config": "<Configuration>\n          <Caption>Publish</Caption>\n          <Style TextColor=\"#514c31\" FillColor=\"#f2f1ec\" BorderColor=\"#514c31\" Transparency=\"25\" Margin=\"25\" />\n          <Disabled value=\"False\" />\n          <Folded value=\"False\" />\n        </Configuration>",
+      "annotation": "Publish",
+      "in_anchors": [],
+      "out_anchors": [],
+      "meta": {}
+    },
+    {
+      "tool_id": "9",
+      "type": "summarize",
+      "plugin": "AlteryxSpatialPluginsGui.Summarize.Summarize",
+      "container_id": "200",
+      "config": {
+        "fields": [
+          {
+            "field": "ACCT",
+            "action": "GroupBy",
+            "rename": "ACCT",
+            "separator": null
+          },
+          {
+            "field": "PERIOD",
+            "action": "GroupBy",
+            "rename": "PERIOD",
+            "separator": null
+          },
+          {
+            "field": "AMOUNT",
+            "action": "Sum",
+            "rename": "TOTAL",
+            "separator": null
+          },
+          {
+            "field": "RUN_BAL",
+            "action": "Last",
+            "rename": "CLOSING_BAL",
+            "separator": null
+          },
+          {
+            "field": "ENTRY_ID",
+            "action": "Count",
+            "rename": "ENTRIES",
+            "separator": null
+          },
+          {
+            "field": "PERIOD_END_FLAG",
+            "action": "Max",
+            "rename": "HAS_PERIOD_END",
+            "separator": null
+          }
+        ]
+      },
+      "raw_config": "<Configuration>\n              <SummarizeFields>\n                <SummarizeField field=\"ACCT\" action=\"GroupBy\" rename=\"ACCT\" />\n                <SummarizeField field=\"PERIOD\" action=\"GroupBy\" rename=\"PERIOD\" />\n                <SummarizeField field=\"AMOUNT\" action=\"Sum\" rename=\"TOTAL\" />\n                <SummarizeField field=\"RUN_BAL\" action=\"Last\" rename=\"CLOSING_BAL\" />\n                <SummarizeField field=\"ENTRY_ID\" action=\"Count\" rename=\"ENTRIES\" />\n                <SummarizeField field=\"PERIOD_END_FLAG\" action=\"Max\" rename=\"HAS_PERIOD_END\" />\n              </SummarizeFields>\n            </Configuration>",
+      "annotation": "Closing balance is the last row",
+      "in_anchors": [
+        "Input"
+      ],
+      "out_anchors": [
+        "Output"
+      ],
+      "meta": {
+        "Output": [
+          {
+            "name": "ACCT",
+            "type": "V_String",
+            "size": 20,
+            "scale": null
+          },
+          {
+            "name": "PERIOD",
+            "type": "V_String",
+            "size": 7,
+            "scale": null
+          },
+          {
+            "name": "TOTAL",
+            "type": "FixedDecimal",
+            "size": 19,
+            "scale": 2
+          },
+          {
+            "name": "CLOSING_BAL",
+            "type": "Double",
+            "size": 8,
+            "scale": null
+          },
+          {
+            "name": "ENTRIES",
+            "type": "Int64",
+            "size": 8,
+            "scale": null
+          },
+          {
+            "name": "HAS_PERIOD_END",
+            "type": "V_String",
+            "size": 1,
+            "scale": null
+          }
+        ]
+      }
+    },
+    {
+      "tool_id": "10",
+      "type": "output",
+      "plugin": "AlteryxBasePluginsGui.DbFileOutput.DbFileOutput",
+      "container_id": "200",
+      "config": {
+        "source": "<scrubbed:prod_fin>",
+        "format": "db",
+        "alias": "prod_fin",
+        "table": "dbo.GL_SUMMARY",
+        "write_mode": "update_insert",
+        "keys": [
+          "ACCT",
+          "PERIOD"
+        ],
+        "pre_sql": "DELETE FROM dbo.GL_SUMMARY WHERE PERIOD < '2020-01'",
+        "post_sql": "UPDATE dbo.GL_SUMMARY SET LOADED_FLAG = 'Y' WHERE LOADED_FLAG IS NULL"
+      },
+      "raw_config": "<Configuration>\n              <Passwords />\n              <File MaxRecords=\"\" FileFormat=\"23\">&lt;scrubbed:prod_fin&gt;|||dbo.GL_SUMMARY</File>\n              <FormatSpecificOptions>\n                <OutputOption>Update; Insert if new</OutputOption>\n                <TableStyle>Quoted</TableStyle>\n                <TransactionSize>0</TransactionSize>\n              </FormatSpecificOptions>\n              <PreSQL>DELETE FROM dbo.GL_SUMMARY WHERE PERIOD &lt; '2020-01'</PreSQL>\n              <PostSQL>UPDATE dbo.GL_SUMMARY SET LOADED_FLAG = 'Y' WHERE LOADED_FLAG IS NULL</PostSQL>\n              <UpdateKeys>\n                <Field field=\"ACCT\" />\n                <Field field=\"PERIOD\" />\n              </UpdateKeys>\n              <MultiFile value=\"False\" />\n            </Configuration>",
+      "annotation": "dbo.GL_SUMMARY",
+      "in_anchors": [
+        "Input"
+      ],
+      "out_anchors": [],
+      "meta": {
+        "Output": [
+          {
+            "name": "ACCT",
+            "type": "V_String",
+            "size": 20,
+            "scale": null
+          },
+          {
+            "name": "PERIOD",
+            "type": "V_String",
+            "size": 7,
+            "scale": null
+          },
+          {
+            "name": "TOTAL",
+            "type": "FixedDecimal",
+            "size": 19,
+            "scale": 2
+          },
+          {
+            "name": "CLOSING_BAL",
+            "type": "Double",
+            "size": 8,
+            "scale": null
+          },
+          {
+            "name": "ENTRIES",
+            "type": "Int64",
+            "size": 8,
+            "scale": null
+          },
+          {
+            "name": "HAS_PERIOD_END",
+            "type": "V_String",
+            "size": 1,
+            "scale": null
+          }
+        ]
+      }
+    }
+  ],
+  "edges": [
+    {
+      "src": "1",
+      "src_anchor": "Output",
+      "dst": "2",
+      "dst_anchor": "Input",
+      "dst_order": 1,
+      "wireless": false
+    },
+    {
+      "src": "2",
+      "src_anchor": "T",
+      "dst": "3",
+      "dst_anchor": "Input",
+      "dst_order": 1,
+      "wireless": false
+    },
+    {
+      "src": "3",
+      "src_anchor": "Output",
+      "dst": "4",
+      "dst_anchor": "Input",
+      "dst_order": 1,
+      "wireless": false
+    },
+    {
+      "src": "4",
+      "src_anchor": "Output",
+      "dst": "5",
+      "dst_anchor": "Input",
+      "dst_order": 1,
+      "wireless": false
+    },
+    {
+      "src": "5",
+      "src_anchor": "U",
+      "dst": "6",
+      "dst_anchor": "Input",
+      "dst_order": 1,
+      "wireless": false
+    },
+    {
+      "src": "6",
+      "src_anchor": "Output",
+      "dst": "7",
+      "dst_anchor": "Input",
+      "dst_order": 1,
+      "wireless": false
+    },
+    {
+      "src": "7",
+      "src_anchor": "Output",
+      "dst": "8",
+      "dst_anchor": "Input",
+      "dst_order": 1,
+      "wireless": false
+    },
+    {
+      "src": "8",
+      "src_anchor": "Output",
+      "dst": "9",
+      "dst_anchor": "Input",
+      "dst_order": 1,
+      "wireless": false
+    },
+    {
+      "src": "9",
+      "src_anchor": "Output",
+      "dst": "10",
+      "dst_anchor": "Input",
+      "dst_order": 1,
+      "wireless": false
+    }
+  ]
+}

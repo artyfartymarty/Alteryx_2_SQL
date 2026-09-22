@@ -1,0 +1,22 @@
+node_modules/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.duckdb
+*.duckdb.wal
+audit.jsonl
+.claude/
+tools/
+
+# wf_0005's parser-recovery agent writes these fresh every time the offline sequence (or a live
+# run) recovers it: an extension under scripts/parsers/ext/ and its regression fixture under
+# tests/parser_corpus/ (replayed verbatim from samples/wf_0005/canned/parser-recovery/ by
+# MockRunner). Deliberately excluded, not accidental (Task 17): committing them would let
+# scripts/parse.py auto-load the extension on every future run (parse.py's DEFAULT_EXT_DIR always
+# loads scripts/parsers/ext/), so wf_0005 would parse clean on the first attempt from then on and
+# stop exercising the parser-recovery path it exists to test -- see
+# samples/wf_0005/canned/parser-recovery/tests/parser_corpus/acme_dedupe/README.md and
+# docs/superpowers/build-reports/2026-09-18-pipeline/task-17-report.md.
+/scripts/parsers/ext/acme_dedupe.py
+/tests/parser_corpus/acme_dedupe/

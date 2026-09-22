@@ -1,0 +1,29 @@
+{
+  "tool": "regex",
+  "inputs": {
+    "1": "input.csv"
+  },
+  "node": {
+    "tool_id": "2",
+    "type": "regex",
+    "config": {
+      "field": "SKU",
+      "expression": "^([A-Z]+)-(\\d+)$",
+      "case_insensitive": false,
+      "method": "parse",
+      "replace": null,
+      "copy_unmatched": false,
+      "output_fields": [
+        { "name": "FAMILY", "type": "V_String", "size": 20, "scale": null },
+        { "name": "ITEM_NO", "type": "V_String", "size": 10, "scale": null }
+      ],
+      "match_field": null
+    }
+  },
+  "edges": [
+    ["1", "Output", "2", "Input"]
+  ],
+  "compare": [
+    { "stream": "2_Output", "sql": "query.sql", "keys": [] }
+  ]
+}

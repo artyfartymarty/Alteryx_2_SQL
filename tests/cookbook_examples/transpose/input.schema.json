@@ -1,0 +1,20 @@
+[
+  {
+    "name": "SKU",
+    "type": "V_String",
+    "size": 10,
+    "scale": null
+  },
+  {
+    "name": "EAST",
+    "type": "Double",
+    "size": 8,
+    "scale": null
+  },
+  {
+    "name": "WEST",
+    "type": "Double",
+    "size": 8,
+    "scale": null
+  }
+]

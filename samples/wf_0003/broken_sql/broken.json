@@ -1,0 +1,40 @@
+[
+  {
+    "segment": "seg_01",
+    "file": "01_datetime_reads_month_first.sql",
+    "golden_set": "normal",
+    "expect": { "class": "LOGIC", "columns": ["POSTED_DT"], "stream": "3_Output" },
+    "note": "Stream 3_Output declares no keys (the edge golden set holds two byte-identical DUP rows), so the rows are paired by Task 7b's nearest-match rule: POSTED_DT is the only column of seven that disagrees, so every pair is accepted and the column is named. Some postings swap day and month and some become NULL, so the mismatches are not all NULL-vs-value and the cluster is LOGIC rather than NULL_SEMANTICS. The cluster carries paired_by: nearest_match, because nothing keyed those rows to each other. Suspect CTE t3_datetime."
+  },
+  {
+    "segment": "seg_02",
+    "file": "01_unique_keeps_the_lowest_entry_id.sql",
+    "golden_set": "normal",
+    "expect": { "class": "LOGIC", "columns": ["TOTAL"], "stream": "9_Output" },
+    "intended": { "class": "LOGIC", "columns": ["TOTAL"], "stream": "9_Output" },
+    "note": "Observed exactly as the Task 13 brief predicted. The cluster names CLOSING_BAL as well as TOTAL: both are written by tool 9, both fail the same way, and compare.py groups columns that fail the same way in the same place into one cluster. CLOSING_BAL alone would have been classified ORDERING (contract.ordering.order_dependent_columns names it), but the two columns are not both order-dependent, so the cluster takes the per-column classification. Suspect CTE t9_summarize."
+  },
+  {
+    "segment": "seg_02",
+    "file": "02_postsql_not_translated.sql",
+    "golden_set": "normal",
+    "expect": { "class": "NULL_SEMANTICS", "columns": ["LOADED_FLAG"], "stream": "9_Output" },
+    "intended": { "class": "NULL_SEMANTICS", "columns": ["LOADED_FLAG"], "stream": "9_Output" },
+    "note": "Observed exactly as the Task 13 brief predicted. Every row this run inserts has LOADED_FLAG NULL where the golden target has 'Y', and no mismatch is value-against-value, so the first classification rule holds for the whole column."
+  },
+  {
+    "segment": "seg_02",
+    "file": "03_presql_not_translated.sql",
+    "golden_set": "normal",
+    "expect": { "class": "LOGIC", "columns": [], "stream": "9_Output" },
+    "note": "Added beyond the brief's required variants, to cover the other half of the Output tool: its PreSQL. The 2019-12 row the DELETE should have removed is present in the migrated target and absent from the golden output, which is a row-presence cluster on the actual side. It names no column -- nothing in the surplus row is NULL, so no column explains it -- and a cluster whose scope is rows can never be approved, so the verdict is FAIL whatever accepted_diff_classes says."
+  },
+  {
+    "segment": "seg_02",
+    "file": "04_last_translated_as_max.sql",
+    "golden_set": "normal",
+    "expect": { "class": "LOGIC", "columns": ["CLOSING_BAL"], "stream": "9_Output" },
+    "intended": { "class": "LOGIC", "columns": ["CLOSING_BAL"], "stream": "9_Output" },
+    "note": "Added in fix round 1, together with the golden row that makes it possible: `normal`'s `(4000, 2026-08)` group now carries a fifth row (ENTRY_ID 14) whose running balance dips from a peak of 300.0 at entry 3 down to its actual last value of -100.0. The target is keyed on ACCT, PERIOD, so the diff names CLOSING_BAL outright: expected -100.0, actual 300.0 (MAX(RUN_BAL) instead of MAX_BY(RUN_BAL, RECORD_ID)). Every other group's running balance still peaks on its own last row, so period_end/empty/edge and every other column on normal are unaffected -- observed exactly as the fix round 1 review predicted. Suspect CTE t9_summarize."
+  }
+]

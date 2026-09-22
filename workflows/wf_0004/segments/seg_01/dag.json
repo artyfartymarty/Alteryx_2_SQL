@@ -1,0 +1,67 @@
+{
+  "workflow": "wf_0004",
+  "segment": "seg_01",
+  "nodes": [
+    {
+      "tool_id": "1",
+      "type": "input",
+      "plugin": "AlteryxBasePluginsGui.DbFileInput.DbFileInput",
+      "container_id": null,
+      "config": {
+        "source": "C:\\data\\wh\\stock.yxdb",
+        "format": "yxdb",
+        "query": null,
+        "alias": null,
+        "csv": null,
+        "record_limit": null
+      },
+      "raw_config": "<Configuration>\n          <Passwords />\n          <File OutputFileName=\"\" RecordLimit=\"\" SearchSubDirs=\"False\" FileFormat=\"19\">C:\\data\\wh\\stock.yxdb</File>\n          <FormatSpecificOptions />\n        </Configuration>",
+      "annotation": "Warehouse stock",
+      "in_anchors": [],
+      "out_anchors": [
+        "Output"
+      ],
+      "meta": {
+        "Output": [
+          {
+            "name": "SKU",
+            "type": "V_String",
+            "size": 30,
+            "scale": null
+          },
+          {
+            "name": "WAREHOUSE",
+            "type": "V_String",
+            "size": 10,
+            "scale": null
+          },
+          {
+            "name": "QTY",
+            "type": "Int32",
+            "size": 4,
+            "scale": null
+          },
+          {
+            "name": "NOTE",
+            "type": "V_String",
+            "size": 100,
+            "scale": null
+          }
+        ]
+      }
+    }
+  ],
+  "edges": [],
+  "inbound": [],
+  "outbound": [
+    {
+      "src": "1",
+      "src_anchor": "Output",
+      "dst": "2",
+      "dst_anchor": "Input1",
+      "dst_order": 1,
+      "wireless": false,
+      "to_segment": "seg_02"
+    }
+  ]
+}

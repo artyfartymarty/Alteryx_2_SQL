@@ -1,0 +1,11 @@
+{
+  "status": "RECOVERED",
+  "errors": [],
+  "node_count": 4,
+  "unknown_share": 0.25,
+  "scrubbed_aliases": [],
+  "attempt": 1,
+  "extension": null,
+  "reason": null,
+  "diagnosis": null
+}

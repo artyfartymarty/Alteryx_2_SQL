@@ -1,0 +1,24 @@
+[
+  {
+    "segment": "seg_01",
+    "file": "01_cleansing_without_upper.sql",
+    "golden_set": "normal",
+    "expect": { "class": "LOGIC", "columns": ["CITY", "NAME"], "stream": "2_Output", "hint": "case_only" },
+    "note": "Stream 2_Output declares no keys (the edge golden set holds CUST_ID 12 twice as byte-identical rows), so all six cleansed rows are surplus on both sides. Each pairs with its counterpart -- NAME and CITY differ, CUST_ID and TIER agree, which is half of this stream's four columns -- and upper-casing is the whole of the difference, so one LOGIC cluster of six rows carries the hint case_only. The e2e test reads only `class`, `columns` and `stream`; `hint` is recorded for the reader."
+  },
+  {
+    "segment": "seg_01",
+    "file": "02_cleansing_keeps_null_names.sql",
+    "golden_set": "normal",
+    "expect": { "class": "NULL_SEMANTICS", "columns": ["NAME"], "stream": "2_Output" },
+    "note": "Added so a Data Cleansing mistake is demonstrated with a named column: `replace NULL strings with blank` is the option this stream's NOT NULL declaration rests on, and dropping it puts a NULL in NAME."
+  },
+  {
+    "segment": "seg_03",
+    "file": "01_union_drops_the_join_left_branch.sql",
+    "golden_set": "normal",
+    "expect": { "class": "NULL_SEMANTICS", "columns": ["AMOUNT", "ORDER_DATE", "ORDER_ID"], "stream": "9_Output" },
+    "intended": { "class": "LOGIC", "columns": [], "stream": "9_Output" },
+    "note": "The NO_ORDERS customer is missing from the target and the run fails, with t5_join named as the suspect CTE. The target declares no keys -- the edge golden set holds four byte-identical (12, 3003) rows -- so since Task 7b the missing row is a surplus row with nothing to pair it with, and it goes through the keyed path's own row-presence rule. That rule reaches NULL_SEMANTICS before LOGIC: the one missing row is exactly the unmatched left-join row, so ORDER_ID, AMOUNT and ORDER_DATE are NULL in it and are not NULL throughout the golden data. `intended` records the plainer class the plan predicted; NULL_SEMANTICS names the columns that explain the row, so it is the more useful of the two."
+  }
+]

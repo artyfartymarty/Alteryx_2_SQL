@@ -1,0 +1,32 @@
+[
+  {
+    "name": "SKU",
+    "type": "V_String",
+    "size": 30,
+    "scale": null
+  },
+  {
+    "name": "FAMILY",
+    "type": "V_String",
+    "size": 20,
+    "scale": null
+  },
+  {
+    "name": "EAST",
+    "type": "Double",
+    "size": 8,
+    "scale": null
+  },
+  {
+    "name": "NORTH",
+    "type": "Double",
+    "size": 8,
+    "scale": null
+  },
+  {
+    "name": "WEST",
+    "type": "Double",
+    "size": 8,
+    "scale": null
+  }
+]

@@ -1,0 +1,28 @@
+{
+  "tool": "select",
+  "inputs": {
+    "1": "input_orders.csv"
+  },
+  "node": {
+    "tool_id": "2",
+    "type": "select",
+    "config": {
+      "fields": [
+        { "name": "CUSTOMER", "selected": true, "rename": null, "type": "String", "size": 10 },
+        { "name": "STATUS", "selected": true, "rename": "ORDER_STATUS", "type": null, "size": null },
+        { "name": "NOTE", "selected": false, "rename": null, "type": null, "size": null }
+      ],
+      "unknown_selected": true
+    }
+  },
+  "edges": [
+    ["1", "Output", "2", "Input"]
+  ],
+  "compare": [
+    {
+      "stream": "2_Output",
+      "sql": "query.sql",
+      "keys": []
+    }
+  ]
+}

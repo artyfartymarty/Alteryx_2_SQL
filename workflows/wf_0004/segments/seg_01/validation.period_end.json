@@ -1,0 +1,36 @@
+{
+  "segment": "seg_01",
+  "golden_set": "period_end",
+  "verdict": "PASS",
+  "checks": {
+    "1_Output:work": {
+      "schema": "PASS",
+      "nullability": "PASS",
+      "counts": {
+        "expected": 8,
+        "actual": 8,
+        "verdict": "PASS"
+      },
+      "aggregates": "PASS",
+      "aggregates_rows": {
+        "rows": 8,
+        "verdict": "PASS"
+      },
+      "set_diff": {
+        "only_expected": 0,
+        "only_actual": 0
+      },
+      "column_mismatches": {},
+      "column_counts": {},
+      "aggregate_mismatches": {}
+    }
+  },
+  "diff_clusters": [],
+  "normalizations_applied": [],
+  "idempotent": true,
+  "idempotency_diff": [],
+  "runtime_ms": 120,
+  "credits": null,
+  "needs_human": false,
+  "truncated": false
+}

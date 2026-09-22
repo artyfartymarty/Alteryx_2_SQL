@@ -1,0 +1,88 @@
+{
+  "workflow": "wf_0004",
+  "segment": "seg_02",
+  "inputs": [
+    {
+      "from": "seg_01",
+      "stream": "1_Output",
+      "table": "MIG_WORK.WF0004_SEG_01_OUT",
+      "columns": [
+        { "name": "SKU", "type": "VARCHAR(30)", "nullable": true },
+        { "name": "WAREHOUSE", "type": "VARCHAR(10)", "nullable": true },
+        { "name": "QTY", "type": "NUMBER(38,0)", "nullable": true },
+        { "name": "NOTE", "type": "VARCHAR(100)", "nullable": true }
+      ],
+      "keys": [],
+      "expected_rows": { "min": 0, "max": 5000000 },
+      "large": false
+    }
+  ],
+  "outputs": [
+    {
+      "stream": "2_Output5",
+      "kind": "work",
+      "table": "MIG_WORK.WF0004_SEG_02_OUT",
+      "logical": null,
+      "columns": [
+        { "name": "SKU", "type": "VARCHAR(30)", "nullable": false },
+        { "name": "WAREHOUSE", "type": "VARCHAR(10)", "nullable": false },
+        { "name": "QTY", "type": "NUMBER(38,0)", "nullable": false },
+        { "name": "NOTE", "type": "VARCHAR(100)", "nullable": true }
+      ],
+      "keys": []
+    }
+  ],
+  "output": {
+    "stream": "2_Output5",
+    "kind": "work",
+    "table": "MIG_WORK.WF0004_SEG_02_OUT",
+    "logical": null,
+    "columns": [
+      { "name": "SKU", "type": "VARCHAR(30)", "nullable": false },
+      { "name": "WAREHOUSE", "type": "VARCHAR(10)", "nullable": false },
+      { "name": "QTY", "type": "NUMBER(38,0)", "nullable": false },
+      { "name": "NOTE", "type": "VARCHAR(100)", "nullable": true }
+    ],
+    "keys": []
+  },
+  "row_relation": "filter",
+  "ordering": {
+    "keys": [],
+    "alteryx_deterministic": true,
+    "order_dependent_columns": []
+  },
+  "tolerances": {},
+  "normalizations": [],
+  "parity_risks": [
+    {
+      "tool_id": "2",
+      "class": "LOGIC",
+      "note": "A macro is a workflow, not a tool: there is no cookbook pattern for `macro`, only for the tools inside clean_codes.yxmc. Its sub-DAG is inlined one CTE per inner tool, and a change to the .yxmc file changes this segment even though inventory.yxmd did not change."
+    },
+    {
+      "tool_id": "2",
+      "class": "LOGIC",
+      "note": "The question MinQty is 1 in the parent's <Value name=\"MinQty\">, overriding the macro's own NumericUpDown default of 0. Translating the default instead would keep every zero-quantity row."
+    },
+    {
+      "tool_id": "2",
+      "class": "LOGIC",
+      "note": "The macro's RegEx is Replace with CopyUnmatched, so a SKU that does not match is kept as it was rather than becoming NULL. REGEXP_REPLACE already returns the subject unchanged on no match, so the two agree -- but a translator who reached for a CASE with an ELSE NULL would not."
+    },
+    {
+      "tool_id": "2",
+      "class": "LOGIC",
+      "note": "The macro's RegEx is case-INSENSITIVE (Alteryx spells the attribute CaseInsensitve), so `ab 12` and `zz9` normalise; the parent's RegEx at tool 3 is case-sensitive. The two flags are opposite and easy to swap."
+    },
+    {
+      "tool_id": "2",
+      "class": "NULL_SEMANTICS",
+      "note": "The macro's Filter is [QTY] >= 1 and a NULL QTY makes that NULL, which is not true, so those rows leave on the unwired False anchor. That is what keeps a NULL WAREHOUSE (and a NULL SKU) out of the Cross Tab downstream, which is why SKU, WAREHOUSE and QTY are declared NOT NULL on this stream."
+    },
+    {
+      "tool_id": "2",
+      "class": "LOGIC",
+      "note": "Snowflake's regex dialect is not Python's, which is what the simulator uses: \\d and \\s are ASCII-only in the local engine and Unicode-aware in the oracle, and case-insensitive [A-Za-z] folds differently at the edges of Unicode. No golden set contains a non-ASCII digit or a non-breaking space, so the divergence is recorded rather than guarded against."
+    }
+  ]
+}

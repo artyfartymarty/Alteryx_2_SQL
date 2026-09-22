@@ -1,0 +1,38 @@
+[
+  {
+    "name": "REGION",
+    "type": "V_String",
+    "size": 20,
+    "scale": null
+  },
+  {
+    "name": "SIZE_BAND",
+    "type": "V_String",
+    "size": 10,
+    "scale": null
+  },
+  {
+    "name": "TOTAL_NET",
+    "type": "Double",
+    "size": 8,
+    "scale": null
+  },
+  {
+    "name": "ORDERS",
+    "type": "Int64",
+    "size": 8,
+    "scale": null
+  },
+  {
+    "name": "PRICED_ORDERS",
+    "type": "Int64",
+    "size": 8,
+    "scale": null
+  },
+  {
+    "name": "LAST_ORDER",
+    "type": "Date",
+    "size": 10,
+    "scale": null
+  }
+]

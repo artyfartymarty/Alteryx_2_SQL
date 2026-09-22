@@ -1,0 +1,63 @@
+{
+  "segment": "seg_03",
+  "golden_set": "normal",
+  "verdict": "PASS",
+  "checks": {
+    "4_Output:target": {
+      "schema": "PASS",
+      "nullability": "PASS",
+      "counts": {
+        "expected": 6,
+        "actual": 6,
+        "verdict": "PASS"
+      },
+      "aggregates": "PASS",
+      "aggregates_rows": {
+        "rows": 6,
+        "verdict": "PASS"
+      },
+      "set_diff": {
+        "only_expected": 0,
+        "only_actual": 0
+      },
+      "column_mismatches": {},
+      "column_counts": {},
+      "aggregate_mismatches": {}
+    },
+    "5_Output:target": {
+      "schema": "PASS",
+      "nullability": "PASS",
+      "counts": {
+        "expected": 18,
+        "actual": 18,
+        "verdict": "PASS"
+      },
+      "aggregates": "PASS",
+      "aggregates_rows": {
+        "rows": 18,
+        "verdict": "PASS"
+      },
+      "set_diff": {
+        "only_expected": 0,
+        "only_actual": 0
+      },
+      "column_mismatches": {},
+      "column_counts": {},
+      "aggregate_mismatches": {}
+    }
+  },
+  "diff_clusters": [],
+  "normalizations_applied": [],
+  "idempotent": true,
+  "idempotency_diff": [],
+  "runtime_ms": 460,
+  "credits": null,
+  "needs_human": false,
+  "truncated": false,
+  "sets": {
+    "normal": "PASS",
+    "period_end": "PASS",
+    "empty": "PASS",
+    "edge": "PASS"
+  }
+}

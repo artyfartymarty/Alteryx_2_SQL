@@ -1,0 +1,106 @@
+{
+  "workflow": "wf_0001",
+  "segment": "seg_01",
+  "inputs": [
+    {
+      "logical": "ORDERS",
+      "tool_id": "1",
+      "columns": [
+        { "name": "ORDER_ID", "type": "NUMBER(38,0)", "nullable": true },
+        { "name": "CUSTOMER", "type": "VARCHAR(50)", "nullable": true },
+        { "name": "REGION", "type": "VARCHAR(20)", "nullable": true },
+        { "name": "AMOUNT_TXT", "type": "VARCHAR(20)", "nullable": true },
+        { "name": "QTY", "type": "NUMBER(38,0)", "nullable": true },
+        { "name": "ORDER_DATE", "type": "DATE", "nullable": true },
+        { "name": "STATUS", "type": "VARCHAR(10)", "nullable": true }
+      ],
+      "keys": [],
+      "expected_rows": { "min": 0, "max": 2000000 },
+      "large": false
+    }
+  ],
+  "outputs": [
+    {
+      "stream": "6_Output",
+      "kind": "target",
+      "tool_id": "7",
+      "logical": "SALES_SUMMARY",
+      "table": null,
+      "write_mode": "overwrite",
+      "columns": [
+        { "name": "REGION", "type": "VARCHAR(20)", "nullable": false },
+        { "name": "SIZE_BAND", "type": "VARCHAR(10)", "nullable": false },
+        { "name": "TOTAL_NET", "type": "FLOAT", "nullable": true },
+        { "name": "ORDERS", "type": "NUMBER(38,0)", "nullable": true },
+        { "name": "PRICED_ORDERS", "type": "NUMBER(38,0)", "nullable": true },
+        { "name": "LAST_ORDER", "type": "DATE", "nullable": true }
+      ],
+      "keys": ["REGION", "SIZE_BAND"]
+    },
+    {
+      "stream": "3_F",
+      "kind": "target",
+      "tool_id": "8",
+      "logical": "EXCLUDED_ORDERS",
+      "table": null,
+      "write_mode": "overwrite",
+      "columns": [
+        { "name": "CUSTOMER", "type": "VARCHAR(10)", "nullable": true },
+        { "name": "ORDER_STATUS", "type": "VARCHAR(10)", "nullable": true },
+        { "name": "ORDER_ID", "type": "NUMBER(38,0)", "nullable": true },
+        { "name": "REGION", "type": "VARCHAR(20)", "nullable": true },
+        { "name": "AMOUNT_TXT", "type": "VARCHAR(20)", "nullable": true },
+        { "name": "QTY", "type": "NUMBER(38,0)", "nullable": true },
+        { "name": "ORDER_DATE", "type": "DATE", "nullable": true }
+      ],
+      "keys": []
+    }
+  ],
+  "output": {
+    "stream": "6_Output",
+    "kind": "target",
+    "tool_id": "7",
+    "logical": "SALES_SUMMARY",
+    "table": null,
+    "write_mode": "overwrite",
+    "columns": [
+      { "name": "REGION", "type": "VARCHAR(20)", "nullable": false },
+      { "name": "SIZE_BAND", "type": "VARCHAR(10)", "nullable": false },
+      { "name": "TOTAL_NET", "type": "FLOAT", "nullable": true },
+      { "name": "ORDERS", "type": "NUMBER(38,0)", "nullable": true },
+      { "name": "PRICED_ORDERS", "type": "NUMBER(38,0)", "nullable": true },
+      { "name": "LAST_ORDER", "type": "DATE", "nullable": true }
+    ],
+    "keys": ["REGION", "SIZE_BAND"]
+  },
+  "row_relation": "aggregate",
+  "ordering": {
+    "keys": ["TOTAL_NET", "REGION"],
+    "alteryx_deterministic": true,
+    "order_dependent_columns": []
+  },
+  "tolerances": {},
+  "normalizations": [],
+  "parity_risks": [
+    {
+      "tool_id": "3",
+      "class": "NULL_SEMANTICS",
+      "note": "Filter [REGION] != \"WEST\": a NULL REGION makes the expression NULL, and Alteryx sends NULL to the False anchor, so tool 8's stream must keep those rows."
+    },
+    {
+      "tool_id": "4",
+      "class": "ROUNDING",
+      "note": "Round([AMOUNT] * IIF([QTY] >= 10, 0.9, 1), 0.01) is half away from zero on exact decimals; the arithmetic is done in NUMBER(38,10) and only the result is stored back as a Double."
+    },
+    {
+      "tool_id": "4",
+      "class": "NULL_SEMANTICS",
+      "note": "ToNumber warns and nulls on text that is not a plain decimal (abc, 1,200.50, the empty string), and a NULL AMOUNT makes every comparison in the SIZE_BAND band NULL, so those rows fall to the ELSE branch SMALL."
+    },
+    {
+      "tool_id": "2",
+      "class": "TRUNCATION",
+      "note": "Select retypes CUSTOMER to String(10): Alteryx truncates silently where Snowflake's VARCHAR(10) would raise, so the translation uses LEFT(CUSTOMER, 10)."
+    }
+  ]
+}

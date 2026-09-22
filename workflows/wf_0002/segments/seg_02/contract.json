@@ -1,0 +1,72 @@
+{
+  "workflow": "wf_0002",
+  "segment": "seg_02",
+  "inputs": [
+    {
+      "logical": "ORDERS_EXPORT",
+      "tool_id": "3",
+      "columns": [
+        { "name": "ORDER_ID", "type": "VARCHAR(254)", "nullable": true },
+        { "name": "CUST_ID", "type": "VARCHAR(254)", "nullable": true },
+        { "name": "AMOUNT", "type": "VARCHAR(254)", "nullable": true },
+        { "name": "ORDER_DATE", "type": "VARCHAR(254)", "nullable": true }
+      ],
+      "keys": [],
+      "expected_rows": { "min": 0, "max": 5000000 },
+      "large": false
+    }
+  ],
+  "outputs": [
+    {
+      "stream": "4_Output",
+      "kind": "work",
+      "table": "MIG_WORK.WF0002_SEG_02_OUT",
+      "logical": null,
+      "columns": [
+        { "name": "ORDER_ID", "type": "NUMBER(38,0)", "nullable": true },
+        { "name": "CUST_ID", "type": "NUMBER(38,0)", "nullable": true },
+        { "name": "AMOUNT", "type": "FLOAT", "nullable": true },
+        { "name": "ORDER_DATE", "type": "DATE", "nullable": true }
+      ],
+      "keys": []
+    }
+  ],
+  "output": {
+    "stream": "4_Output",
+    "kind": "work",
+    "table": "MIG_WORK.WF0002_SEG_02_OUT",
+    "logical": null,
+    "columns": [
+      { "name": "ORDER_ID", "type": "NUMBER(38,0)", "nullable": true },
+      { "name": "CUST_ID", "type": "NUMBER(38,0)", "nullable": true },
+      { "name": "AMOUNT", "type": "FLOAT", "nullable": true },
+      { "name": "ORDER_DATE", "type": "DATE", "nullable": true }
+    ],
+    "keys": []
+  },
+  "row_relation": "1:1",
+  "ordering": {
+    "keys": [],
+    "alteryx_deterministic": true,
+    "order_dependent_columns": []
+  },
+  "tolerances": {},
+  "normalizations": [],
+  "parity_risks": [
+    {
+      "tool_id": "4",
+      "class": "NULL_SEMANTICS",
+      "note": "The Select retypes text to Int32/Double/Date; Alteryx warns and nulls on text it cannot read, so every conversion is a TRY_ form -- 'abc' and the empty string give a NULL AMOUNT."
+    },
+    {
+      "tool_id": "4",
+      "class": "TYPE",
+      "note": "A date that does not exist (2026-02-30) and a non-ISO date (31/12/2026) both become NULL rather than raising; ORDER_DATE is read with an explicit YYYY-MM-DD format."
+    },
+    {
+      "tool_id": "4",
+      "class": "ROUNDING",
+      "note": "Alteryx's integer coercion rounds half away from zero, which TRY_TO_NUMBER(x, 38, 0) also does; the sample data is whole numbers, so nothing here proves it."
+    }
+  ]
+}

@@ -1,0 +1,44 @@
+[
+  {
+    "name": "ACCT",
+    "type": "V_String",
+    "size": 20,
+    "scale": null
+  },
+  {
+    "name": "PERIOD",
+    "type": "V_String",
+    "size": 7,
+    "scale": null
+  },
+  {
+    "name": "TOTAL",
+    "type": "FixedDecimal",
+    "size": 19,
+    "scale": 2
+  },
+  {
+    "name": "CLOSING_BAL",
+    "type": "Double",
+    "size": 8,
+    "scale": null
+  },
+  {
+    "name": "ENTRIES",
+    "type": "Int64",
+    "size": 8,
+    "scale": null
+  },
+  {
+    "name": "HAS_PERIOD_END",
+    "type": "V_String",
+    "size": 1,
+    "scale": null
+  },
+  {
+    "name": "LOADED_FLAG",
+    "type": "V_String",
+    "size": 1,
+    "scale": null
+  }
+]

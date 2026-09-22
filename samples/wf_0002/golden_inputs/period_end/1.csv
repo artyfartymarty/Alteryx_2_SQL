@@ -1,0 +1,7 @@
+CUST_ID,NAME,CITY,TIER
+1,  aCme corporation  ,Brisbane,GOLD
+2,Bolt Ltd,Sydney,SILVER
+3,Cinder Works,Perth,BRONZE
+4,Delta Pty,Hobart,GOLD
+5,\N,Darwin,SILVER
+6,Echo Supplies,  adelaide  ,BRONZE

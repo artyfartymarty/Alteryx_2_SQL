@@ -1,0 +1,28 @@
+{
+  "tool": "data_cleansing",
+  "inputs": {
+    "1": "input.csv"
+  },
+  "node": {
+    "tool_id": "2",
+    "type": "data_cleansing",
+    "config": {
+      "fields": ["NAME"],
+      "replace_null_strings_blank": true,
+      "replace_null_numeric_zero": false,
+      "trim_whitespace": true,
+      "remove_tabs_linebreaks_dupspaces": true,
+      "remove_all_whitespace": false,
+      "remove_letters": false,
+      "remove_numbers": false,
+      "remove_punctuation": false,
+      "modify_case": "upper"
+    }
+  },
+  "edges": [
+    ["1", "Output", "2", "Input"]
+  ],
+  "compare": [
+    { "stream": "2_Output", "sql": "query.sql", "keys": [] }
+  ]
+}

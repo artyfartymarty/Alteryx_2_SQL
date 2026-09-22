@@ -1,0 +1,711 @@
+{
+  "workflow": "wf_0001",
+  "yxmd_version": "2023.1",
+  "engine": "AMP",
+  "constants": {},
+  "file_kind": "yxmd",
+  "source_file": "sales_summary.yxmd",
+  "nodes": [
+    {
+      "tool_id": "1",
+      "type": "input",
+      "plugin": "AlteryxBasePluginsGui.DbFileInput.DbFileInput",
+      "container_id": null,
+      "config": {
+        "source": "C:\\data\\sales\\orders.yxdb",
+        "format": "yxdb",
+        "query": null,
+        "alias": null,
+        "csv": null,
+        "record_limit": null
+      },
+      "raw_config": "<Configuration>\n          <Passwords />\n          <File OutputFileName=\"\" RecordLimit=\"\" SearchSubDirs=\"False\" FileFormat=\"19\">C:\\data\\sales\\orders.yxdb</File>\n          <FormatSpecificOptions />\n        </Configuration>",
+      "annotation": "Orders extract",
+      "in_anchors": [],
+      "out_anchors": [
+        "Output"
+      ],
+      "meta": {
+        "Output": [
+          {
+            "name": "ORDER_ID",
+            "type": "Int32",
+            "size": 4,
+            "scale": null
+          },
+          {
+            "name": "CUSTOMER",
+            "type": "V_String",
+            "size": 50,
+            "scale": null
+          },
+          {
+            "name": "REGION",
+            "type": "V_String",
+            "size": 20,
+            "scale": null
+          },
+          {
+            "name": "AMOUNT_TXT",
+            "type": "V_String",
+            "size": 20,
+            "scale": null
+          },
+          {
+            "name": "QTY",
+            "type": "Int32",
+            "size": 4,
+            "scale": null
+          },
+          {
+            "name": "ORDER_DATE",
+            "type": "Date",
+            "size": 10,
+            "scale": null
+          },
+          {
+            "name": "STATUS",
+            "type": "V_String",
+            "size": 10,
+            "scale": null
+          }
+        ]
+      }
+    },
+    {
+      "tool_id": "2",
+      "type": "select",
+      "plugin": "AlteryxBasePluginsGui.AlteryxSelect.AlteryxSelect",
+      "container_id": null,
+      "config": {
+        "fields": [
+          {
+            "name": "CUSTOMER",
+            "selected": true,
+            "rename": null,
+            "type": "String",
+            "size": 10
+          },
+          {
+            "name": "STATUS",
+            "selected": true,
+            "rename": "ORDER_STATUS",
+            "type": null,
+            "size": null
+          }
+        ],
+        "unknown_selected": true
+      },
+      "raw_config": "<Configuration>\n          <OrderChanged value=\"True\" />\n          <CommaDecimal value=\"False\" />\n          <SelectFields>\n            <SelectField field=\"CUSTOMER\" selected=\"True\" type=\"String\" size=\"10\" />\n            <SelectField field=\"STATUS\" selected=\"True\" rename=\"ORDER_STATUS\" />\n            <SelectField field=\"*Unknown\" selected=\"True\" />\n          </SelectFields>\n        </Configuration>",
+      "annotation": "Shorten CUSTOMER, rename STATUS",
+      "in_anchors": [
+        "Input"
+      ],
+      "out_anchors": [
+        "Output"
+      ],
+      "meta": {
+        "Output": [
+          {
+            "name": "CUSTOMER",
+            "type": "String",
+            "size": 10,
+            "scale": null
+          },
+          {
+            "name": "ORDER_STATUS",
+            "type": "V_String",
+            "size": 10,
+            "scale": null
+          },
+          {
+            "name": "ORDER_ID",
+            "type": "Int32",
+            "size": 4,
+            "scale": null
+          },
+          {
+            "name": "REGION",
+            "type": "V_String",
+            "size": 20,
+            "scale": null
+          },
+          {
+            "name": "AMOUNT_TXT",
+            "type": "V_String",
+            "size": 20,
+            "scale": null
+          },
+          {
+            "name": "QTY",
+            "type": "Int32",
+            "size": 4,
+            "scale": null
+          },
+          {
+            "name": "ORDER_DATE",
+            "type": "Date",
+            "size": 10,
+            "scale": null
+          }
+        ]
+      }
+    },
+    {
+      "tool_id": "3",
+      "type": "filter",
+      "plugin": "AlteryxBasePluginsGui.Filter.Filter",
+      "container_id": null,
+      "config": {
+        "expression": "[REGION] != \"WEST\""
+      },
+      "raw_config": "<Configuration>\n          <Expression>[REGION] != \"WEST\"</Expression>\n          <Mode>Custom</Mode>\n        </Configuration>",
+      "annotation": "Exclude WEST",
+      "in_anchors": [
+        "Input"
+      ],
+      "out_anchors": [
+        "T",
+        "F"
+      ],
+      "meta": {
+        "T": [
+          {
+            "name": "CUSTOMER",
+            "type": "String",
+            "size": 10,
+            "scale": null
+          },
+          {
+            "name": "ORDER_STATUS",
+            "type": "V_String",
+            "size": 10,
+            "scale": null
+          },
+          {
+            "name": "ORDER_ID",
+            "type": "Int32",
+            "size": 4,
+            "scale": null
+          },
+          {
+            "name": "REGION",
+            "type": "V_String",
+            "size": 20,
+            "scale": null
+          },
+          {
+            "name": "AMOUNT_TXT",
+            "type": "V_String",
+            "size": 20,
+            "scale": null
+          },
+          {
+            "name": "QTY",
+            "type": "Int32",
+            "size": 4,
+            "scale": null
+          },
+          {
+            "name": "ORDER_DATE",
+            "type": "Date",
+            "size": 10,
+            "scale": null
+          }
+        ],
+        "F": [
+          {
+            "name": "CUSTOMER",
+            "type": "String",
+            "size": 10,
+            "scale": null
+          },
+          {
+            "name": "ORDER_STATUS",
+            "type": "V_String",
+            "size": 10,
+            "scale": null
+          },
+          {
+            "name": "ORDER_ID",
+            "type": "Int32",
+            "size": 4,
+            "scale": null
+          },
+          {
+            "name": "REGION",
+            "type": "V_String",
+            "size": 20,
+            "scale": null
+          },
+          {
+            "name": "AMOUNT_TXT",
+            "type": "V_String",
+            "size": 20,
+            "scale": null
+          },
+          {
+            "name": "QTY",
+            "type": "Int32",
+            "size": 4,
+            "scale": null
+          },
+          {
+            "name": "ORDER_DATE",
+            "type": "Date",
+            "size": 10,
+            "scale": null
+          }
+        ]
+      }
+    },
+    {
+      "tool_id": "4",
+      "type": "formula",
+      "plugin": "AlteryxBasePluginsGui.Formula.Formula",
+      "container_id": null,
+      "config": {
+        "formulas": [
+          {
+            "field": "AMOUNT",
+            "expression": "ToNumber([AMOUNT_TXT])",
+            "type": "Double",
+            "size": 8
+          },
+          {
+            "field": "NET",
+            "expression": "Round([AMOUNT] * IIF([QTY] >= 10, 0.9, 1), 0.01)",
+            "type": "Double",
+            "size": 8
+          },
+          {
+            "field": "SIZE_BAND",
+            "expression": "IF [AMOUNT] >= 1000 THEN \"LARGE\" ELSEIF [AMOUNT] >= 100 THEN \"MEDIUM\" ELSE \"SMALL\" ENDIF",
+            "type": "V_String",
+            "size": 10
+          }
+        ]
+      },
+      "raw_config": "<Configuration>\n          <FormulaFields>\n            <FormulaField expression=\"ToNumber([AMOUNT_TXT])\" field=\"AMOUNT\" size=\"8\" type=\"Double\" />\n            <FormulaField expression=\"Round([AMOUNT] * IIF([QTY] &gt;= 10, 0.9, 1), 0.01)\" field=\"NET\" size=\"8\" type=\"Double\" />\n            <FormulaField expression=\"IF [AMOUNT] &gt;= 1000 THEN &quot;LARGE&quot; ELSEIF [AMOUNT] &gt;= 100 THEN &quot;MEDIUM&quot; ELSE &quot;SMALL&quot; ENDIF\" field=\"SIZE_BAND\" size=\"10\" type=\"V_String\" />\n          </FormulaFields>\n        </Configuration>",
+      "annotation": "AMOUNT, NET, SIZE_BAND",
+      "in_anchors": [
+        "Input"
+      ],
+      "out_anchors": [
+        "Output"
+      ],
+      "meta": {
+        "Output": [
+          {
+            "name": "CUSTOMER",
+            "type": "String",
+            "size": 10,
+            "scale": null
+          },
+          {
+            "name": "ORDER_STATUS",
+            "type": "V_String",
+            "size": 10,
+            "scale": null
+          },
+          {
+            "name": "ORDER_ID",
+            "type": "Int32",
+            "size": 4,
+            "scale": null
+          },
+          {
+            "name": "REGION",
+            "type": "V_String",
+            "size": 20,
+            "scale": null
+          },
+          {
+            "name": "AMOUNT_TXT",
+            "type": "V_String",
+            "size": 20,
+            "scale": null
+          },
+          {
+            "name": "QTY",
+            "type": "Int32",
+            "size": 4,
+            "scale": null
+          },
+          {
+            "name": "ORDER_DATE",
+            "type": "Date",
+            "size": 10,
+            "scale": null
+          },
+          {
+            "name": "AMOUNT",
+            "type": "Double",
+            "size": 8,
+            "scale": null
+          },
+          {
+            "name": "NET",
+            "type": "Double",
+            "size": 8,
+            "scale": null
+          },
+          {
+            "name": "SIZE_BAND",
+            "type": "V_String",
+            "size": 10,
+            "scale": null
+          }
+        ]
+      }
+    },
+    {
+      "tool_id": "5",
+      "type": "summarize",
+      "plugin": "AlteryxSpatialPluginsGui.Summarize.Summarize",
+      "container_id": null,
+      "config": {
+        "fields": [
+          {
+            "field": "REGION",
+            "action": "GroupBy",
+            "rename": "REGION",
+            "separator": null
+          },
+          {
+            "field": "SIZE_BAND",
+            "action": "GroupBy",
+            "rename": "SIZE_BAND",
+            "separator": null
+          },
+          {
+            "field": "NET",
+            "action": "Sum",
+            "rename": "TOTAL_NET",
+            "separator": null
+          },
+          {
+            "field": "ORDER_ID",
+            "action": "Count",
+            "rename": "ORDERS",
+            "separator": null
+          },
+          {
+            "field": "AMOUNT",
+            "action": "CountNonNull",
+            "rename": "PRICED_ORDERS",
+            "separator": null
+          },
+          {
+            "field": "ORDER_DATE",
+            "action": "Max",
+            "rename": "LAST_ORDER",
+            "separator": null
+          }
+        ]
+      },
+      "raw_config": "<Configuration>\n          <SummarizeFields>\n            <SummarizeField field=\"REGION\" action=\"GroupBy\" rename=\"REGION\" />\n            <SummarizeField field=\"SIZE_BAND\" action=\"GroupBy\" rename=\"SIZE_BAND\" />\n            <SummarizeField field=\"NET\" action=\"Sum\" rename=\"TOTAL_NET\" />\n            <SummarizeField field=\"ORDER_ID\" action=\"Count\" rename=\"ORDERS\" />\n            <SummarizeField field=\"AMOUNT\" action=\"CountNonNull\" rename=\"PRICED_ORDERS\" />\n            <SummarizeField field=\"ORDER_DATE\" action=\"Max\" rename=\"LAST_ORDER\" />\n          </SummarizeFields>\n        </Configuration>",
+      "annotation": "Totals by region and band",
+      "in_anchors": [
+        "Input"
+      ],
+      "out_anchors": [
+        "Output"
+      ],
+      "meta": {
+        "Output": [
+          {
+            "name": "REGION",
+            "type": "V_String",
+            "size": 20,
+            "scale": null
+          },
+          {
+            "name": "SIZE_BAND",
+            "type": "V_String",
+            "size": 10,
+            "scale": null
+          },
+          {
+            "name": "TOTAL_NET",
+            "type": "Double",
+            "size": 8,
+            "scale": null
+          },
+          {
+            "name": "ORDERS",
+            "type": "Int64",
+            "size": 8,
+            "scale": null
+          },
+          {
+            "name": "PRICED_ORDERS",
+            "type": "Int64",
+            "size": 8,
+            "scale": null
+          },
+          {
+            "name": "LAST_ORDER",
+            "type": "Date",
+            "size": 10,
+            "scale": null
+          }
+        ]
+      }
+    },
+    {
+      "tool_id": "6",
+      "type": "sort",
+      "plugin": "AlteryxBasePluginsGui.Sort.Sort",
+      "container_id": null,
+      "config": {
+        "fields": [
+          {
+            "field": "TOTAL_NET",
+            "order": "desc"
+          },
+          {
+            "field": "REGION",
+            "order": "asc"
+          }
+        ]
+      },
+      "raw_config": "<Configuration>\n          <SortInfo>\n            <Field field=\"TOTAL_NET\" order=\"Descending\" />\n            <Field field=\"REGION\" order=\"Ascending\" />\n          </SortInfo>\n        </Configuration>",
+      "annotation": "Biggest totals first",
+      "in_anchors": [
+        "Input"
+      ],
+      "out_anchors": [
+        "Output"
+      ],
+      "meta": {
+        "Output": [
+          {
+            "name": "REGION",
+            "type": "V_String",
+            "size": 20,
+            "scale": null
+          },
+          {
+            "name": "SIZE_BAND",
+            "type": "V_String",
+            "size": 10,
+            "scale": null
+          },
+          {
+            "name": "TOTAL_NET",
+            "type": "Double",
+            "size": 8,
+            "scale": null
+          },
+          {
+            "name": "ORDERS",
+            "type": "Int64",
+            "size": 8,
+            "scale": null
+          },
+          {
+            "name": "PRICED_ORDERS",
+            "type": "Int64",
+            "size": 8,
+            "scale": null
+          },
+          {
+            "name": "LAST_ORDER",
+            "type": "Date",
+            "size": 10,
+            "scale": null
+          }
+        ]
+      }
+    },
+    {
+      "tool_id": "7",
+      "type": "output",
+      "plugin": "AlteryxBasePluginsGui.DbFileOutput.DbFileOutput",
+      "container_id": null,
+      "config": {
+        "source": "C:\\data\\out\\sales_summary.yxdb",
+        "format": "yxdb",
+        "alias": null,
+        "table": null,
+        "write_mode": "overwrite",
+        "keys": [],
+        "pre_sql": null,
+        "post_sql": null
+      },
+      "raw_config": "<Configuration>\n          <Passwords />\n          <File MaxRecords=\"\" FileFormat=\"19\">C:\\data\\out\\sales_summary.yxdb</File>\n          <FormatSpecificOptions>\n            <OutputOption>Overwrite</OutputOption>\n          </FormatSpecificOptions>\n          <MultiFile value=\"False\" />\n        </Configuration>",
+      "annotation": "sales_summary.yxdb",
+      "in_anchors": [
+        "Input"
+      ],
+      "out_anchors": [],
+      "meta": {
+        "Output": [
+          {
+            "name": "REGION",
+            "type": "V_String",
+            "size": 20,
+            "scale": null
+          },
+          {
+            "name": "SIZE_BAND",
+            "type": "V_String",
+            "size": 10,
+            "scale": null
+          },
+          {
+            "name": "TOTAL_NET",
+            "type": "Double",
+            "size": 8,
+            "scale": null
+          },
+          {
+            "name": "ORDERS",
+            "type": "Int64",
+            "size": 8,
+            "scale": null
+          },
+          {
+            "name": "PRICED_ORDERS",
+            "type": "Int64",
+            "size": 8,
+            "scale": null
+          },
+          {
+            "name": "LAST_ORDER",
+            "type": "Date",
+            "size": 10,
+            "scale": null
+          }
+        ]
+      }
+    },
+    {
+      "tool_id": "8",
+      "type": "output",
+      "plugin": "AlteryxBasePluginsGui.DbFileOutput.DbFileOutput",
+      "container_id": null,
+      "config": {
+        "source": "C:\\data\\out\\excluded_orders.csv",
+        "format": "csv",
+        "alias": null,
+        "table": null,
+        "write_mode": "overwrite",
+        "keys": [],
+        "pre_sql": null,
+        "post_sql": null
+      },
+      "raw_config": "<Configuration>\n          <Passwords />\n          <File MaxRecords=\"\" FileFormat=\"0\">C:\\data\\out\\excluded_orders.csv</File>\n          <FormatSpecificOptions>\n            <OutputOption>Overwrite</OutputOption>\n            <LineEndStyle>CRLF</LineEndStyle>\n            <Delimeter>,</Delimeter>\n            <ForceQuotes>False</ForceQuotes>\n            <HeaderRow>True</HeaderRow>\n            <CodePage>28591</CodePage>\n          </FormatSpecificOptions>\n          <MultiFile value=\"False\" />\n        </Configuration>",
+      "annotation": "excluded_orders.csv",
+      "in_anchors": [
+        "Input"
+      ],
+      "out_anchors": [],
+      "meta": {
+        "Output": [
+          {
+            "name": "CUSTOMER",
+            "type": "String",
+            "size": 10,
+            "scale": null
+          },
+          {
+            "name": "ORDER_STATUS",
+            "type": "V_String",
+            "size": 10,
+            "scale": null
+          },
+          {
+            "name": "ORDER_ID",
+            "type": "Int32",
+            "size": 4,
+            "scale": null
+          },
+          {
+            "name": "REGION",
+            "type": "V_String",
+            "size": 20,
+            "scale": null
+          },
+          {
+            "name": "AMOUNT_TXT",
+            "type": "V_String",
+            "size": 20,
+            "scale": null
+          },
+          {
+            "name": "QTY",
+            "type": "Int32",
+            "size": 4,
+            "scale": null
+          },
+          {
+            "name": "ORDER_DATE",
+            "type": "Date",
+            "size": 10,
+            "scale": null
+          }
+        ]
+      }
+    }
+  ],
+  "edges": [
+    {
+      "src": "1",
+      "src_anchor": "Output",
+      "dst": "2",
+      "dst_anchor": "Input",
+      "dst_order": 1,
+      "wireless": false
+    },
+    {
+      "src": "2",
+      "src_anchor": "Output",
+      "dst": "3",
+      "dst_anchor": "Input",
+      "dst_order": 1,
+      "wireless": false
+    },
+    {
+      "src": "3",
+      "src_anchor": "T",
+      "dst": "4",
+      "dst_anchor": "Input",
+      "dst_order": 1,
+      "wireless": false
+    },
+    {
+      "src": "3",
+      "src_anchor": "F",
+      "dst": "8",
+      "dst_anchor": "Input",
+      "dst_order": 1,
+      "wireless": false
+    },
+    {
+      "src": "4",
+      "src_anchor": "Output",
+      "dst": "5",
+      "dst_anchor": "Input",
+      "dst_order": 1,
+      "wireless": false
+    },
+    {
+      "src": "5",
+      "src_anchor": "Output",
+      "dst": "6",
+      "dst_anchor": "Input",
+      "dst_order": 1,
+      "wireless": false
+    },
+    {
+      "src": "6",
+      "src_anchor": "Output",
+      "dst": "7",
+      "dst_anchor": "Input",
+      "dst_order": 1,
+      "wireless": false
+    }
+  ]
+}

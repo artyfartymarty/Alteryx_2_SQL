@@ -1,0 +1,113 @@
+[
+  {
+    "id": "Q1",
+    "kind": "input",
+    "tool_id": "1",
+    "annotation": "Vendor accounts",
+    "format": "yxdb",
+    "source": "C:\\data\\vendor\\accounts.yxdb",
+    "key": "vendor/accounts.yxdb",
+    "fields": [
+      "ACCT",
+      "UPDATED",
+      "BALANCE"
+    ],
+    "field_source": "yxdb_header",
+    "record_count": 6,
+    "query": null,
+    "table": null,
+    "write_mode": null,
+    "keys": [],
+    "pre_sql": null,
+    "post_sql": null,
+    "blocking": true,
+    "resolved": null,
+    "candidates": [
+      {
+        "snowflake": "VENDOR.RAW.ACCOUNTS",
+        "matched": 3,
+        "of": 3,
+        "missing": [],
+        "score": 1.0,
+        "row_count": 9814,
+        "basis": "columns"
+      },
+      {
+        "snowflake": "ANALYTICS.RAW.ACCOUNTS",
+        "basis": "naming"
+      }
+    ]
+  },
+  {
+    "id": "Q2",
+    "kind": "manual",
+    "tool_id": "2",
+    "annotation": "Acme Dedupe (third party)",
+    "format": null,
+    "source": "AcmeAnalytics.Dedupe.DedupeTool",
+    "key": null,
+    "fields": [],
+    "field_source": null,
+    "record_count": null,
+    "query": null,
+    "table": null,
+    "write_mode": null,
+    "keys": [],
+    "pre_sql": null,
+    "post_sql": null,
+    "blocking": false,
+    "resolved": null,
+    "candidates": []
+  },
+  {
+    "id": "Q3",
+    "kind": "manual",
+    "tool_id": "3",
+    "annotation": "Tell the vendor team",
+    "format": null,
+    "source": "C:\\scripts\\notify.bat",
+    "key": null,
+    "fields": [],
+    "field_source": null,
+    "record_count": null,
+    "query": null,
+    "table": null,
+    "write_mode": null,
+    "keys": [],
+    "pre_sql": null,
+    "post_sql": null,
+    "blocking": false,
+    "resolved": null,
+    "candidates": []
+  },
+  {
+    "id": "Q4",
+    "kind": "output",
+    "tool_id": "4",
+    "annotation": "accounts_clean.yxdb",
+    "format": "yxdb",
+    "source": "C:\\data\\out\\accounts_clean.yxdb",
+    "key": "out/accounts_clean.yxdb",
+    "fields": [
+      "ACCT",
+      "UPDATED",
+      "BALANCE"
+    ],
+    "field_source": "meta",
+    "record_count": null,
+    "query": null,
+    "table": null,
+    "write_mode": "overwrite",
+    "keys": [],
+    "pre_sql": null,
+    "post_sql": null,
+    "blocking": true,
+    "resolved": null,
+    "candidates": [
+      {
+        "snowflake": "ANALYTICS.CURATED.ACCOUNTS_CLEAN",
+        "basis": "naming"
+      }
+    ]
+  }
+]

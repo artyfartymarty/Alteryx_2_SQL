@@ -1,0 +1,8 @@
+SKU,WAREHOUSE,QTY,NOTE
+AB-12,EAST,20,month end count
+AB-12,NORTH,5,month end count
+ZZ-9,WEST,11,month end count
+ZZ-9,EAST,2,month end count
+CD-100,NORTH,7,month end count
+EF-7,EAST,1,month end count
+BAD SKU!,WEST,4,still needs a data fix

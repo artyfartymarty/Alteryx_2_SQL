@@ -1,0 +1,38 @@
+[
+  {
+    "segment": "seg_02",
+    "file": "01_macro_filter_dropped.sql",
+    "golden_set": "normal",
+    "expect": { "class": "LOGIC", "columns": [], "stream": "2_Output5" },
+    "intended": { "class": "LOGIC", "columns": [], "stream": "2_Output5" },
+    "note": "Observed as the Task 13 brief predicted. Stream 2_Output5 declares no keys (the edge golden set holds two byte-identical DUP-1 rows), so the two rows the macro's filter should have removed are surplus rows on the actual side with nothing to pair them with: a row-presence cluster, which names no column because nothing in either surplus row is NULL throughout. The report also carries a second cluster, NULL_SEMANTICS on QTY, from the nullability check -- one of those two rows has a NULL QTY in a column this contract declares NOT NULL. A row-scope cluster can never be approved, so the verdict is FAIL whatever accepted_diff_classes says."
+  },
+  {
+    "segment": "seg_02",
+    "file": "02_macro_uses_the_question_default.sql",
+    "golden_set": "normal",
+    "expect": { "class": "LOGIC", "columns": [], "stream": "2_Output5" },
+    "note": "Added beyond the brief's required variants, to cover the behaviour samples/wf_0004/README.md says tool 2 is there to exercise: a question value overriding an interface default. Translating the macro's own default (MinQty 0) instead of the 1 the parent passes keeps the single zero-quantity row, which is one surplus row on the actual side. The NULL-quantity row is still dropped, because NULL >= 0 is NULL in both models, so this variant differs from 01 in exactly one row."
+  },
+  {
+    "segment": "seg_02",
+    "file": "03_macro_regex_nulls_unmatched.sql",
+    "golden_set": "normal",
+    "expect": { "class": "NULL_SEMANTICS", "columns": ["SKU"], "stream": "2_Output5" },
+    "note": "Added beyond the brief's required variants, to cover the macro RegEx's CopyUnmatched flag. The unmatched SKU becomes NULL instead of being kept, which the report says twice and from two different checks: once from the nullability check (SKU is declared NOT NULL on this stream) and once as a value difference, the surplus row on each side being paired by Task 7b's nearest-match rule -- they agree in three of four columns. The second cluster carries paired_by: nearest_match."
+  },
+  {
+    "segment": "seg_03",
+    "file": "01_cross_tab_fills_missing_with_zero.sql",
+    "golden_set": "normal",
+    "expect": { "class": "NULL_SEMANTICS", "columns": ["EAST", "NORTH", "WEST"], "stream": "4_Output" },
+    "note": "Added beyond the brief's required variants. Both targets of this segment are keyed, so the comparison is a keyed diff and names the columns outright: NULL_SEMANTICS on EAST/NORTH/WEST for tool 6's wide table, suspect CTE t4_cross_tab, and a second cluster, NULL_SEMANTICS on VALUE for tool 7's long table, because the same zeros flow through the Transpose."
+  },
+  {
+    "segment": "seg_03",
+    "file": "02_transpose_drops_null_values.sql",
+    "golden_set": "normal",
+    "expect": { "class": "NULL_SEMANTICS", "columns": ["VALUE"], "stream": "5_Output" },
+    "note": "Added beyond the brief's required variants, to show what reaching for UNPIVOT costs. The cells with no value are missing from tool 7's target, which is a row-presence cluster on the expected side -- and because VALUE is NULL in every one of those rows and is not NULL throughout the golden data, the cluster names it. Its scope is rows, so it can never be approved. Tool 6's wide target is untouched by this edit and reports nothing."
+  }
+]

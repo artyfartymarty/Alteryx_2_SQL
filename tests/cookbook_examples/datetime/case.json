@@ -1,0 +1,22 @@
+{
+  "tool": "datetime",
+  "inputs": {
+    "1": "input.csv"
+  },
+  "node": {
+    "tool_id": "2",
+    "type": "datetime",
+    "config": {
+      "direction": "to_datetime",
+      "field": "POSTED",
+      "format": "%d/%m/%Y",
+      "out_field": "POSTED_DT"
+    }
+  },
+  "edges": [
+    ["1", "Output", "2", "Input"]
+  ],
+  "compare": [
+    { "stream": "2_Output", "sql": "query.sql", "keys": [] }
+  ]
+}

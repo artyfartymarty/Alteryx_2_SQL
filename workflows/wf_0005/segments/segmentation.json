@@ -1,0 +1,21 @@
+{
+  "segments": {
+    "seg_01": [
+      "1",
+      "2",
+      "3",
+      "4"
+    ]
+  },
+  "order": [
+    [
+      "seg_01"
+    ]
+  ],
+  "warnings": [],
+  "params": {
+    "min_tools": 3,
+    "max_tools": 40,
+    "formula_heavy_cap": 20
+  }
+}

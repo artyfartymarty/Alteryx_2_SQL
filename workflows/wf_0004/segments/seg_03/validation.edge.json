@@ -1,0 +1,57 @@
+{
+  "segment": "seg_03",
+  "golden_set": "edge",
+  "verdict": "PASS",
+  "checks": {
+    "4_Output:target": {
+      "schema": "PASS",
+      "nullability": "PASS",
+      "counts": {
+        "expected": 4,
+        "actual": 4,
+        "verdict": "PASS"
+      },
+      "aggregates": "PASS",
+      "aggregates_rows": {
+        "rows": 4,
+        "verdict": "PASS"
+      },
+      "set_diff": {
+        "only_expected": 0,
+        "only_actual": 0
+      },
+      "column_mismatches": {},
+      "column_counts": {},
+      "aggregate_mismatches": {}
+    },
+    "5_Output:target": {
+      "schema": "PASS",
+      "nullability": "PASS",
+      "counts": {
+        "expected": 12,
+        "actual": 12,
+        "verdict": "PASS"
+      },
+      "aggregates": "PASS",
+      "aggregates_rows": {
+        "rows": 12,
+        "verdict": "PASS"
+      },
+      "set_diff": {
+        "only_expected": 0,
+        "only_actual": 0
+      },
+      "column_mismatches": {},
+      "column_counts": {},
+      "aggregate_mismatches": {}
+    }
+  },
+  "diff_clusters": [],
+  "normalizations_applied": [],
+  "idempotent": true,
+  "idempotency_diff": [],
+  "runtime_ms": 227,
+  "credits": null,
+  "needs_human": false,
+  "truncated": false
+}

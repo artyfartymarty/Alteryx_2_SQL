@@ -1,0 +1,26 @@
+[
+  {
+    "name": "ORDER_ID",
+    "type": "V_String",
+    "size": 254,
+    "scale": null
+  },
+  {
+    "name": "CUST_ID",
+    "type": "V_String",
+    "size": 254,
+    "scale": null
+  },
+  {
+    "name": "AMOUNT",
+    "type": "V_String",
+    "size": 254,
+    "scale": null
+  },
+  {
+    "name": "ORDER_DATE",
+    "type": "V_String",
+    "size": 254,
+    "scale": null
+  }
+]

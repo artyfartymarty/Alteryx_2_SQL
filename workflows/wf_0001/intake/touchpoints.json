@@ -1,0 +1,123 @@
+[
+  {
+    "id": "Q1",
+    "kind": "input",
+    "tool_id": "1",
+    "annotation": "Orders extract",
+    "format": "yxdb",
+    "source": "C:\\data\\sales\\orders.yxdb",
+    "key": "sales/orders.yxdb",
+    "fields": [
+      "ORDER_ID",
+      "CUSTOMER",
+      "REGION",
+      "AMOUNT_TXT",
+      "QTY",
+      "ORDER_DATE",
+      "STATUS"
+    ],
+    "field_source": "yxdb_header",
+    "record_count": 20,
+    "query": null,
+    "table": null,
+    "write_mode": null,
+    "keys": [],
+    "pre_sql": null,
+    "post_sql": null,
+    "blocking": true,
+    "resolved": null,
+    "candidates": [
+      {
+        "snowflake": "SALES.RAW.ORDERS",
+        "matched": 7,
+        "of": 7,
+        "missing": [],
+        "score": 1.0,
+        "row_count": 1204551,
+        "basis": "columns"
+      },
+      {
+        "snowflake": "SALES.RAW.ORDERS_ARCHIVE",
+        "matched": 6,
+        "of": 7,
+        "missing": [
+          "STATUS"
+        ],
+        "score": 0.7857,
+        "row_count": 8391004,
+        "basis": "columns"
+      },
+      {
+        "snowflake": "ANALYTICS.RAW.ORDERS",
+        "basis": "naming"
+      }
+    ]
+  },
+  {
+    "id": "Q2",
+    "kind": "output",
+    "tool_id": "7",
+    "annotation": "sales_summary.yxdb",
+    "format": "yxdb",
+    "source": "C:\\data\\out\\sales_summary.yxdb",
+    "key": "out/sales_summary.yxdb",
+    "fields": [
+      "REGION",
+      "SIZE_BAND",
+      "TOTAL_NET",
+      "ORDERS",
+      "PRICED_ORDERS",
+      "LAST_ORDER"
+    ],
+    "field_source": "meta",
+    "record_count": null,
+    "query": null,
+    "table": null,
+    "write_mode": "overwrite",
+    "keys": [],
+    "pre_sql": null,
+    "post_sql": null,
+    "blocking": true,
+    "resolved": null,
+    "candidates": [
+      {
+        "snowflake": "ANALYTICS.CURATED.SALES_SUMMARY",
+        "basis": "naming"
+      }
+    ]
+  },
+  {
+    "id": "Q3",
+    "kind": "output",
+    "tool_id": "8",
+    "annotation": "excluded_orders.csv",
+    "format": "csv",
+    "source": "C:\\data\\out\\excluded_orders.csv",
+    "key": "out/excluded_orders.csv",
+    "fields": [
+      "CUSTOMER",
+      "ORDER_STATUS",
+      "ORDER_ID",
+      "REGION",
+      "AMOUNT_TXT",
+      "QTY",
+      "ORDER_DATE"
+    ],
+    "field_source": "meta",
+    "record_count": null,
+    "query": null,
+    "table": null,
+    "write_mode": "overwrite",
+    "keys": [],
+    "pre_sql": null,
+    "post_sql": null,
+    "blocking": true,
+    "resolved": null,
+    "candidates": [
+      {
+        "snowflake": "ANALYTICS.CURATED.EXCLUDED_ORDERS",
+        "basis": "naming"
+      }
+    ]
+  }
+]

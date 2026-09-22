@@ -1,0 +1,332 @@
+{
+  "workflow": "wf_0004",
+  "segment": "seg_03",
+  "nodes": [
+    {
+      "tool_id": "3",
+      "type": "regex",
+      "plugin": "AlteryxBasePluginsGui.RegEx.RegEx",
+      "container_id": null,
+      "config": {
+        "field": "SKU",
+        "expression": "^([A-Z]+)-(\\d+)$",
+        "case_insensitive": false,
+        "method": "parse",
+        "replace": null,
+        "copy_unmatched": false,
+        "output_fields": [
+          {
+            "name": "FAMILY",
+            "type": "V_String",
+            "size": 20
+          },
+          {
+            "name": "ITEM_NO",
+            "type": "V_String",
+            "size": 10
+          }
+        ],
+        "match_field": null
+      },
+      "raw_config": "<Configuration>\n          <Field>SKU</Field>\n          <RegExExpression value=\"^([A-Z]+)-(\\d+)$\" />\n          <CaseInsensitve value=\"False\" />\n          <Method>Parse</Method>\n          <ParseFields>\n            <Field field=\"FAMILY\" type=\"V_String\" size=\"20\" />\n            <Field field=\"ITEM_NO\" type=\"V_String\" size=\"10\" />\n          </ParseFields>\n          <ErrorHandling>Ignore</ErrorHandling>\n        </Configuration>",
+      "annotation": "Split SKU into family and item",
+      "in_anchors": [
+        "Input"
+      ],
+      "out_anchors": [
+        "Output"
+      ],
+      "meta": {
+        "Output": [
+          {
+            "name": "SKU",
+            "type": "V_String",
+            "size": 30,
+            "scale": null
+          },
+          {
+            "name": "WAREHOUSE",
+            "type": "V_String",
+            "size": 10,
+            "scale": null
+          },
+          {
+            "name": "QTY",
+            "type": "Int32",
+            "size": 4,
+            "scale": null
+          },
+          {
+            "name": "NOTE",
+            "type": "V_String",
+            "size": 100,
+            "scale": null
+          },
+          {
+            "name": "FAMILY",
+            "type": "V_String",
+            "size": 20,
+            "scale": null
+          },
+          {
+            "name": "ITEM_NO",
+            "type": "V_String",
+            "size": 10,
+            "scale": null
+          }
+        ]
+      }
+    },
+    {
+      "tool_id": "4",
+      "type": "cross_tab",
+      "plugin": "AlteryxBasePluginsGui.CrossTab.CrossTab",
+      "container_id": null,
+      "config": {
+        "group_by": [
+          "SKU",
+          "FAMILY"
+        ],
+        "header_field": "WAREHOUSE",
+        "data_field": "QTY",
+        "methods": [
+          "Sum"
+        ]
+      },
+      "raw_config": "<Configuration>\n          <GroupFields>\n            <Field field=\"SKU\" />\n            <Field field=\"FAMILY\" />\n          </GroupFields>\n          <HeaderField field=\"WAREHOUSE\" />\n          <DataField field=\"QTY\" />\n          <Methods>\n            <Method method=\"Sum\" />\n          </Methods>\n        </Configuration>",
+      "annotation": "Quantity per warehouse",
+      "in_anchors": [
+        "Input"
+      ],
+      "out_anchors": [
+        "Output"
+      ],
+      "meta": {
+        "Output": [
+          {
+            "name": "SKU",
+            "type": "V_String",
+            "size": 30,
+            "scale": null
+          },
+          {
+            "name": "FAMILY",
+            "type": "V_String",
+            "size": 20,
+            "scale": null
+          },
+          {
+            "name": "EAST",
+            "type": "Double",
+            "size": 8,
+            "scale": null
+          },
+          {
+            "name": "NORTH",
+            "type": "Double",
+            "size": 8,
+            "scale": null
+          },
+          {
+            "name": "WEST",
+            "type": "Double",
+            "size": 8,
+            "scale": null
+          }
+        ]
+      }
+    },
+    {
+      "tool_id": "5",
+      "type": "transpose",
+      "plugin": "AlteryxBasePluginsGui.Transpose.Transpose",
+      "container_id": null,
+      "config": {
+        "key_fields": [
+          "SKU"
+        ],
+        "data_fields": [
+          "EAST",
+          "NORTH",
+          "WEST"
+        ]
+      },
+      "raw_config": "<Configuration>\n          <KeyFields>\n            <Field field=\"SKU\" />\n          </KeyFields>\n          <DataFields>\n            <Field field=\"EAST\" selected=\"True\" />\n            <Field field=\"NORTH\" selected=\"True\" />\n            <Field field=\"WEST\" selected=\"True\" />\n          </DataFields>\n        </Configuration>",
+      "annotation": "Back to one row per warehouse",
+      "in_anchors": [
+        "Input"
+      ],
+      "out_anchors": [
+        "Output"
+      ],
+      "meta": {
+        "Output": [
+          {
+            "name": "SKU",
+            "type": "V_String",
+            "size": 30,
+            "scale": null
+          },
+          {
+            "name": "Name",
+            "type": "V_String",
+            "size": 255,
+            "scale": null
+          },
+          {
+            "name": "Value",
+            "type": "Double",
+            "size": 8,
+            "scale": null
+          }
+        ]
+      }
+    },
+    {
+      "tool_id": "6",
+      "type": "output",
+      "plugin": "AlteryxBasePluginsGui.DbFileOutput.DbFileOutput",
+      "container_id": null,
+      "config": {
+        "source": "C:\\data\\out\\inventory_by_wh.yxdb",
+        "format": "yxdb",
+        "alias": null,
+        "table": null,
+        "write_mode": "overwrite",
+        "keys": [],
+        "pre_sql": null,
+        "post_sql": null
+      },
+      "raw_config": "<Configuration>\n          <Passwords />\n          <File MaxRecords=\"\" FileFormat=\"19\">C:\\data\\out\\inventory_by_wh.yxdb</File>\n          <FormatSpecificOptions>\n            <OutputOption>Overwrite</OutputOption>\n          </FormatSpecificOptions>\n          <MultiFile value=\"False\" />\n        </Configuration>",
+      "annotation": "inventory_by_wh.yxdb",
+      "in_anchors": [
+        "Input"
+      ],
+      "out_anchors": [],
+      "meta": {
+        "Output": [
+          {
+            "name": "SKU",
+            "type": "V_String",
+            "size": 30,
+            "scale": null
+          },
+          {
+            "name": "FAMILY",
+            "type": "V_String",
+            "size": 20,
+            "scale": null
+          },
+          {
+            "name": "EAST",
+            "type": "Double",
+            "size": 8,
+            "scale": null
+          },
+          {
+            "name": "NORTH",
+            "type": "Double",
+            "size": 8,
+            "scale": null
+          },
+          {
+            "name": "WEST",
+            "type": "Double",
+            "size": 8,
+            "scale": null
+          }
+        ]
+      }
+    },
+    {
+      "tool_id": "7",
+      "type": "output",
+      "plugin": "AlteryxBasePluginsGui.DbFileOutput.DbFileOutput",
+      "container_id": null,
+      "config": {
+        "source": "C:\\data\\out\\inventory_long.yxdb",
+        "format": "yxdb",
+        "alias": null,
+        "table": null,
+        "write_mode": "overwrite",
+        "keys": [],
+        "pre_sql": null,
+        "post_sql": null
+      },
+      "raw_config": "<Configuration>\n          <Passwords />\n          <File MaxRecords=\"\" FileFormat=\"19\">C:\\data\\out\\inventory_long.yxdb</File>\n          <FormatSpecificOptions>\n            <OutputOption>Overwrite</OutputOption>\n          </FormatSpecificOptions>\n          <MultiFile value=\"False\" />\n        </Configuration>",
+      "annotation": "inventory_long.yxdb",
+      "in_anchors": [
+        "Input"
+      ],
+      "out_anchors": [],
+      "meta": {
+        "Output": [
+          {
+            "name": "SKU",
+            "type": "V_String",
+            "size": 30,
+            "scale": null
+          },
+          {
+            "name": "Name",
+            "type": "V_String",
+            "size": 255,
+            "scale": null
+          },
+          {
+            "name": "Value",
+            "type": "Double",
+            "size": 8,
+            "scale": null
+          }
+        ]
+      }
+    }
+  ],
+  "edges": [
+    {
+      "src": "3",
+      "src_anchor": "Output",
+      "dst": "4",
+      "dst_anchor": "Input",
+      "dst_order": 1,
+      "wireless": false
+    },
+    {
+      "src": "4",
+      "src_anchor": "Output",
+      "dst": "5",
+      "dst_anchor": "Input",
+      "dst_order": 1,
+      "wireless": false
+    },
+    {
+      "src": "4",
+      "src_anchor": "Output",
+      "dst": "6",
+      "dst_anchor": "Input",
+      "dst_order": 1,
+      "wireless": false
+    },
+    {
+      "src": "5",
+      "src_anchor": "Output",
+      "dst": "7",
+      "dst_anchor": "Input",
+      "dst_order": 1,
+      "wireless": false
+    }
+  ],
+  "inbound": [
+    {
+      "src": "2",
+      "src_anchor": "Output5",
+      "dst": "3",
+      "dst_anchor": "Input",
+      "dst_order": 1,
+      "wireless": false,
+      "from_segment": "seg_02"
+    }
+  ],
+  "outbound": []
+}

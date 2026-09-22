@@ -1,0 +1,20 @@
+{
+  "tool": "filter",
+  "inputs": {
+    "1": "input.csv"
+  },
+  "node": {
+    "tool_id": "2",
+    "type": "filter",
+    "config": {
+      "expression": "[REGION] != \"WEST\""
+    }
+  },
+  "edges": [
+    ["1", "Output", "2", "Input"]
+  ],
+  "compare": [
+    { "stream": "2_T", "sql": "query_true.sql", "keys": [] },
+    { "stream": "2_F", "sql": "query_false.sql", "keys": [] }
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "tool": "multi_row_formula",
+  "inputs": {
+    "1": "input.csv"
+  },
+  "node": {
+    "tool_id": "2",
+    "type": "multi_row_formula",
+    "config": {
+      "field": "RUN",
+      "update_existing": false,
+      "type": "Double",
+      "size": 8,
+      "num_rows": 1,
+      "expression": "[Row-1:RUN] + [AMT]",
+      "group_by": ["ACCT"],
+      "unknown_rows": "zero"
+    }
+  },
+  "edges": [
+    ["1", "Output", "2", "Input"]
+  ],
+  "compare": [
+    { "stream": "2_Output", "sql": "query.sql", "keys": [] }
+  ]
+}

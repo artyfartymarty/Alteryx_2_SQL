@@ -1,0 +1,99 @@
+{
+  "enabledPlugins": {
+    "superpowers@superpowers-marketplace": true
+  },
+  "extraKnownMarketplaces": {
+    "superpowers-marketplace": {
+      "source": {
+        "source": "github",
+        "repo": "obra/superpowers-marketplace"
+      }
+    }
+  },
+  "autoUpdate": true,
+  "experimental": true,
+  "subagents": {
+    "agents": {
+      "task": {
+        "model": "gpt-5.6-luna",
+        "effortLevel": "low",
+        "contextTier": "default"
+      },
+      "explore": {
+        "model": "gpt-5.6-luna",
+        "effortLevel": "none",
+        "contextTier": "default"
+      },
+      "research": {
+        "model": "gpt-5.6-luna",
+        "effortLevel": "medium",
+        "contextTier": "long_context"
+      },
+      "rubber-duck": {
+        "model": "gpt-6-astra",
+        "effortLevel": "low",
+        "contextTier": "default"
+      },
+      "general-purpose": {
+        "modelPolicy": "required",
+        "model": "gpt-5.6-luna",
+        "effortLevel": "medium",
+        "contextTier": "default"
+      },
+
+      "intake": {
+        "model": "gpt-6-astra",
+        "effortLevel": "medium",
+        "contextTier": "long_context"
+      },
+      "analyzer": {
+        "modelPolicy": "required",
+        "model": "gpt-6-astra",
+        "effortLevel": "medium",
+        "contextTier": "long_context"
+      },
+      "translator": {
+        "modelPolicy": "required",
+        "model": "gpt-6-astra",
+        "effortLevel": "medium",
+        "contextTier": "default"
+      },
+      "reviewer": {
+        "model": "gpt-5.6-luna",
+        "effortLevel": "medium",
+        "contextTier": "default"
+      },
+      "validator": {
+        "model": "gpt-5.6-luna",
+        "effortLevel": "medium",
+        "contextTier": "long_context"
+      },
+      "fixer": {
+        "modelPolicy": "required",
+        "model": "gpt-6-astra",
+        "effortLevel": "medium",
+        "contextTier": "long_context"
+      },
+      "parser-recovery": {
+        "modelPolicy": "required",
+        "model": "gpt-6-astra",
+        "effortLevel": "medium",
+        "contextTier": "long_context"
+      },
+      "documenter": {
+        "model": "gpt-5.6-luna",
+        "effortLevel": "low",
+        "contextTier": "default"
+      },
+      "cookbook-curator": {
+        "model": "gpt-6-astra",
+        "effortLevel": "medium",
+        "contextTier": "default"
+      }
+    },
+    "maxConcurrency": 4,
+    "maxDepth": 2
+  },
+  "planModel": "gpt-6-astra",
+  "planEffortLevel": "medium"
+}

@@ -1,0 +1,21 @@
+{
+  "id": "wf_0004",
+  "title": "Inventory by warehouse",
+  "owner": "wf_owner",
+  "schedule": "0 6 * * 1-5",
+  "segmentation": {
+    "min_tools": 3,
+    "max_tools": 40
+  },
+  "expected_terminal": "VALIDATED",
+  "answers": {
+    "wh/stock.yxdb": "WH.RAW.STOCK",
+    "out/inventory_by_wh.yxdb": "ANALYTICS.CURATED.INVENTORY_BY_WH",
+    "out/inventory_long.yxdb": "ANALYTICS.CURATED.INVENTORY_LONG"
+  },
+  "logical": {
+    "1": "STOCK",
+    "6": "INVENTORY_BY_WH",
+    "7": "INVENTORY_LONG"
+  }
+}

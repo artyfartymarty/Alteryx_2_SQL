@@ -1,0 +1,516 @@
+<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2023.1">
+  <Nodes>
+    <Node ToolID="100">
+      <GuiSettings Plugin="AlteryxGuiToolkit.ToolContainer.ToolContainer">
+        <Position x="30" y="30" width="250" height="132" />
+      </GuiSettings>
+      <Properties>
+        <Configuration>
+          <Caption>Prep customers</Caption>
+          <Style TextColor="#314c4a" FillColor="#ecf2f2" BorderColor="#314c4a" Transparency="25" Margin="25" />
+          <Disabled value="False" />
+          <Folded value="False" />
+        </Configuration>
+        <Annotation DisplayMode="0">
+          <Name />
+          <DefaultAnnotationText />
+        </Annotation>
+      </Properties>
+      <ChildNodes>
+        <Node ToolID="1">
+          <GuiSettings Plugin="AlteryxBasePluginsGui.DbFileInput.DbFileInput">
+            <Position x="54" y="66" />
+          </GuiSettings>
+          <Properties>
+            <Configuration>
+              <Passwords />
+              <File OutputFileName="" RecordLimit="" SearchSubDirs="False" FileFormat="19">\\fileserver\crm\customers.yxdb</File>
+              <FormatSpecificOptions />
+            </Configuration>
+            <Annotation DisplayMode="0">
+              <Name />
+              <DefaultAnnotationText>CRM customers</DefaultAnnotationText>
+            </Annotation>
+            <MetaInfo connection="Output">
+              <RecordInfo>
+                <Field name="CUST_ID" type="Int32" size="4" source="File: \\fileserver\crm\customers.yxdb" />
+                <Field name="NAME" type="V_WString" size="60" source="File: \\fileserver\crm\customers.yxdb" />
+                <Field name="CITY" type="V_String" size="40" source="File: \\fileserver\crm\customers.yxdb" />
+                <Field name="TIER" type="V_String" size="10" source="File: \\fileserver\crm\customers.yxdb" />
+              </RecordInfo>
+            </MetaInfo>
+          </Properties>
+          <EngineSettings EngineDll="AlteryxBasePluginsEngine.dll" EngineDllEntryPoint="AlteryxDbFileInput" />
+        </Node>
+        <Node ToolID="2">
+          <GuiSettings>
+            <Position x="162" y="66" />
+          </GuiSettings>
+          <Properties>
+            <Configuration>
+              <Value name="List Box (11)">"NAME","CITY"</Value>
+              <Value name="Check Box (84)">True</Value>
+              <Value name="Check Box (117)">False</Value>
+              <Value name="Check Box (15)">True</Value>
+              <Value name="Check Box (109)">False</Value>
+              <Value name="Check Box (122)">False</Value>
+              <Value name="Check Box (53)">False</Value>
+              <Value name="Check Box (58)">False</Value>
+              <Value name="Check Box (70)">False</Value>
+              <Value name="Check Box (77)">True</Value>
+              <Value name="Drop Down (81)">upper</Value>
+            </Configuration>
+            <Annotation DisplayMode="0">
+              <Name />
+              <DefaultAnnotationText>Trim and upper-case NAME, CITY</DefaultAnnotationText>
+            </Annotation>
+            <MetaInfo connection="Output">
+              <RecordInfo>
+                <Field name="CUST_ID" type="Int32" size="4" source="File: \\fileserver\crm\customers.yxdb" />
+                <Field name="NAME" type="V_WString" size="60" source="File: \\fileserver\crm\customers.yxdb" />
+                <Field name="CITY" type="V_String" size="40" source="File: \\fileserver\crm\customers.yxdb" />
+                <Field name="TIER" type="V_String" size="10" source="File: \\fileserver\crm\customers.yxdb" />
+              </RecordInfo>
+            </MetaInfo>
+          </Properties>
+          <EngineSettings Macro="Cleanse.yxmc" />
+        </Node>
+      </ChildNodes>
+    </Node>
+    <Node ToolID="200">
+      <GuiSettings Plugin="AlteryxGuiToolkit.ToolContainer.ToolContainer">
+        <Position x="30" y="186" width="286" height="168" />
+      </GuiSettings>
+      <Properties>
+        <Configuration>
+          <Caption>Prep orders</Caption>
+          <Style TextColor="#514c31" FillColor="#f2f1ec" BorderColor="#514c31" Transparency="25" Margin="25" />
+          <Disabled value="False" />
+          <Folded value="False" />
+        </Configuration>
+        <Annotation DisplayMode="0">
+          <Name />
+          <DefaultAnnotationText />
+        </Annotation>
+      </Properties>
+      <ChildNodes>
+        <Node ToolID="210">
+          <GuiSettings Plugin="AlteryxGuiToolkit.ToolContainer.ToolContainer">
+            <Position x="42" y="210" width="250" height="132" />
+          </GuiSettings>
+          <Properties>
+            <Configuration>
+              <Caption>Type the CSV export</Caption>
+              <Style TextColor="#4c3151" FillColor="#f1ecf2" BorderColor="#4c3151" Transparency="25" Margin="25" />
+              <Disabled value="False" />
+              <Folded value="False" />
+            </Configuration>
+            <Annotation DisplayMode="0">
+              <Name />
+              <DefaultAnnotationText />
+            </Annotation>
+          </Properties>
+          <ChildNodes>
+            <Node ToolID="3">
+              <GuiSettings Plugin="AlteryxBasePluginsGui.DbFileInput.DbFileInput">
+                <Position x="54" y="246" />
+              </GuiSettings>
+              <Properties>
+                <Configuration>
+                  <Passwords />
+                  <File OutputFileName="" RecordLimit="" SearchSubDirs="False" FileFormat="0">\\fileserver\crm\orders_export.csv</File>
+                  <FormatSpecificOptions>
+                    <HeaderRow>True</HeaderRow>
+                    <IgnoreErrors>False</IgnoreErrors>
+                    <AllowShareWrite>False</AllowShareWrite>
+                    <ImportLine>1</ImportLine>
+                    <FieldLen>254</FieldLen>
+                    <SingleThreadRead>False</SingleThreadRead>
+                    <IgnoreQuotes>DoubleQuotes</IgnoreQuotes>
+                    <Delimeter>,</Delimeter>
+                    <QuoteRecordBreak>False</QuoteRecordBreak>
+                    <CodePage>28591</CodePage>
+                  </FormatSpecificOptions>
+                </Configuration>
+                <Annotation DisplayMode="0">
+                  <Name />
+                  <DefaultAnnotationText>Nightly orders export</DefaultAnnotationText>
+                </Annotation>
+                <MetaInfo connection="Output">
+                  <RecordInfo>
+                    <Field name="ORDER_ID" type="V_String" size="254" source="File: \\fileserver\crm\orders_export.csv" />
+                    <Field name="CUST_ID" type="V_String" size="254" source="File: \\fileserver\crm\orders_export.csv" />
+                    <Field name="AMOUNT" type="V_String" size="254" source="File: \\fileserver\crm\orders_export.csv" />
+                    <Field name="ORDER_DATE" type="V_String" size="254" source="File: \\fileserver\crm\orders_export.csv" />
+                  </RecordInfo>
+                </MetaInfo>
+              </Properties>
+              <EngineSettings EngineDll="AlteryxBasePluginsEngine.dll" EngineDllEntryPoint="AlteryxDbFileInput" />
+            </Node>
+            <Node ToolID="4">
+              <GuiSettings Plugin="AlteryxBasePluginsGui.AlteryxSelect.AlteryxSelect">
+                <Position x="162" y="246" />
+              </GuiSettings>
+              <Properties>
+                <Configuration>
+                  <OrderChanged value="False" />
+                  <CommaDecimal value="False" />
+                  <SelectFields>
+                    <SelectField field="ORDER_ID" selected="True" type="Int32" size="4" />
+                    <SelectField field="CUST_ID" selected="True" type="Int32" size="4" />
+                    <SelectField field="AMOUNT" selected="True" type="Double" size="8" />
+                    <SelectField field="ORDER_DATE" selected="True" type="Date" size="10" />
+                    <SelectField field="*Unknown" selected="False" />
+                  </SelectFields>
+                </Configuration>
+                <Annotation DisplayMode="0">
+                  <Name />
+                  <DefaultAnnotationText>Strings to numbers and dates</DefaultAnnotationText>
+                </Annotation>
+                <MetaInfo connection="Output">
+                  <RecordInfo>
+                    <Field name="ORDER_ID" type="Int32" size="4" source="File: \\fileserver\crm\orders_export.csv" />
+                    <Field name="CUST_ID" type="Int32" size="4" source="File: \\fileserver\crm\orders_export.csv" />
+                    <Field name="AMOUNT" type="Double" size="8" source="File: \\fileserver\crm\orders_export.csv" />
+                    <Field name="ORDER_DATE" type="Date" size="10" source="File: \\fileserver\crm\orders_export.csv" />
+                  </RecordInfo>
+                </MetaInfo>
+              </Properties>
+              <EngineSettings EngineDll="AlteryxBasePluginsEngine.dll" EngineDllEntryPoint="AlteryxSelect" />
+            </Node>
+          </ChildNodes>
+        </Node>
+      </ChildNodes>
+    </Node>
+    <Node ToolID="5">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.Join.Join">
+        <Position x="366" y="150" />
+      </GuiSettings>
+      <Properties>
+        <Configuration>
+          <JoinInfo connection="Left">
+            <Field field="CUST_ID" />
+          </JoinInfo>
+          <JoinInfo connection="Right">
+            <Field field="CUST_ID" />
+          </JoinInfo>
+          <JoinByRecordPos value="False" />
+          <SelectConfiguration>
+            <Configuration outputConnection="Join">
+              <OrderChanged value="False" />
+              <CommaDecimal value="False" />
+              <SelectFields>
+                <SelectField field="Right_CUST_ID" selected="False" />
+                <SelectField field="*Unknown" selected="True" />
+              </SelectFields>
+            </Configuration>
+          </SelectConfiguration>
+        </Configuration>
+        <Annotation DisplayMode="0">
+          <Name />
+          <DefaultAnnotationText>Customers to orders on CUST_ID</DefaultAnnotationText>
+        </Annotation>
+        <MetaInfo connection="Left">
+          <RecordInfo>
+            <Field name="CUST_ID" type="Int32" size="4" source="File: \\fileserver\crm\customers.yxdb" />
+            <Field name="NAME" type="V_WString" size="60" source="File: \\fileserver\crm\customers.yxdb" />
+            <Field name="CITY" type="V_String" size="40" source="File: \\fileserver\crm\customers.yxdb" />
+            <Field name="TIER" type="V_String" size="10" source="File: \\fileserver\crm\customers.yxdb" />
+          </RecordInfo>
+        </MetaInfo>
+        <MetaInfo connection="Join">
+          <RecordInfo>
+            <Field name="CUST_ID" type="Int32" size="4" source="File: \\fileserver\crm\customers.yxdb" />
+            <Field name="NAME" type="V_WString" size="60" source="File: \\fileserver\crm\customers.yxdb" />
+            <Field name="CITY" type="V_String" size="40" source="File: \\fileserver\crm\customers.yxdb" />
+            <Field name="TIER" type="V_String" size="10" source="File: \\fileserver\crm\customers.yxdb" />
+            <Field name="ORDER_ID" type="Int32" size="4" source="File: \\fileserver\crm\orders_export.csv" />
+            <Field name="AMOUNT" type="Double" size="8" source="File: \\fileserver\crm\orders_export.csv" />
+            <Field name="ORDER_DATE" type="Date" size="10" source="File: \\fileserver\crm\orders_export.csv" />
+          </RecordInfo>
+        </MetaInfo>
+        <MetaInfo connection="Right">
+          <RecordInfo>
+            <Field name="ORDER_ID" type="Int32" size="4" source="File: \\fileserver\crm\orders_export.csv" />
+            <Field name="CUST_ID" type="Int32" size="4" source="File: \\fileserver\crm\orders_export.csv" />
+            <Field name="AMOUNT" type="Double" size="8" source="File: \\fileserver\crm\orders_export.csv" />
+            <Field name="ORDER_DATE" type="Date" size="10" source="File: \\fileserver\crm\orders_export.csv" />
+          </RecordInfo>
+        </MetaInfo>
+      </Properties>
+      <EngineSettings EngineDll="AlteryxBasePluginsEngine.dll" EngineDllEntryPoint="AlteryxJoin" />
+    </Node>
+    <Node ToolID="6">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.Formula.Formula">
+        <Position x="474" y="150" />
+      </GuiSettings>
+      <Properties>
+        <Configuration>
+          <FormulaFields>
+            <FormulaField expression="&quot;MATCHED&quot;" field="MATCH_FLAG" size="12" type="V_String" />
+          </FormulaFields>
+        </Configuration>
+        <Annotation DisplayMode="0">
+          <Name />
+          <DefaultAnnotationText>MATCHED</DefaultAnnotationText>
+        </Annotation>
+        <MetaInfo connection="Output">
+          <RecordInfo>
+            <Field name="CUST_ID" type="Int32" size="4" source="File: \\fileserver\crm\customers.yxdb" />
+            <Field name="NAME" type="V_WString" size="60" source="File: \\fileserver\crm\customers.yxdb" />
+            <Field name="CITY" type="V_String" size="40" source="File: \\fileserver\crm\customers.yxdb" />
+            <Field name="TIER" type="V_String" size="10" source="File: \\fileserver\crm\customers.yxdb" />
+            <Field name="ORDER_ID" type="Int32" size="4" source="File: \\fileserver\crm\orders_export.csv" />
+            <Field name="AMOUNT" type="Double" size="8" source="File: \\fileserver\crm\orders_export.csv" />
+            <Field name="ORDER_DATE" type="Date" size="10" source="File: \\fileserver\crm\orders_export.csv" />
+            <Field name="MATCH_FLAG" type="V_String" size="12" source="Formula: MATCH_FLAG" />
+          </RecordInfo>
+        </MetaInfo>
+      </Properties>
+      <EngineSettings EngineDll="AlteryxBasePluginsEngine.dll" EngineDllEntryPoint="AlteryxFormula" />
+    </Node>
+    <Node ToolID="7">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.Formula.Formula">
+        <Position x="474" y="90" />
+      </GuiSettings>
+      <Properties>
+        <Configuration>
+          <FormulaFields>
+            <FormulaField expression="&quot;NO_ORDERS&quot;" field="MATCH_FLAG" size="12" type="V_String" />
+          </FormulaFields>
+        </Configuration>
+        <Annotation DisplayMode="0">
+          <Name />
+          <DefaultAnnotationText>NO_ORDERS</DefaultAnnotationText>
+        </Annotation>
+        <MetaInfo connection="Output">
+          <RecordInfo>
+            <Field name="CUST_ID" type="Int32" size="4" source="File: \\fileserver\crm\customers.yxdb" />
+            <Field name="NAME" type="V_WString" size="60" source="File: \\fileserver\crm\customers.yxdb" />
+            <Field name="CITY" type="V_String" size="40" source="File: \\fileserver\crm\customers.yxdb" />
+            <Field name="TIER" type="V_String" size="10" source="File: \\fileserver\crm\customers.yxdb" />
+            <Field name="MATCH_FLAG" type="V_String" size="12" source="Formula: MATCH_FLAG" />
+          </RecordInfo>
+        </MetaInfo>
+      </Properties>
+      <EngineSettings EngineDll="AlteryxBasePluginsEngine.dll" EngineDllEntryPoint="AlteryxFormula" />
+    </Node>
+    <Node ToolID="8">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.Formula.Formula">
+        <Position x="474" y="210" />
+      </GuiSettings>
+      <Properties>
+        <Configuration>
+          <FormulaFields>
+            <FormulaField expression="&quot;ORPHAN&quot;" field="MATCH_FLAG" size="12" type="V_String" />
+          </FormulaFields>
+        </Configuration>
+        <Annotation DisplayMode="0">
+          <Name />
+          <DefaultAnnotationText>ORPHAN</DefaultAnnotationText>
+        </Annotation>
+        <MetaInfo connection="Output">
+          <RecordInfo>
+            <Field name="ORDER_ID" type="Int32" size="4" source="File: \\fileserver\crm\orders_export.csv" />
+            <Field name="CUST_ID" type="Int32" size="4" source="File: \\fileserver\crm\orders_export.csv" />
+            <Field name="AMOUNT" type="Double" size="8" source="File: \\fileserver\crm\orders_export.csv" />
+            <Field name="ORDER_DATE" type="Date" size="10" source="File: \\fileserver\crm\orders_export.csv" />
+            <Field name="MATCH_FLAG" type="V_String" size="12" source="Formula: MATCH_FLAG" />
+          </RecordInfo>
+        </MetaInfo>
+      </Properties>
+      <EngineSettings EngineDll="AlteryxBasePluginsEngine.dll" EngineDllEntryPoint="AlteryxFormula" />
+    </Node>
+    <Node ToolID="9">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.Union.Union">
+        <Position x="582" y="150" />
+      </GuiSettings>
+      <Properties>
+        <Configuration>
+          <ByName_ErrorMode>Warning</ByName_ErrorMode>
+          <ByName_OutputMode>All</ByName_OutputMode>
+          <Mode>ByName</Mode>
+          <SetOutputOrder value="False" />
+          <OutputOrder />
+        </Configuration>
+        <Annotation DisplayMode="0">
+          <Name />
+          <DefaultAnnotationText>Stack the three flags</DefaultAnnotationText>
+        </Annotation>
+        <MetaInfo connection="Output">
+          <RecordInfo>
+            <Field name="CUST_ID" type="Int32" size="4" source="File: \\fileserver\crm\customers.yxdb" />
+            <Field name="NAME" type="V_WString" size="60" source="File: \\fileserver\crm\customers.yxdb" />
+            <Field name="CITY" type="V_String" size="40" source="File: \\fileserver\crm\customers.yxdb" />
+            <Field name="TIER" type="V_String" size="10" source="File: \\fileserver\crm\customers.yxdb" />
+            <Field name="ORDER_ID" type="Int32" size="4" source="File: \\fileserver\crm\orders_export.csv" />
+            <Field name="AMOUNT" type="Double" size="8" source="File: \\fileserver\crm\orders_export.csv" />
+            <Field name="ORDER_DATE" type="Date" size="10" source="File: \\fileserver\crm\orders_export.csv" />
+            <Field name="MATCH_FLAG" type="V_String" size="12" source="Formula: MATCH_FLAG" />
+          </RecordInfo>
+        </MetaInfo>
+      </Properties>
+      <EngineSettings EngineDll="AlteryxBasePluginsEngine.dll" EngineDllEntryPoint="AlteryxUnion" />
+    </Node>
+    <Node ToolID="10">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.DbFileOutput.DbFileOutput">
+        <Position x="690" y="114" />
+      </GuiSettings>
+      <Properties>
+        <Configuration>
+          <Passwords />
+          <File MaxRecords="" FileFormat="23">&lt;scrubbed:dw_sales&gt;|||dbo.CUSTOMER_ORDER_FACT</File>
+          <FormatSpecificOptions>
+            <OutputOption>Append Existing</OutputOption>
+            <TableStyle>Quoted</TableStyle>
+            <TransactionSize>0</TransactionSize>
+          </FormatSpecificOptions>
+          <MultiFile value="False" />
+        </Configuration>
+        <Annotation DisplayMode="0">
+          <Name />
+          <DefaultAnnotationText>dbo.CUSTOMER_ORDER_FACT</DefaultAnnotationText>
+        </Annotation>
+        <MetaInfo connection="Output">
+          <RecordInfo>
+            <Field name="CUST_ID" type="Int32" size="4" source="File: \\fileserver\crm\customers.yxdb" />
+            <Field name="NAME" type="V_WString" size="60" source="File: \\fileserver\crm\customers.yxdb" />
+            <Field name="CITY" type="V_String" size="40" source="File: \\fileserver\crm\customers.yxdb" />
+            <Field name="TIER" type="V_String" size="10" source="File: \\fileserver\crm\customers.yxdb" />
+            <Field name="ORDER_ID" type="Int32" size="4" source="File: \\fileserver\crm\orders_export.csv" />
+            <Field name="AMOUNT" type="Double" size="8" source="File: \\fileserver\crm\orders_export.csv" />
+            <Field name="ORDER_DATE" type="Date" size="10" source="File: \\fileserver\crm\orders_export.csv" />
+            <Field name="MATCH_FLAG" type="V_String" size="12" source="Formula: MATCH_FLAG" />
+          </RecordInfo>
+        </MetaInfo>
+      </Properties>
+      <EngineSettings EngineDll="AlteryxBasePluginsEngine.dll" EngineDllEntryPoint="AlteryxDbFileOutput" />
+    </Node>
+    <Node ToolID="11">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.BrowseV2.BrowseV2">
+        <Position x="690" y="198" />
+      </GuiSettings>
+      <Properties>
+        <Configuration>
+          <TempFile />
+          <Layout>
+            <ViewMode>Single</ViewMode>
+            <ViewSize value="100" />
+          </Layout>
+        </Configuration>
+        <Annotation DisplayMode="0">
+          <Name />
+          <DefaultAnnotationText>Eyeball the union</DefaultAnnotationText>
+        </Annotation>
+        <MetaInfo connection="Output">
+          <RecordInfo>
+            <Field name="CUST_ID" type="Int32" size="4" source="File: \\fileserver\crm\customers.yxdb" />
+            <Field name="NAME" type="V_WString" size="60" source="File: \\fileserver\crm\customers.yxdb" />
+            <Field name="CITY" type="V_String" size="40" source="File: \\fileserver\crm\customers.yxdb" />
+            <Field name="TIER" type="V_String" size="10" source="File: \\fileserver\crm\customers.yxdb" />
+            <Field name="ORDER_ID" type="Int32" size="4" source="File: \\fileserver\crm\orders_export.csv" />
+            <Field name="AMOUNT" type="Double" size="8" source="File: \\fileserver\crm\orders_export.csv" />
+            <Field name="ORDER_DATE" type="Date" size="10" source="File: \\fileserver\crm\orders_export.csv" />
+            <Field name="MATCH_FLAG" type="V_String" size="12" source="Formula: MATCH_FLAG" />
+          </RecordInfo>
+        </MetaInfo>
+      </Properties>
+      <EngineSettings EngineDll="AlteryxBasePluginsEngine.dll" EngineDllEntryPoint="AlteryxBrowseV2" />
+    </Node>
+    <Node ToolID="300">
+      <GuiSettings Plugin="AlteryxGuiToolkit.TextBox.TextBox">
+        <Position x="366" y="378" width="396" height="72" />
+      </GuiSettings>
+      <Properties>
+        <Configuration>
+          <Text>Customers come from the CRM yxdb; orders arrive as a nightly CSV export, so every column lands as text and tool 4 types it. Unmatched rows on either side are kept and flagged rather than dropped.</Text>
+          <Font name="Segoe UI" size="8.25" style="0" />
+          <TextColor name="Black" />
+          <FillColor name="Custom" red="255" green="255" blue="255" />
+          <Shape shape="0" />
+          <Justification Justification="4" />
+        </Configuration>
+        <Annotation DisplayMode="0">
+          <Name />
+          <DefaultAnnotationText />
+        </Annotation>
+      </Properties>
+    </Node>
+  </Nodes>
+  <Connections>
+    <Connection>
+      <Origin ToolID="1" Connection="Output" />
+      <Destination ToolID="2" Connection="Input" />
+    </Connection>
+    <Connection>
+      <Origin ToolID="2" Connection="Output" />
+      <Destination ToolID="5" Connection="Left" />
+    </Connection>
+    <Connection>
+      <Origin ToolID="3" Connection="Output" />
+      <Destination ToolID="4" Connection="Input" />
+    </Connection>
+    <Connection>
+      <Origin ToolID="4" Connection="Output" />
+      <Destination ToolID="5" Connection="Right" />
+    </Connection>
+    <Connection>
+      <Origin ToolID="5" Connection="Join" />
+      <Destination ToolID="6" Connection="Input" />
+    </Connection>
+    <Connection>
+      <Origin ToolID="5" Connection="Left" />
+      <Destination ToolID="7" Connection="Input" />
+    </Connection>
+    <Connection>
+      <Origin ToolID="5" Connection="Right" />
+      <Destination ToolID="8" Connection="Input" />
+    </Connection>
+    <Connection>
+      <Origin ToolID="6" Connection="Output" />
+      <Destination ToolID="9" Connection="Input" name="#1" />
+    </Connection>
+    <Connection>
+      <Origin ToolID="7" Connection="Output" />
+      <Destination ToolID="9" Connection="Input" name="#2" />
+    </Connection>
+    <Connection>
+      <Origin ToolID="8" Connection="Output" />
+      <Destination ToolID="9" Connection="Input" name="#3" />
+    </Connection>
+    <Connection>
+      <Origin ToolID="9" Connection="Output" />
+      <Destination ToolID="10" Connection="Input" />
+    </Connection>
+    <Connection>
+      <Origin ToolID="9" Connection="Output" />
+      <Destination ToolID="11" Connection="Input" />
+    </Connection>
+  </Connections>
+  <Properties>
+    <Memory default="True" />
+    <GlobalRecordLimit value="0" />
+    <TempFiles default="True" />
+    <Annotation on="True" includeToolName="False" />
+    <ConvErrorLimit value="10" />
+    <ConvErrorLimit_Stopped value="False" />
+    <CancelOnError value="False" />
+    <DisableBrowse value="False" />
+    <EnablePerformanceProfiling value="False" />
+    <DisableAllOutput value="False" />
+    <ShowAllMacroMessages value="False" />
+    <ShowConnectionStatusIsOn value="True" />
+    <ShowConnectionStatusOnlyWhenRunning value="True" />
+    <ZoomLevel value="0" />
+    <LayoutType>Horizontal</LayoutType>
+    <Constants />
+    <RuntimeProperties>
+      <Actions />
+      <Questions />
+      <ModuleType>Wizard</ModuleType>
+      <MacroCustomHelp value="False" />
+      <RunE2 value="False" />
+    </RuntimeProperties>
+  </Properties>
+</AlteryxDocument>

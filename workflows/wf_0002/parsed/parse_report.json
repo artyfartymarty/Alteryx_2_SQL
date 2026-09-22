@@ -1,0 +1,13 @@
+{
+  "status": "PARSED",
+  "errors": [],
+  "node_count": 15,
+  "unknown_share": 0.0,
+  "scrubbed_aliases": [
+    "dw_sales"
+  ],
+  "attempt": 1,
+  "extension": null,
+  "reason": null,
+  "diagnosis": null
+}

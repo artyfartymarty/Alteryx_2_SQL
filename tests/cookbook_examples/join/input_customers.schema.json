@@ -1,0 +1,20 @@
+[
+  {
+    "name": "CUST_ID",
+    "type": "Int32",
+    "size": 4,
+    "scale": null
+  },
+  {
+    "name": "NAME",
+    "type": "V_String",
+    "size": 50,
+    "scale": null
+  },
+  {
+    "name": "TIER",
+    "type": "V_String",
+    "size": 10,
+    "scale": null
+  }
+]

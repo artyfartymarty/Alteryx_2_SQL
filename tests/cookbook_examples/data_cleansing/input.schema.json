@@ -1,0 +1,14 @@
+[
+  {
+    "name": "NAME",
+    "type": "V_String",
+    "size": 30,
+    "scale": null
+  },
+  {
+    "name": "CODE",
+    "type": "Int32",
+    "size": 4,
+    "scale": null
+  }
+]

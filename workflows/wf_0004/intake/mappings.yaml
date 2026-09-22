@@ -1,0 +1,29 @@
+sources:
+  wh/stock.yxdb:
+    snowflake: WH.RAW.STOCK
+    logical: STOCK
+    tool_ids:
+    - '1'
+    confirmed_by: automation
+outputs:
+  out/inventory_by_wh.yxdb:
+    snowflake: ANALYTICS.CURATED.INVENTORY_BY_WH
+    logical: INVENTORY_BY_WH
+    tool_ids:
+    - '6'
+    confirmed_by: automation
+    mode: overwrite
+    keys: []
+  out/inventory_long.yxdb:
+    snowflake: ANALYTICS.CURATED.INVENTORY_LONG
+    logical: INVENTORY_LONG
+    tool_ids:
+    - '7'
+    confirmed_by: automation
+    mode: overwrite
+    keys: []
+constants: {}
+parameters: {}
+macros:
+  Supporting_Macros/clean_codes.yxmc:
+    inline: true

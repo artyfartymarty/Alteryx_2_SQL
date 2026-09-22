@@ -1,0 +1,22 @@
+{
+  "name": "alteryx-to-snowflake-migration",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Orchestrator + custom-agent pipeline that migrates Alteryx workflows to Snowflake stored procedures",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "orchestrate": "node --experimental-strip-types orchestrate.ts",
+    "test": "node --experimental-strip-types --test orchestrator/test/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@github/copilot-sdk": "^1.0.14"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.1",
+    "typescript": "^7.0.2"
+  }
+}

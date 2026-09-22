@@ -1,0 +1,8 @@
+[
+  {
+    "name": "SKU",
+    "type": "V_String",
+    "size": 20,
+    "scale": null
+  }
+]

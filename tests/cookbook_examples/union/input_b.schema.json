@@ -1,0 +1,20 @@
+[
+  {
+    "name": "CUST_ID",
+    "type": "Int32",
+    "size": 4,
+    "scale": null
+  },
+  {
+    "name": "ORDER_ID",
+    "type": "Int32",
+    "size": 4,
+    "scale": null
+  },
+  {
+    "name": "MATCH_FLAG",
+    "type": "V_String",
+    "size": 10,
+    "scale": null
+  }
+]
