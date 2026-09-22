@@ -18,6 +18,137 @@ program spec is built in: **the pipeline asks a human to name the Snowflake tabl
 `.yxdb` file (and every other input and output)**, and it never invents one
 (`scripts/intake_prompt.py`, §5 below).
 
+### Architecture at a glance
+
+Three diagrams, all drawn from the code as it stands (`orchestrator/*.ts`, `scripts/*.py`); the
+file names in them are real. GitHub renders them inline.
+
+**Components.** The CLI drives one manifest state machine per workflow. Deterministic Python does
+everything that produces a number or a verdict; agents are reached only through the `AgentRunner`
+seam, and a Copilot session can touch the repo only through tool calls that the hooks judge first.
+
+```mermaid
+flowchart TB
+  subgraph CLI["orchestrate.ts → orchestrator/cli.ts"]
+    direction TB
+    A["parse flags · load orchestrator.config.json · check the python path"]
+    B["workflow pool (parallelism) · exit code 0 / 1 / 2"]
+    A --> B
+  end
+  subgraph SM["orchestrator/stages.ts — one manifest state machine per workflow"]
+    direction LR
+    S1[parse] --> S2[intake] --> S3[analyze] --> S4[golden] --> S5["translate (segment waves)"] --> S6[document] --> S7[pr]
+  end
+  subgraph PY["Deterministic Python — scripts/ (every number and verdict comes from here)"]
+    direction TB
+    P1["parse.py · segment.py"]
+    P2["intake_touchpoints.py · intake_prompt.py (the yxdb → table prompt)"]
+    P3["dev/alteryx_sim.py (golden data)"]
+    P4["compile_check.py · validate_segment.py → compare.py"]
+  end
+  subgraph AR["AgentRunner seam — orchestrator/runner.ts"]
+    direction TB
+    M["MockRunner: replays samples/WF/canned/** — still runs the real validator"]
+    C["CopilotRunner: one @github/copilot-sdk session per agent call"]
+  end
+  subgraph SDK["Copilot SDK session"]
+    direction TB
+    AG["customAgents from .github/agents/*.agent.md — agent = role"]
+    TOOLS["model tool calls: view · glob · grep · powershell · task (sub-agent) · write …"]
+    AG --> TOOLS
+  end
+  subgraph HK["orchestrator/hooks.ts + policy.ts"]
+    direction TB
+    H1["onPreToolUse → policy.decide → allow / deny (fail-closed, per-role lanes)"]
+    H2["onPostToolUse · onPostToolUseFailure · onErrorOccurred · onSessionEnd"]
+    AUD[("audit.jsonl (redacted) · manifest.metrics")]
+    H1 --> AUD
+    H2 --> AUD
+  end
+  FS[("workflows/WF/ — manifest.json · parsed/ · intake/ · segments/ · golden/ · docs/")]
+  B --> SM
+  SM -->|env.py| PY
+  SM -->|runAgent| AR
+  AR --> M
+  AR --> C
+  C --> SDK
+  TOOLS -->|every call| H1
+  H1 -->|allow / deny| TOOLS
+  PY --> FS
+  M --> FS
+  TOOLS -->|allowed writes only| FS
+  FS -->|verify outputs · next stage| SM
+```
+
+**One agent call, through the hooks.** This is what `runAgent` in `stages.ts` does for every
+role; the sub-agents a session spawns with `task` go through the same `onPreToolUse` (verified
+live, `docs/live-smoke-test.md`).
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant ST as stages.ts runAgent
+  participant RN as CopilotRunner
+  participant SDK as Copilot SDK session
+  participant MD as Model (one role)
+  participant HK as hooks.ts
+  participant PO as policy.ts
+  participant FS as workflows/WF/
+  ST->>ST: budget check — maxToolCallsPerWorkflow
+  ST->>RN: run(role, task)
+  RN->>SDK: createSession(customAgents, agent = role, model, hooks)
+  SDK->>MD: self-contained task prompt
+  loop every tool call
+    MD->>HK: onPreToolUse(toolName, toolArgs)
+    HK->>PO: decide(role, wf, tool, args)
+    PO-->>HK: allow or deny, with the reason
+    HK->>FS: audit.jsonl "pre" (args redacted, secrets scrubbed)
+    alt allowed
+      HK-->>SDK: permissionDecision allow
+      SDK->>FS: the tool runs inside the role's lane
+      SDK->>HK: onPostToolUse — result scanned for secrets and size
+    else denied
+      HK-->>SDK: permissionDecision deny + reason
+      Note over MD: the model sees the denial and carries on
+    end
+  end
+  MD-->>SDK: done — files written
+  SDK->>HK: onSessionEnd → recordMetrics
+  RN->>RN: finally — recordMetrics (idempotent), classify any error: timeout / rate-limit / context-overflow / denied
+  RN-->>ST: AgentResult { ok, error, toolCalls, ms }
+  ST->>ST: verify outputs · retry once (missing-output, timeout) · back off (rate-limit) · else escalate
+```
+
+**Stages and where a workflow can park.** Success states are skipped on re-runs; parked states
+(double circles) are never re-executed by a plain run and reopen only with `--from-stage`.
+
+```mermaid
+flowchart LR
+  P[parse] -->|PARSED| I[intake]
+  P -->|fails| PR["parser-recovery agent (≤ maxParseRecovery)"]
+  PR --> P
+  PR -->|still failing| Q((QUARANTINED))
+  I -->|unchecked questions| W((WAITING_FOR_ANSWERS))
+  W -->|answers merged · re-run| I
+  I -->|READY| A[analyze]
+  A -->|tier T3| MAN((MANUAL))
+  A -->|contracts written| G[golden]
+  G --> T[translate]
+  subgraph seg["per segment, per wave — at most maxFixIterations"]
+    direction LR
+    TR[translator] --> RV[reviewer]
+    RV -->|BLOCK| FX[fixer]
+    RV -->|PASS| VA["validator → validate_segment.py"]
+    VA -->|FAIL| FX
+    FX --> RV
+  end
+  T --> seg
+  seg -->|every segment PASS| D[document] --> PRS[pr]
+  seg -->|needs_human · iterations exhausted · budget| NH((NEEDS_HUMAN))
+  NH -.->|"--from-stage only"| T
+  Q -.->|"--from-stage only"| P
+```
+
 ## 2. Honesty note — read this before anything else
 
 **Nothing in this repository has run against a real Snowflake account or a real Alteryx engine.**
