@@ -1,0 +1,25 @@
+{
+  "tool": "summarize",
+  "inputs": {
+    "1": "input.csv"
+  },
+  "node": {
+    "tool_id": "2",
+    "type": "summarize",
+    "config": {
+      "fields": [
+        { "field": "REGION", "action": "GroupBy", "rename": "REGION", "separator": null },
+        { "field": "AMOUNT", "action": "Sum", "rename": "TOTAL_AMOUNT", "separator": null },
+        { "field": "AMOUNT", "action": "Count", "rename": "ORDER_COUNT", "separator": null },
+        { "field": "AMOUNT", "action": "CountNonNull", "rename": "PRICED_COUNT", "separator": null },
+        { "field": "NOTE", "action": "Concat", "rename": "NOTES", "separator": "," }
+      ]
+    }
+  },
+  "edges": [
+    ["1", "Output", "2", "Input"]
+  ],
+  "compare": [
+    { "stream": "2_Output", "py": "example.py", "function": "transform", "keys": ["REGION"] }
+  ]
+}

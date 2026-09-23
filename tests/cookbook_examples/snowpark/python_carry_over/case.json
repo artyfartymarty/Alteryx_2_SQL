@@ -1,0 +1,29 @@
+{
+  "tool": "python_carry_over",
+  "inputs": {
+    "1": "input.csv"
+  },
+  "node": {
+    "tool_id": "2",
+    "type": "python",
+    "config": {
+      "script": "import pandas as pd\ndf = Alteryx.read(\"#1\")\ndf = df.sort_values([\"CUSTOMER\", \"PERIOD\"]).reset_index(drop=True)\nout = []\nfor customer, group in df.groupby(\"CUSTOMER\", sort=False):\n    deferred = 0.0\n    for _, row in group.iterrows():\n        if bool(row[\"CANCELLED\"]):\n            deferred = 0.0\n        billed = 0.0 if pd.isna(row[\"BILLED\"]) else float(row[\"BILLED\"])\n        recognized = min(billed + deferred, float(row[\"CAP\"]))\n        deferred = billed + deferred - recognized\n        out.append({\"CUSTOMER\": customer, \"PERIOD\": row[\"PERIOD\"],\n                    \"RECOGNIZED\": round(recognized, 2), \"DEFERRED\": round(deferred, 2)})\nschedule = pd.DataFrame(out, columns=[\"CUSTOMER\", \"PERIOD\", \"RECOGNIZED\", \"DEFERRED\"])\nschedule[\"RECOGNIZED\"] = schedule[\"RECOGNIZED\"].astype(\"float64\")\nschedule[\"DEFERRED\"] = schedule[\"DEFERRED\"].astype(\"float64\")\nAlteryx.write(schedule, 1)"
+    }
+  },
+  "edges": [
+    [
+      "1",
+      "Output",
+      "2",
+      "Input"
+    ]
+  ],
+  "compare": [
+    {
+      "stream": "2_1",
+      "py": "example.py",
+      "function": "transform",
+      "keys": []
+    }
+  ]
+}

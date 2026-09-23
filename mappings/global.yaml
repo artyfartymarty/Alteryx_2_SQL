@@ -9,6 +9,8 @@ program:
   owner_role: MIGRATION_ROLE
   execute_as: CALLER           # procedures set session parameters (TIMEZONE, WEEK_START); owner's-rights procedures restrict that. Verify on your Snowflake account.
   column_name_policy: sanitize # sanitize -> UPPER_SNAKE; quote -> keep Alteryx names quoted
+  output_target: procedures   # procedures | dbt — what the organisation wants; target_check.py honours it only when the workflow is dbt-expressible
+  snowpark_runtime: "3.11"   # RUNTIME_VERSION for LANGUAGE PYTHON procedures. Verify the versions your Snowflake account offers.
 session:
   TIMEZONE: America/New_York   # Alteryx DateTimeNow() used the server's local zone
   WEEK_START: 1
@@ -19,6 +21,9 @@ tolerances:
   rounding:
     abs: 0.01
 accepted_diff_classes: [ROUNDING, ORDERING]   # anything else is a FAIL until a human accepts it
+
+segmentation:
+  max_prompt_chars: 60000   # a segment's estimated prompt size (characters of its dag slice: config, expressions, field lists); tokens ≈ chars / 4. Conservative; calibrate from assistant.usage (docs/live-smoke-test.md).
 
 # Reusable source mappings, keyed by normalized Alteryx source (lower-case, share prefix stripped) or alias.
 sources: {}

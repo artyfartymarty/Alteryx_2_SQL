@@ -1,0 +1,8 @@
+name: wf_0007
+version: "1.0.0"
+config-version: 2
+profile: alteryx_migration
+model-paths: [models]
+vars:
+  src_schema: null
+  tgt_schema: null

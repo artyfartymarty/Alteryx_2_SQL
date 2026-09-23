@@ -20,3 +20,11 @@ tools/
 # docs/superpowers/build-reports/2026-09-18-pipeline/task-17-report.md.
 /scripts/parsers/ext/acme_dedupe.py
 /tests/parser_corpus/acme_dedupe/
+
+# dbt run artefacts: validate_dbt.py keeps its own console logs under dbt/logs/ (git-ignored on
+# purpose, task B); everything else here is what a human's own `dbt run`/`dbt parse` would write --
+# never committed, and never read back by any script.
+workflows/*/dbt/logs/
+workflows/*/dbt/target/
+workflows/*/dbt/dbt_packages/
+tests/cookbook_examples/dbt/*/project/logs/

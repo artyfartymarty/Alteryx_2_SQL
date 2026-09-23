@@ -280,6 +280,122 @@ ACCOUNTS_NORMAL = [
     ("D-400", None, 1.25),
 ]
 
+# ---------------------------------------------------------------- wf_0006
+
+SUBSCRIPTIONS = [F("CUSTOMER", "V_String", 20), F("PERIOD", "V_String", 7),
+                 F("BILLED", "Double", 8), F("CAP", "Double", 8), F("CANCELLED", "Bool", 1)]
+
+# Tool 2 keeps only `[BILLED] > 0`, and a NULL comparison is not true, so a NULL or zero BILLED
+# never reaches the Python tool. That is what keeps (CUSTOMER, PERIOD) unique on both work
+# streams, which is why both contracts can declare it as their key.
+SUBSCRIPTIONS_NORMAL = [
+    ("ACME", "2026-01", 100.0, 80.0, False),
+    ("ACME", "2026-02", 50.0, 60.0, False),
+    # The cancellation arrives while ACME still carries a deferred balance, so the reset is
+    # visible in RECOGNIZED as well as in DEFERRED: broken_sql/seg_02/01 removes exactly this.
+    ("ACME", "2026-03", 10.0, 80.0, True),
+    ("BOLT", "2026-01", None, 80.0, False),
+    ("BOLT", "2026-02", 0.0, 80.0, False),
+    ("BOLT", "2026-03", 120.0, 50.0, False),
+    ("CINDER", "2026-01", 90.0, 100.0, False),
+    ("CINDER", "2026-02", 200.0, 100.0, False),
+    ("CINDER", "2026-03", 25.0, 100.0, False),
+]
+
+# ACME's first row bills exactly twice its cap, so the deferred balance it carries into 2026-06
+# equals the cap itself -- the boundary `min(billed + deferred, cap)` is decided on.
+SUBSCRIPTIONS_PERIOD_END = [
+    ("ACME", "2026-03", 180.0, 90.0, False),
+    ("ACME", "2026-06", 10.0, 90.0, False),
+    ("BOLT", "2026-06", 50.0, 50.0, False),
+    ("CINDER", "2026-09", 75.25, 100.0, False),
+    ("DELTA", "2026-12", 300.0, 300.0, True),
+]
+
+SUBSCRIPTIONS_EDGE = [
+    (None, None, None, None, None),
+    ("Ångström Ñuñez", "2026-08", 12.50, 10.00, False),
+    ("Q" * 20, "2026-08", 0.01, 0.02, False),
+    ("DUP CO", "2026-08", 0.0, 50.0, False),
+    ("DUP CO", "2026-08", 0.0, 50.0, False),
+    ("NEG", "2026-08", -25.0, 50.0, False),
+    ("SOLO", "2026-09", 40.0, 30.0, True),
+]
+
+# ---------------------------------------------------------------- wf_0007
+
+TARGETS = [F("REGION", "V_String", 10), F("PERIOD", "V_String", 7),
+           F("TARGET", "FixedDecimal", 19, 2)]
+ACTUALS = [F("REGION", "V_String", 10), F("PERIOD", "V_String", 7),
+           F("ACTUAL", "FixedDecimal", 19, 2)]
+# Typed exactly like tool 5's (the Summarize's) output fields, which both outputs write.
+ATTAINMENT_HISTORY = [F("REGION", "V_String", 10), F("PERIOD", "V_String", 7),
+                      F("TARGET_TOTAL", "FixedDecimal", 19, 2),
+                      F("ACTUAL_TOTAL", "FixedDecimal", 19, 2), F("LINES", "Int64", 8)]
+
+TARGETS_NORMAL = [
+    ("EAST", "2026-01", D("100.00")),
+    ("EAST", "2026-02", D("120.00")),
+    ("WEST", "2026-01", D("80.00")),
+    ("WEST", "2025-12", D("75.00")),     # prior year: joined, then filtered out
+    ("NORTH", "2026-01", D("50.00")),    # no actual: the inner join drops it
+    (None, "2026-01", D("10.00")),       # NULL key matches nothing
+]
+
+ACTUALS_NORMAL = [
+    ("EAST", "2026-01", D("90.00")),
+    ("EAST", "2026-01", D("15.00")),     # two lines on one key: the join fans out
+    ("EAST", "2026-02", D("130.00")),
+    ("WEST", "2026-01", None),           # NULL actual
+    ("WEST", "2025-12", D("70.00")),
+    ("SOUTH", "2026-01", D("40.00")),    # no target
+]
+
+ATTAINMENT_HISTORY_BEFORE_NORMAL = [
+    ("EAST", "2026-01", D("1.00"), D("1.00"), 1),     # matched: updated
+    ("WEST", "2025-12", D("75.00"), D("70.00"), 1),   # prior year: kept
+    ("NORTH", "2025-11", D("60.00"), D("55.00"), 2),  # kept
+]
+
+TARGETS_PERIOD_END = [
+    ("EAST", "2025-12", D("100.00")),
+    ("EAST", "2026-01", D("110.00")),
+    ("WEST", "2025-12", D("90.00")),
+    ("WEST", "2026-01", D("95.00")),
+]
+
+ACTUALS_PERIOD_END = [
+    ("EAST", "2025-12", D("98.00")),
+    ("EAST", "2026-01", D("112.00")),
+    ("WEST", "2025-12", D("91.00")),
+    ("WEST", "2026-01", D("93.00")),
+]
+
+ATTAINMENT_HISTORY_BEFORE_PERIOD_END = [
+    ("WEST", "2026-01", D("1.00"), D("1.00"), 1),     # matched: updated
+    ("EAST", "2025-12", D("100.00"), D("97.00"), 1),  # December is filtered out: kept as it was
+]
+
+TARGETS_EDGE = [
+    ("DUP", "2026-03", D("10.00")),
+    ("DUP", "2026-03", D("10.00")),      # byte-identical duplicate: the join fans it out
+    ("NORDÖST", "2026-02", D("5.00")),   # non-ASCII letters in the key
+    ("NEG", "2026-04", D("20.00")),
+    ("BAD", "2026-1", D("7.00")),        # malformed PERIOD whose first four characters are 2026
+]
+
+ACTUALS_EDGE = [
+    ("DUP", "2026-03", D("4.00")),
+    ("NORDÖST", "2026-02", D("6.50")),
+    ("NEG", "2026-04", D("-3.25")),      # negative actual
+    ("BAD", "2026-1", D("1.00")),
+]
+
+ATTAINMENT_HISTORY_BEFORE_EDGE = [
+    ("DUP", "2026-03", D("1.00"), D("1.00"), 1),      # matched: updated
+    ("OLD", "2025-06", D("9.00"), D("8.00"), 1),      # kept
+]
+
 # ---------------------------------------------------------------- sample.json
 
 SAMPLE_JSON = [
@@ -343,6 +459,37 @@ SAMPLE_JSON = [
      "answers": {"vendor/accounts.yxdb": "VENDOR.RAW.ACCOUNTS",
                  "out/accounts_clean.yxdb": "ANALYTICS.CURATED.ACCOUNTS_CLEAN"},
      "logical": {"1": "ACCOUNTS", "4": "ACCOUNTS_CLEAN"}},
+    # min_tools 1: the Python tool is a hard cut (it is a whole program, not a clause), so it gets
+    # a segment of its own whatever the floor says. At 3 the two tools on either side of it would
+    # be pushed together with it, and the point of this sample -- one Snowpark segment between two
+    # SQL ones -- would be lost.
+    {"id": "wf_0006",
+     "title": "Subscription revenue recognition",
+     "owner": "wf_owner",
+     "schedule": "0 6 * * 1-5",
+     "segmentation": {"min_tools": 1, "max_tools": 40},
+     "expected_terminal": "VALIDATED",
+     "answers": {"billing/subscriptions.yxdb": "BILLING.RAW.SUBSCRIPTIONS",
+                 "out/revenue_by_period.yxdb": "ANALYTICS.CURATED.REVENUE_BY_PERIOD"},
+     "logical": {"1": "SUBSCRIPTIONS", "5": "REVENUE_BY_PERIOD"}},
+    # The dbt sample: `output_target` asks for the whole workflow to be migrated as one dbt
+    # project (build_samples.seed copies it into the manifest, where target_check.py --prefer auto
+    # reads it). min_tools 2 keeps the two containers apart (tools 1-3 and 4-7), so the year
+    # filter lands in the target models. Tool 7's DB output answers by tool id, for the same
+    # reason as wf_0002's.
+    {"id": "wf_0007",
+     "title": "Regional targets and attainment",
+     "owner": "wf_owner",
+     "schedule": "0 6 * * 1-5",
+     "segmentation": {"min_tools": 2, "max_tools": 40},
+     "expected_terminal": "VALIDATED",
+     "output_target": "dbt",
+     "answers": {"plan/targets.yxdb": "PLANNING.RAW.TARGETS",
+                 "sales/actuals.yxdb": "SALES.RAW.ACTUALS",
+                 "out/region_attainment.yxdb": "ANALYTICS.CURATED.REGION_ATTAINMENT",
+                 "7": "ANALYTICS.CURATED.ATTAINMENT_HISTORY"},
+     "logical": {"1": "TARGETS", "2": "ACTUALS", "6": "REGION_ATTAINMENT",
+                 "7": "ATTAINMENT_HISTORY"}},
 ]
 
 
@@ -380,6 +527,28 @@ def main() -> None:
 
     write("wf_0005", "normal", "1", ACCOUNTS, ACCOUNTS_NORMAL)
     write("wf_0005", "empty", "1", ACCOUNTS, [])
+
+    write("wf_0006", "normal", "1", SUBSCRIPTIONS, SUBSCRIPTIONS_NORMAL)
+    write("wf_0006", "period_end", "1", SUBSCRIPTIONS, SUBSCRIPTIONS_PERIOD_END)
+    write("wf_0006", "empty", "1", SUBSCRIPTIONS, [])
+    write("wf_0006", "edge", "1", SUBSCRIPTIONS, SUBSCRIPTIONS_EDGE)
+
+    write("wf_0007", "normal", "1", TARGETS, TARGETS_NORMAL)
+    write("wf_0007", "normal", "2", ACTUALS, ACTUALS_NORMAL)
+    write("wf_0007", "period_end", "1", TARGETS, TARGETS_PERIOD_END)
+    write("wf_0007", "period_end", "2", ACTUALS, ACTUALS_PERIOD_END)
+    write("wf_0007", "empty", "1", TARGETS, [])
+    write("wf_0007", "empty", "2", ACTUALS, [])
+    write("wf_0007", "edge", "1", TARGETS, TARGETS_EDGE)
+    write("wf_0007", "edge", "2", ACTUALS, ACTUALS_EDGE)
+    write_target("wf_0007", "normal", "ATTAINMENT_HISTORY", ATTAINMENT_HISTORY,
+                 ATTAINMENT_HISTORY_BEFORE_NORMAL)
+    write_target("wf_0007", "period_end", "ATTAINMENT_HISTORY", ATTAINMENT_HISTORY,
+                 ATTAINMENT_HISTORY_BEFORE_PERIOD_END)
+    write_target("wf_0007", "edge", "ATTAINMENT_HISTORY", ATTAINMENT_HISTORY,
+                 ATTAINMENT_HISTORY_BEFORE_EDGE)
+    # An empty run must leave empty outputs, so the target starts empty too.
+    write_target("wf_0007", "empty", "ATTAINMENT_HISTORY", ATTAINMENT_HISTORY, [])
 
     for meta in SAMPLE_JSON:
         io.write_json(SAMPLES / meta["id"] / "sample.json", meta)

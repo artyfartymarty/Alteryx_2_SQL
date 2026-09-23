@@ -1,0 +1,101 @@
+{
+  "workflow": "wf_0006",
+  "segment": null,
+  "golden_set": "edge",
+  "verdict": "PASS",
+  "checks": {
+    "seg_01:2_T:work:MIG_WORK.WF0006_SEG_01_OUT": {
+      "schema": "PASS",
+      "nullability": "PASS",
+      "counts": {
+        "expected": 3,
+        "actual": 3,
+        "verdict": "PASS"
+      },
+      "aggregates": "PASS",
+      "aggregates_rows": {
+        "rows": 3,
+        "verdict": "PASS"
+      },
+      "set_diff": {
+        "only_expected": 0,
+        "only_actual": 0
+      },
+      "column_mismatches": {},
+      "column_counts": {},
+      "aggregate_mismatches": {}
+    },
+    "seg_02:3_1:work:MIG_WORK.WF0006_SEG_02_OUT": {
+      "schema": "PASS",
+      "nullability": "PASS",
+      "counts": {
+        "expected": 3,
+        "actual": 3,
+        "verdict": "PASS"
+      },
+      "aggregates": "PASS",
+      "aggregates_rows": {
+        "rows": 3,
+        "verdict": "PASS"
+      },
+      "set_diff": {
+        "only_expected": 0,
+        "only_actual": 0
+      },
+      "column_mismatches": {},
+      "column_counts": {},
+      "aggregate_mismatches": {}
+    },
+    "seg_03:4_Output:target:REVENUE_BY_PERIOD": {
+      "schema": "PASS",
+      "nullability": "PASS",
+      "counts": {
+        "expected": 2,
+        "actual": 2,
+        "verdict": "PASS"
+      },
+      "aggregates": "PASS",
+      "aggregates_rows": {
+        "rows": 2,
+        "verdict": "PASS"
+      },
+      "set_diff": {
+        "only_expected": 0,
+        "only_actual": 0
+      },
+      "column_mismatches": {},
+      "column_counts": {},
+      "aggregate_mismatches": {}
+    }
+  },
+  "diff_clusters": [],
+  "normalizations_applied": [],
+  "boundaries": [
+    {
+      "segment": "seg_01",
+      "stream": "2_T",
+      "verdict": "PASS"
+    },
+    {
+      "segment": "seg_02",
+      "stream": "3_1",
+      "verdict": "PASS"
+    }
+  ],
+  "finals": [
+    {
+      "segment": "seg_03",
+      "stream": "4_Output",
+      "output": "REVENUE_BY_PERIOD",
+      "verdict": "PASS"
+    }
+  ],
+  "divergence_kind": null,
+  "first_divergence": null,
+  "idempotent": true,
+  "idempotency_diff": [],
+  "runtime_ms": 236,
+  "credits": null,
+  "needs_human": false,
+  "truncated": false
+}

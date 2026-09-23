@@ -1,0 +1,36 @@
+sources:
+  plan/targets.yxdb:
+    snowflake: PLANNING.RAW.TARGETS
+    logical: TARGETS
+    tool_ids:
+    - '1'
+    confirmed_by: automation
+  sales/actuals.yxdb:
+    snowflake: SALES.RAW.ACTUALS
+    logical: ACTUALS
+    tool_ids:
+    - '2'
+    confirmed_by: automation
+outputs:
+  out/region_attainment.yxdb:
+    snowflake: ANALYTICS.CURATED.REGION_ATTAINMENT
+    logical: REGION_ATTAINMENT
+    tool_ids:
+    - '6'
+    confirmed_by: automation
+    mode: overwrite
+    keys: []
+  alias:prod_plan/dbo.attainment_history:
+    snowflake: ANALYTICS.CURATED.ATTAINMENT_HISTORY
+    logical: ATTAINMENT_HISTORY
+    tool_ids:
+    - '7'
+    confirmed_by: automation
+    mode: merge
+    keys:
+    - REGION
+    - PERIOD
+constants:
+  User.CurrentYear: '2026'
+parameters: {}
+macros: {}

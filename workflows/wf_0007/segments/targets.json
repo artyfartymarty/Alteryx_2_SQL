@@ -1,0 +1,11 @@
+{
+  "preference": "dbt",
+  "output_kind": "dbt",
+  "reason": "preference dbt; every segment is sql and every output is dbt-expressible",
+  "dbt_blockers": [],
+  "segments": {
+    "seg_01": "sql",
+    "seg_02": "sql"
+  },
+  "nodes": {}
+}

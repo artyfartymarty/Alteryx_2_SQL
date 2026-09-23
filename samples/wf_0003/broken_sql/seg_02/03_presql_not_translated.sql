@@ -19,13 +19,16 @@ BEGIN
 
   ALTER SESSION SET TIMEZONE = 'America/New_York', WEEK_START = 1;
 
+  -- contract C4: each mapped table's name is built once, then referenced as IDENTIFIER(:<name>)
+  LET GL_SUMMARY_TGT VARCHAR := TGT_DB || '.' || TGT_SCHEMA || '.GL_SUMMARY';
+
   -- ===========================================================================================
   -- Output tool 10 (write mode Update; Insert if new on ACCT, PERIOD; logical GL_SUMMARY).
   -- Alteryx maps the incoming columns to the target BY NAME and leaves every other column of the
   -- target alone -- untouched on a matched row, NULL on an inserted one -- which is why the MERGE
   -- names the six incoming columns and never mentions LOADED_FLAG.
   -- ===========================================================================================
-  MERGE INTO IDENTIFIER(:TGT_DB || '.' || :TGT_SCHEMA || '.GL_SUMMARY') AS T
+  MERGE INTO IDENTIFIER(:GL_SUMMARY_TGT) AS T
   USING (
     WITH
     -- tool 4: Sort -- ACCT and POSTED_DT ascending, ENTRY_ID descending. Alteryx sorts NULL first
@@ -155,7 +158,7 @@ BEGIN
   -- Output tool 10, PostSQL. It runs after the write and only fills NULLs, so a row the target
   -- already held with LOADED_FLAG 'N' keeps its 'N' and only this run's inserts become 'Y'.
   -- ===========================================================================================
-  UPDATE IDENTIFIER(:TGT_DB || '.' || :TGT_SCHEMA || '.GL_SUMMARY')
+  UPDATE IDENTIFIER(:GL_SUMMARY_TGT)
   SET LOADED_FLAG = 'Y'
   WHERE LOADED_FLAG IS NULL;
 

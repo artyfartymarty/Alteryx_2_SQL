@@ -1,0 +1,22 @@
+{
+  "tool": "sort",
+  "inputs": {
+    "1": "input.csv"
+  },
+  "node": {
+    "tool_id": "2",
+    "type": "sort",
+    "config": {
+      "fields": [
+        { "field": "AMOUNT", "order": "desc" },
+        { "field": "ACCT", "order": "asc" }
+      ]
+    }
+  },
+  "edges": [
+    ["1", "Output", "2", "Input"]
+  ],
+  "compare": [
+    { "stream": "2_Output", "py": "example.py", "function": "transform", "keys": [] }
+  ]
+}

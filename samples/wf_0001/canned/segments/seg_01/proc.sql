@@ -14,10 +14,15 @@ BEGIN
 
   ALTER SESSION SET TIMEZONE = 'America/New_York', WEEK_START = 1;
 
+  -- contract C4: each mapped table's name is built once, then referenced as IDENTIFIER(:<name>)
+  LET ORDERS_SRC VARCHAR := SRC_DB || '.' || SRC_SCHEMA || '.ORDERS';
+  LET SALES_SUMMARY_TGT VARCHAR := TGT_DB || '.' || TGT_SCHEMA || '.SALES_SUMMARY';
+  LET EXCLUDED_ORDERS_TGT VARCHAR := TGT_DB || '.' || TGT_SCHEMA || '.EXCLUDED_ORDERS';
+
   -- ===========================================================================================
   -- Output tool 7 (write mode Overwrite, logical SALES_SUMMARY): the Filter's True branch.
   -- ===========================================================================================
-  CREATE OR REPLACE TABLE IDENTIFIER(:TGT_DB || '.' || :TGT_SCHEMA || '.SALES_SUMMARY') AS
+  CREATE OR REPLACE TABLE IDENTIFIER(:SALES_SUMMARY_TGT) AS
   WITH
   -- tool 1: Input Data -- the orders extract, read by its logical name from mappings.yaml.
   t1_input AS (
@@ -29,7 +34,7 @@ BEGIN
           QTY,
           ORDER_DATE,
           STATUS
-      FROM IDENTIFIER(:SRC_DB || '.' || :SRC_SCHEMA || '.ORDERS')
+      FROM IDENTIFIER(:ORDERS_SRC)
   ),
   -- tool 2: Select -- CUSTOMER to String(10) (Alteryx truncates silently), STATUS renamed
   -- ORDER_STATUS, then *Unknown appends the five unlisted fields in incoming order.
@@ -133,7 +138,7 @@ BEGIN
   -- ===========================================================================================
   -- Output tool 8 (write mode Overwrite, logical EXCLUDED_ORDERS): the Filter's False branch.
   -- ===========================================================================================
-  CREATE OR REPLACE TABLE IDENTIFIER(:TGT_DB || '.' || :TGT_SCHEMA || '.EXCLUDED_ORDERS') AS
+  CREATE OR REPLACE TABLE IDENTIFIER(:EXCLUDED_ORDERS_TGT) AS
   WITH
   -- tool 1: Input Data -- the same orders extract (see the first statement).
   t1_input AS (
@@ -145,7 +150,7 @@ BEGIN
           QTY,
           ORDER_DATE,
           STATUS
-      FROM IDENTIFIER(:SRC_DB || '.' || :SRC_SCHEMA || '.ORDERS')
+      FROM IDENTIFIER(:ORDERS_SRC)
   ),
   -- tool 2: Select -- the same projection (see the first statement).
   t2_select AS (

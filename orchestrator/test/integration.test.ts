@@ -19,8 +19,11 @@ import { promisify } from "node:util";
 import { cp, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { main } from "../cli.ts";
-import { tempRoot } from "./fakes.ts";
+import { loadConfig, main } from "../cli.ts";
+import { loadAgents } from "../agents.ts";
+import { migrateWorkflow } from "../stages.ts";
+import { ROLES } from "../types.ts";
+import { makeEnv, tempRoot } from "./fakes.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -185,5 +188,103 @@ test(
     const afterRun3 = await readManifest(root, "wf_0001");
     const dropUpdatedAt = ({ updated_at, ...rest }: Record<string, unknown>) => rest;
     assert.deepEqual(dropUpdatedAt(afterRun3), dropUpdatedAt(afterRun2), "only updated_at may differ on a no-op re-run");
+  },
+);
+
+/** Everything main() prints, for the length of one test. */
+function capture(t: any): string[] {
+  const lines: string[] = [];
+  const log = console.log;
+  const error = console.error;
+  console.log = (...args: unknown[]) => lines.push(args.join(" "));
+  console.error = (...args: unknown[]) => lines.push(args.join(" "));
+  t.after(() => {
+    console.log = log;
+    console.error = error;
+  });
+  return lines;
+}
+
+// Task P4 fix round 1, B1: the documented one-command hook-up must route EVERY role to the default id.
+// Before the fix, set_models.py removed roleModels from the file and loadConfig brought
+// DEFAULT_CONFIG's placeholder split (gpt-6-astra for five roles) back through its merge.
+test(
+  "set_models.py --default X on a copy of the committed config: all nine roles resolve to X, and --check-models checks only X",
+  { timeout: 60_000 },
+  async (t) => {
+    const python = await resolvePython();
+    if (!python) {
+      t.skip(`venv python not found at any of ${PYTHON_CANDIDATES.join(", ")} (set PIPELINE_PYTHON)`);
+      return;
+    }
+    const root = await tempRoot("orch-models-");
+    await cp(path.join(REPO_ROOT, "orchestrator.config.json"), path.join(root, "orchestrator.config.json"));
+    await cp(path.join(REPO_ROOT, "config.json"), path.join(root, "config.json"));
+    await mkdir(path.join(root, ".github", "agents"), { recursive: true });
+    await cp(path.join(REPO_ROOT, ".github", "agents"), path.join(root, ".github", "agents"), { recursive: true });
+
+    const X = "luna-max-under-test";
+    const set = await runPython(python, [
+      path.join(REPO_ROOT, "scripts", "dev", "set_models.py"), "--default", X,
+      "--long-context-roles", "intake,analyzer,fixer,parser-recovery,validator",
+      "--effort", "documenter=low", "--effort", "reviewer=low", "--root", root,
+    ], REPO_ROOT);
+    assert.equal(set.code, 0, `set_models.py failed:\n${set.stdout}\n${set.stderr}`);
+
+    const hosted = (await loadConfig(root)).profiles.hosted;
+    for (const role of ROLES) assert.equal(hosted.roleModels?.[role] ?? hosted.model, X, `${role} (runner.ts's resolution)`);
+
+    const agents = await loadAgents(root, "hosted");
+    assert.equal(agents.length, 9, "eight orchestrator roles and cookbook-curator");
+    for (const agent of agents) assert.equal(agent.model, X, `${agent.name}.agent.md`);
+
+    const lines = capture(t);
+    const code = await main(["--check-models", "--profile", "hosted", "--root", root], {
+      listModels: async () => [{ id: X, policy: { state: "enabled" } }],
+    });
+    assert.equal(code, 0, `a catalog holding only ${X} must satisfy every configured id:\n${lines.join("\n")}`);
+    for (const role of ROLES) assert.ok(lines.includes(`effective ${role}: ${X}`), `${role}\n${lines.join("\n")}`);
+  },
+);
+
+// Task P4 fix round 1, B2: a real `inject_outputs.py --import-set` is what unblocks the golden stage.
+test(
+  "importing real Alteryx captures records the golden set, so --from-stage golden moves on to DONE",
+  { timeout: 60_000 },
+  async (t) => {
+    const python = await resolvePython();
+    if (!python) {
+      t.skip(`venv python not found at any of ${PYTHON_CANDIDATES.join(", ")} (set PIPELINE_PYTHON)`);
+      return;
+    }
+    const { env } = await makeEnv({ wf: "wf_0001", config: { golden: { producer: "alteryx" } } });
+    const blocked = await migrateWorkflow(env, "wf_0001", { stopAfter: "golden" });
+    assert.equal(blocked.status.golden, "BLOCKED");
+
+    // What the instrumenting form of inject_outputs.py leaves behind, and the one capture a real
+    // Alteryx run of the instrumented copy would write.
+    const golden = path.join(env.root, "workflows", "wf_0001", "golden");
+    await mkdir(golden, { recursive: true });
+    const row = { tool_id: "1001", kind: "input", of_tool: "1", segment: null, stream: "1_Output",
+      file: "C:\\mig\\capture\\wf_0001\\in_1.yxdb" };
+    await writeFile(path.join(golden, "capture_map.json"), `${JSON.stringify([row], null, 2)}\n`, "utf8");
+    const captures = await tempRoot("captures-");
+    const wrote = await runPython(python, [
+      "-c",
+      "import sys; from pathlib import Path; sys.path.insert(0, sys.argv[1]); from lib import yxdb; " +
+        "yxdb.write_yxdb(Path(sys.argv[2]), [{'name': 'ACCT', 'type': 'V_String', 'size': 20, 'scale': None}], [['4000']])",
+      path.join(REPO_ROOT, "scripts"), path.join(captures, "in_1.yxdb"),
+    ], REPO_ROOT);
+    assert.equal(wrote.code, 0, wrote.stderr);
+
+    const imported = await runPython(python, [
+      path.join(REPO_ROOT, "scripts", "inject_outputs.py"), "wf_0001", "--capture-dir", captures,
+      "--import-set", "normal", "--root", env.root,
+    ], REPO_ROOT);
+    assert.equal(imported.code, 0, `${imported.stdout}\n${imported.stderr}`);
+
+    const resumed = await migrateWorkflow(env, "wf_0001", { fromStage: "golden", stopAfter: "golden" });
+    assert.equal(resumed.status.golden, "DONE");
+    assert.deepEqual(resumed.golden_sets, ["normal"]);
   },
 );

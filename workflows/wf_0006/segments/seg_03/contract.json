@@ -1,0 +1,83 @@
+{
+  "workflow": "wf_0006",
+  "segment": "seg_03",
+  "target": "sql",
+  "inputs": [
+    {
+      "from": "seg_02",
+      "stream": "3_1",
+      "table": "MIG_WORK.WF0006_SEG_02_OUT",
+      "columns": [
+        { "name": "CUSTOMER", "type": "VARCHAR(254)", "nullable": false },
+        { "name": "PERIOD", "type": "VARCHAR(254)", "nullable": true },
+        { "name": "RECOGNIZED", "type": "FLOAT", "nullable": false },
+        { "name": "DEFERRED", "type": "FLOAT", "nullable": false }
+      ],
+      "keys": ["CUSTOMER", "PERIOD"],
+      "expected_rows": { "min": 0, "max": 5000000 },
+      "large": false
+    }
+  ],
+  "outputs": [
+    {
+      "stream": "4_Output",
+      "kind": "target",
+      "tool_id": "5",
+      "logical": "REVENUE_BY_PERIOD",
+      "table": null,
+      "write_mode": "overwrite",
+      "columns": [
+        { "name": "PERIOD", "type": "VARCHAR(254)", "nullable": true },
+        { "name": "TOTAL_RECOGNIZED", "type": "FLOAT", "nullable": false },
+        { "name": "TOTAL_DEFERRED", "type": "FLOAT", "nullable": false },
+        { "name": "CUSTOMERS", "type": "NUMBER(38,0)", "nullable": false }
+      ],
+      "keys": ["PERIOD"]
+    }
+  ],
+  "output": {
+    "stream": "4_Output",
+    "kind": "target",
+    "tool_id": "5",
+    "logical": "REVENUE_BY_PERIOD",
+    "table": null,
+    "write_mode": "overwrite",
+    "columns": [
+      { "name": "PERIOD", "type": "VARCHAR(254)", "nullable": true },
+      { "name": "TOTAL_RECOGNIZED", "type": "FLOAT", "nullable": false },
+      { "name": "TOTAL_DEFERRED", "type": "FLOAT", "nullable": false },
+      { "name": "CUSTOMERS", "type": "NUMBER(38,0)", "nullable": false }
+    ],
+    "keys": ["PERIOD"]
+  },
+  "row_relation": "aggregate",
+  "ordering": {
+    "keys": [],
+    "alteryx_deterministic": true,
+    "order_dependent_columns": []
+  },
+  "tolerances": {},
+  "normalizations": [],
+  "parity_risks": [
+    {
+      "tool_id": "4",
+      "class": "LOGIC",
+      "note": "Alteryx's Count counts ROWS, not values, so CUSTOMERS is COUNT(*) and not COUNT(CUSTOMER); the two agree here only because CUSTOMER is NOT NULL on the incoming stream. Grouping is by PERIOD alone, so CUSTOMERS is the number of subscription rows that fell in the period, which is the number of distinct customers only because (CUSTOMER, PERIOD) is unique upstream."
+    },
+    {
+      "tool_id": "4",
+      "class": "ROUNDING",
+      "note": "Summarize's Sum adds the exact decimal value of each Double and lands the result back in a Double field, so the sum goes through NUMBER(38,10) rather than accumulating in FLOAT -- adding floats in a different order would not give the same last bit."
+    },
+    {
+      "tool_id": "4",
+      "class": "ORDERING",
+      "note": "Alteryx emits summarize groups sorted ascending with NULL first; SQL's GROUP BY promises no order at all. The target declares PERIOD as its key, so the comparison joins on it and never depends on the physical order -- no ORDER BY is added to imitate a sort nothing downstream reads."
+    },
+    {
+      "tool_id": "5",
+      "class": "LOGIC",
+      "note": "Write mode Overwrite: the target is replaced wholesale, so it holds no prior state and there is no targets_before file for this workflow."
+    }
+  ]
+}

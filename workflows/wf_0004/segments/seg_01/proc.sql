@@ -14,6 +14,9 @@ BEGIN
 
   ALTER SESSION SET TIMEZONE = 'America/New_York', WEEK_START = 1;
 
+  -- contract C4: each mapped table's name is built once, then referenced as IDENTIFIER(:<name>)
+  LET STOCK_SRC VARCHAR := SRC_DB || '.' || SRC_SCHEMA || '.STOCK';
+
   -- ===========================================================================================
   -- Outbound stream 1_Output: the stock rows the macro in seg_02 cleans.
   -- ===========================================================================================
@@ -28,7 +31,7 @@ BEGIN
           WAREHOUSE,
           QTY,
           NOTE
-      FROM IDENTIFIER(:SRC_DB || '.' || :SRC_SCHEMA || '.STOCK')
+      FROM IDENTIFIER(:STOCK_SRC)
   )
   SELECT
       SKU,

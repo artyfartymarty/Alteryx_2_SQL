@@ -1,4 +1,6 @@
 """The restricted stored-procedure shape (plan contract C4) parsed, bound and executed locally."""
+from pathlib import Path
+
 import pytest
 
 from lib.backend import DuckDBBackend
@@ -9,14 +11,16 @@ RETURNS STRING LANGUAGE SQL EXECUTE AS CALLER AS
 $$
 BEGIN
   ALTER SESSION SET TIMEZONE = 'America/New_York', WEEK_START = 1;
+  LET ITEMS_SRC VARCHAR := SRC_DB || '.' || SRC_SCHEMA || '.ITEMS';
+  LET ITEMS_OUT_TGT VARCHAR := TGT_DB || '.' || TGT_SCHEMA || '.ITEMS_OUT';
   CREATE OR REPLACE TRANSIENT TABLE MIG_WORK.WF0009_SEG_01_OUT AS
   WITH
   -- tool 1: Input Data; note the semicolon in this comment; and 'a quote
-  t1_input AS (SELECT ID, NOTE FROM IDENTIFIER(:SRC_DB || '.' || :SRC_SCHEMA || '.ITEMS')),
+  t1_input AS (SELECT ID, NOTE FROM IDENTIFIER(:ITEMS_SRC)),
   -- tool 2: Filter, True branch
   t2_filter AS (SELECT * FROM t1_input WHERE NOTE <> 'x;y' AND NOTE <> ':SRC_DB')
   SELECT ID, NOTE FROM t2_filter;
-  INSERT INTO IDENTIFIER(:TGT_DB || '.' || :TGT_SCHEMA || '.ITEMS_OUT') SELECT ID, NOTE FROM MIG_WORK.WF0009_SEG_01_OUT;
+  INSERT INTO IDENTIFIER(:ITEMS_OUT_TGT) SELECT ID, NOTE FROM MIG_WORK.WF0009_SEG_01_OUT;
   RETURN 'OK';
 END;
 $$;"""
@@ -29,8 +33,11 @@ def test_parse_proc():
     assert p.execute_as == "CALLER" and p.session == {"TIMEZONE": "America/New_York", "WEEK_START": "1"} and len(p.statements) == 2
 
 def test_bind_leaves_string_literals_alone():
-    out = bind("SELECT ':SRC_DB' AS s FROM IDENTIFIER(:src_db || '.' || :SRC_SCHEMA || '.T')", ARGS)
-    assert "':SRC_DB'" in out and "MIGDB.MIG_GOLDEN_WF0009_NORMAL.T" in out and "IDENTIFIER" not in out
+    # A LET variable (Task C4V) is bound like a parameter; see tests/test_proc_runner_let.py.
+    out = bind("SELECT ':SRC_DB' AS s, :src_db AS d FROM IDENTIFIER(:t_src)",
+               {**ARGS, "T_SRC": "MIGDB.MIG_GOLDEN_WF0009_NORMAL.T"})
+    assert "':SRC_DB'" in out and "'MIGDB' AS d" in out and "IDENTIFIER" not in out
+    assert "FROM MIGDB.MIG_GOLDEN_WF0009_NORMAL.T" in out
 
 def test_run_proc_end_to_end():
     b = DuckDBBackend()
@@ -112,3 +119,48 @@ def test_run_proc_returns_the_parsed_procedure():
 def test_a_procedure_without_a_dollar_quoted_body_is_rejected():
     with pytest.raises(ProcError, match=r"\$\$"):
         parse_proc("CREATE OR REPLACE PROCEDURE MIG_WORK.P() RETURNS STRING LANGUAGE SQL AS 'x';")
+
+
+# --- follow-up to Task W2: procs/master.sql's body travels in $$ like every segment's ------------
+
+MASTER_FIXTURE = Path(__file__).resolve().parents[1] / "orchestrator" / "test" / "fixtures" / "master_wf_0003.sql"
+UNDELIMITED_MASTER = """CREATE OR REPLACE PROCEDURE MIG_WORK.WF0003_MASTER(SRC_DB STRING, SRC_SCHEMA STRING, TGT_DB STRING, TGT_SCHEMA STRING, RUN_ID STRING)
+RETURNS STRING LANGUAGE SQL
+EXECUTE AS CALLER
+AS
+BEGIN
+  CALL MIG_WORK.WF0003_SEG_01(:SRC_DB, :SRC_SCHEMA, :TGT_DB, :TGT_SCHEMA, :RUN_ID);
+  RETURN 'OK';
+END;
+"""
+
+
+class _Recording:
+    def __init__(self):
+        self.executed = []
+
+    def execute(self, sql):
+        self.executed.append(sql)
+
+
+def test_the_generated_master_is_a_dollar_quoted_procedure_the_runner_reads_and_refuses_to_run():
+    """`orchestrator/stages.ts`'s `masterSql` output (the fixture `orchestrator/test/stages.test.ts`
+    compares it with byte for byte) is now shaped like every segment procedure: `parse_proc` finds its
+    `$$`-quoted body -- the undelimited form it used to have never got that far -- and then refuses
+    the body's first `CALL`, exactly as it refuses one in any procedure: contract C4 keeps the local
+    runner to plain SQL statements, and the master is the one procedure made of nothing but calls.
+    Nothing runs it locally (the chain test, `validate_workflow.py`, runs the segments itself), and
+    `run_proc` refuses it before a single statement reaches the backend."""
+    master = MASTER_FIXTURE.read_text(encoding="utf-8")
+    assert master.count("$$") == 2
+
+    with pytest.raises(ProcError, match=r"no \$\$-quoted body"):
+        parse_proc(UNDELIMITED_MASTER)
+    with pytest.raises(ProcError, match=r"outside the supported procedure subset \(plan contract C4\): "
+                                        r"-- wave 1\s+CALL MIG_WORK\.WF0003_SEG_01\(:SRC_DB"):
+        parse_proc(master)
+
+    backend = _Recording()
+    with pytest.raises(ProcError, match="C4"):
+        run_proc(backend, master, ARGS)
+    assert backend.executed == []

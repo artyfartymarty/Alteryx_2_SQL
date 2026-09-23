@@ -19,7 +19,7 @@
     "min_tools": 3,
     "max_tools": 40
   },
-  "updated_at": "2026-09-20T01:32:53.906Z",
+  "updated_at": "2026-09-23T11:00:13.413Z",
   "parse": {
     "attempts": 2,
     "extensions": []
@@ -32,6 +32,7 @@
     "seg_01"
   ],
   "tier": "T3",
+  "output_kind": "procedures",
   "reasons": {
     "translate": "tier-T3"
   }

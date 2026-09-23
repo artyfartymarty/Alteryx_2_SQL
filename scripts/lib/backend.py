@@ -3,7 +3,9 @@
 There is no Snowflake account on this machine, so every parity test in the project runs
 Snowflake-dialect SQL through `DuckDBBackend`: sqlglot parses the statement with the Snowflake
 parser, a few AST transforms bridge what sqlglot cannot express, and DuckDB executes the result.
-Nothing in this repo has ever run against a real Snowflake account, `SnowflakeBackend` included.
+Nothing in this repo has ever run against a real Snowflake account, `SnowflakeBackend` included:
+it reaches an account through a named connection only (`lib/snowflake_conn.py`), and its tests
+drive it through a DuckDB-backed fake connector (`tests/fake_snowflake.py`).
 
 Two deliberate differences from Snowflake that callers must know about:
 
@@ -20,6 +22,7 @@ catalogs are attached database files rather than namespaces inside one connectio
 """
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import duckdb
@@ -35,6 +38,46 @@ SANDBOX_DB = "MIGDB"
 
 class BackendError(Exception):
     """A statement could not be translated or executed. Carries the offending SQL."""
+
+
+# --- names spliced into SQL text (plan Task P2, fix round 1, C2) -------------------------------------
+#
+# Object names built from workflow data -- a mapping's `logical`, a tool id, a golden set, a
+# contract's `table` -- are spliced into DDL and queries as text on both backends. Each component
+# must be a plain, unquoted, upper-case Snowflake identifier (the rule intake already applies to a
+# `logical`), so no such value can close a name and start other SQL. A failure is a `ValueError`
+# naming the value: a usage error for every CLI, raised before anything is executed.
+
+_IDENT = re.compile(r"^[A-Z_][A-Z0-9_$]*$")
+
+
+def ident(name, what: str = "identifier") -> str:
+    """`name` if it is a plain upper-case Snowflake identifier (`[A-Z_][A-Z0-9_$]*`); `ValueError`
+    naming `what` and the value otherwise."""
+    if not isinstance(name, str) or not _IDENT.match(name):
+        raise ValueError(f"{what} {name!r} is not a plain upper-case Snowflake identifier ([A-Z_][A-Z0-9_$]*)")
+    return name
+
+
+def qualified(name, what: str = "object name") -> str:
+    """`name` if it is `SCHEMA.OBJECT` or `DATABASE.SCHEMA.OBJECT` of plain identifiers (`ident`)."""
+    parts = name.split(".") if isinstance(name, str) else []
+    if not 2 <= len(parts) <= 3 or not all(_IDENT.match(part) for part in parts):
+        raise ValueError(f"{what} {name!r} is not SCHEMA.OBJECT or DATABASE.SCHEMA.OBJECT of plain upper-case "
+                         f"Snowflake identifiers ([A-Z_][A-Z0-9_$]*)")
+    return name
+
+
+def column_definitions(fields: list[dict]) -> str:
+    """`"NAME" TYPE, …` for a typed table: names quoted (a `"` doubled), each type from
+    `alteryx_to_snowflake`, whose size and scale must be integers -- they are spliced into the
+    type text (`VARCHAR(<size>)`, `NUMBER(<size>,<scale>)`)."""
+    for field in fields:
+        for key in ("size", "scale"):
+            value = field.get(key)
+            if value is not None and (isinstance(value, bool) or not isinstance(value, int)):
+                raise ValueError(f"field {field.get('name')!r} has a {key} {value!r} that is not an integer")
+    return ", ".join(f"{_quote(field['name'])} {alteryx_to_snowflake(field)}" for field in fields)
 
 
 def _quote(identifier: str) -> str:
@@ -248,7 +291,7 @@ class DuckDBBackend:
         timestamp strings (contract C1) are cast by DuckDB on insert.
         """
         fields = table["fields"]
-        columns = ", ".join(f"{_quote(field['name'])} {alteryx_to_snowflake(field)}" for field in fields)
+        columns = column_definitions(fields)
         self.execute(f"CREATE OR REPLACE TABLE {fqn} ({columns})")
         rows = table["rows"]
         if not rows:
@@ -287,58 +330,137 @@ class DuckDBBackend:
         self._con.close()
 
 
-class SnowflakeBackend:
-    """The same interface against a real account. Never run: no account exists in this project.
+#: Connector arguments that carry a credential: never accepted, whatever their value.
+_CREDENTIAL_ARGUMENTS = frozenset({"password", "passcode", "token", "private_key", "private_key_file",
+                                   "private_key_file_pwd", "private_key_path", "oauth_token"})
+#: Snowflake's "object does not exist or not authorized" (SQL compilation error 002003).
+_DOES_NOT_EXIST = (2003, "42S02")
 
-    Kept so `compare.py`, `compile_check.py` and the orchestrator are written against the seam
-    rather than against DuckDB. It is a thin pass-through — the SQL is already Snowflake dialect —
-    and it should be treated as unverified code until someone runs it on an account.
+
+class SnowflakeBackend:
+    """The same interface against a real account, through a NAMED connection only (plan Task P2).
+
+    Never run against a real account: every test drives it through `tests/fake_snowflake.py`, a
+    DuckDB-backed double patched in as `snowflake.connector`. The SQL is already Snowflake dialect,
+    so it is a thin pass-through; it should be treated as unverified code until someone runs it on
+    an account (`docs/reference/snowflake-backend.md` lists what has never been exercised).
+
+    `connection_name` names an entry in the human's own `connections.toml` (else
+    `MIG_SNOWFLAKE_CONNECTION`; else `ConnectionRefused`). A credential argument (`password=`,
+    `token=`, a private key) is refused before anything is imported, and so is any other connection
+    parameter: the name is the only way in. Every connector error becomes a `BackendError` whose text
+    went through `snowflake_conn.redact`, never chained to the original (whose text is not redacted).
     """
 
-    def __init__(self, **connect_args: Any):
+    def __init__(self, connection_name: str | None = None, **refused: Any):
+        if _CREDENTIAL_ARGUMENTS & {key.lower() for key in refused}:
+            raise BackendError("passwords are never passed as arguments; use a named connection")
+        if refused:
+            raise BackendError(f"SnowflakeBackend takes a named connection only (an entry in your "
+                               f"connections.toml), not {', '.join(sorted(refused))}")
         try:
-            import snowflake.connector  # noqa: PLC0415  (lazy: the package is optional)
-        except ImportError as exc:
-            raise BackendError("snowflake-connector-python is not installed") from exc
-        self._con = snowflake.connector.connect(**connect_args)
+            import importlib  # noqa: PLC0415
+            importlib.import_module("snowflake.connector")   # lazy: the package is optional
+        except ImportError:
+            raise BackendError("snowflake-connector-python is not installed") from None
+        from . import snowflake_conn  # noqa: PLC0415  (lazy: the DuckDB path never imports it)
+        self._conn_module = snowflake_conn
+        self.connection_name = snowflake_conn.connection_name(connection_name)
+        try:
+            self._con = snowflake_conn.connect(self.connection_name)
+        except Exception as exc:  # noqa: BLE001 -- the text is redacted, the original never chained
+            raise self._error(exc, lead=f"cannot open the named connection {self.connection_name!r}: ") from None
+
+    def _error(self, exc: BaseException, context: str = "", *, lead: str = "") -> BackendError:
+        """`lead` goes BEFORE the connector's text: `redact` masks an unquoted secret to the end of its
+        line, which would swallow anything appended on that line. `context` starts on a new line."""
+        error = self._conn_module.scrubbed(exc)
+        wrapped = BackendError(self._conn_module.redact(f"{lead}{error}{context}"))
+        wrapped.errno, wrapped.sqlstate = error.errno, error.sqlstate
+        return wrapped
+
+    def _cursor_call(self, sql: str, params=None, *, many: bool = False, fetch: bool = False):
+        try:
+            with self._con.cursor() as cursor:
+                if many:
+                    cursor.executemany(sql, params)
+                elif params is None:
+                    cursor.execute(sql)
+                else:
+                    cursor.execute(sql, params)
+                if fetch:
+                    return [d[0] for d in cursor.description], list(cursor.fetchall())
+                return None
+        except Exception as exc:  # noqa: BLE001 -- see the class docstring
+            raise self._error(exc, _context(sql)) from None
 
     def translate(self, sql: str) -> str:
         return sql
 
     def execute(self, sql: str) -> None:
-        with self._con.cursor() as cursor:
-            cursor.execute(sql)
+        self._cursor_call(sql)
 
     def query(self, sql: str) -> tuple[list[str], list[tuple]]:
-        with self._con.cursor() as cursor:
-            cursor.execute(sql)
-            return [d[0] for d in cursor.description], list(cursor.fetchall())
+        return self._cursor_call(sql, fetch=True)
+
+    def call_procedure(self, proc_sql: str, args: dict[str, str]) -> None:
+        """Creates the procedure (its DDL exactly as written), then `CALL <name>(%s, …)` with the
+        arguments bound in the order of its parameters -- contract C4's `SRC_DB, SRC_SCHEMA, TGT_DB,
+        TGT_SCHEMA, RUN_ID`. A procedure outside C4's shape -- its name included, which is spliced into
+        the `CALL` and must be `MIG_WORK.<NAME>`-shaped plain identifiers -- or an argument missing, is
+        a `ProcError` before anything is sent; a failure on the account is a `BackendError`."""
+        from .proc_runner import ProcError, parse_proc  # noqa: PLC0415
+        proc = parse_proc(proc_sql)
+        try:
+            qualified(proc.name, "procedure name")
+        except ValueError as exc:
+            raise ProcError(str(exc)) from None
+        supplied = {name.upper(): value for name, value in args.items()}
+        missing = [name for name in proc.params if name.upper() not in supplied]
+        if missing:
+            raise ProcError(f"no argument supplied for parameter(s) {', '.join(missing)} of {proc.name}")
+        self.execute(proc_sql)
+        placeholders = ", ".join(["%s"] * len(proc.params))
+        self._cursor_call(f"CALL {proc.name}({placeholders})", [supplied[name.upper()] for name in proc.params])
+
+    # Every name these methods splice into SQL is checked here too (`qualified`), behind the
+    # validators' up-front checks: nothing that is not plain identifiers is ever sent (fix round 1, C2).
 
     def load_table(self, fqn: str, table: dict) -> None:
+        qualified(fqn, "table name")
         fields = table["fields"]
-        columns = ", ".join(f"{_quote(f['name'])} {alteryx_to_snowflake(f)}" for f in fields)
+        columns = column_definitions(fields)
         self.execute(f"CREATE OR REPLACE TABLE {fqn} ({columns})")
         if not table["rows"]:
             return
         # The connector's default paramstyle is pyformat; unverified, like the rest of this class.
         placeholders = ", ".join(["%s"] * len(fields))
-        with self._con.cursor() as cursor:
-            cursor.executemany(f"INSERT INTO {fqn} VALUES ({placeholders})",
-                               [list(row) for row in table["rows"]])
+        self._cursor_call(f"INSERT INTO {fqn} VALUES ({placeholders})", [list(row) for row in table["rows"]],
+                          many=True)
 
     def create_view(self, view_fqn: str, target_fqn: str) -> None:
+        qualified(view_fqn, "view name")
+        qualified(target_fqn, "table name")
         self.execute(f"CREATE OR REPLACE VIEW {view_fqn} AS SELECT * FROM {target_fqn}")
 
     def table_exists(self, fqn: str) -> bool:
-        return bool(self.table_columns(fqn))
+        try:
+            return bool(self.table_columns(fqn))
+        except BackendError as exc:
+            if getattr(exc, "errno", None) in _DOES_NOT_EXIST or getattr(exc, "sqlstate", None) in _DOES_NOT_EXIST:
+                return False
+            raise
 
     def table_columns(self, fqn: str) -> list[dict]:
-        _, rows = self.query(f"DESCRIBE TABLE {fqn}")
+        _, rows = self.query(f"DESCRIBE TABLE {qualified(fqn, 'table name')}")
         return [{"name": r[0], "type": str(r[1]).upper(), "nullable": str(r[3]).upper() == "Y"}
                 for r in rows]
 
     def close(self) -> None:
-        self._con.close()
+        try:
+            self._con.close()
+        except Exception as exc:  # noqa: BLE001
+            raise self._error(exc, "") from None
 
 
 def get_backend(kind: str = "duckdb", **kwargs: Any):

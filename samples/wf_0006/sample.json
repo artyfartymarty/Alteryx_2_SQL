@@ -1,0 +1,19 @@
+{
+  "id": "wf_0006",
+  "title": "Subscription revenue recognition",
+  "owner": "wf_owner",
+  "schedule": "0 6 * * 1-5",
+  "segmentation": {
+    "min_tools": 1,
+    "max_tools": 40
+  },
+  "expected_terminal": "VALIDATED",
+  "answers": {
+    "billing/subscriptions.yxdb": "BILLING.RAW.SUBSCRIPTIONS",
+    "out/revenue_by_period.yxdb": "ANALYTICS.CURATED.REVENUE_BY_PERIOD"
+  },
+  "logical": {
+    "1": "SUBSCRIPTIONS",
+    "5": "REVENUE_BY_PERIOD"
+  }
+}

@@ -21,7 +21,7 @@
     "min_tools": 3,
     "max_tools": 40
   },
-  "updated_at": "2026-09-20T01:32:53.901Z",
+  "updated_at": "2026-09-23T11:00:13.410Z",
   "parse": {
     "attempts": 1,
     "extensions": []
@@ -35,6 +35,7 @@
     "seg_01"
   ],
   "tier": "T1",
+  "output_kind": "procedures",
   "golden_sets": [
     "normal",
     "period_end",

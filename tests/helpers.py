@@ -61,13 +61,23 @@ def copy_pristine_mappings_and_catalog(dest_root: Path) -> None:
 
 def prepare_workflow(tmp_path: Path, wf_id: str) -> Repo:
     """Builds `wf_id` from `samples/<wf_id>/` into a fresh `Repo` under `tmp_path`, resolves intake
-    with the sample's own answers, and copies its canned `contract.json`/`proc.sql` into every
-    segment `segments/order.json` names. Skips the test outright when
-    `samples/<wf_id>/canned/segments/` does not exist yet (plan Task 13 writes it).
+    with the sample's own answers, and copies its canned `contract.json`/`proc.sql` -- plus
+    `proc.py` where the segment has one -- into every segment `segments/order.json` names. Skips
+    the test outright when `samples/<wf_id>/canned/segments/` does not exist yet (plan Task 13
+    writes it).
+
+    `proc.py` is the source of truth of a `snowpark` segment (`contract.json`'s `target`), and
+    `proc.sql` there is only the wrapper `render_snowpark.py` produces from it; a `sql` segment has
+    no `proc.py` at all, so that one file is copied when it exists rather than required.
+
+    A dbt sample (`samples/<wf_id>/canned/dbt/` exists: `output_kind: dbt`, design §4.3) has no
+    procedure per segment at all: only each segment's `contract.json` is copied, and the whole
+    canned project goes to `workflows/<wf_id>/dbt/`, exactly where a translator writes it.
     """
     canned_dir = SAMPLES / wf_id / "canned" / "segments"
     if not canned_dir.is_dir():
         pytest.skip(f"samples/{wf_id}/canned not written yet (plan Task 13)")
+    dbt_canned = SAMPLES / wf_id / "canned" / "dbt"
 
     repo = Repo(tmp_path)
     copy_pristine_mappings_and_catalog(tmp_path)
@@ -96,16 +106,30 @@ def prepare_workflow(tmp_path: Path, wf_id: str) -> Repo:
         f"(status {result['status']}, conflicts {result['conflicts']})")
 
     order = io.read_json(repo.wf(wf_id, "segments", "order.json"))
+    names = ("contract.json",) if dbt_canned.is_dir() else ("contract.json", "proc.sql", "proc.py")
     for wave in order:
         for seg in wave:
             seg_canned = canned_dir / seg
-            for name in ("contract.json", "proc.sql"):
+            for name in names:
                 source = seg_canned / name
                 if not source.is_file():
+                    if name == "proc.py":
+                        continue  # a sql segment has none; proc.sql is the whole translation
                     raise FileNotFoundError(
                         f"samples/{wf_id}/canned/segments/{seg}/{name} is missing")
                 destination = repo.seg(wf_id, seg, name)
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy(source, destination)
+    if dbt_canned.is_dir():
+        shutil.copytree(dbt_canned, repo.wf(wf_id, "dbt"))
 
     return repo
+
+
+def overlay_dbt_project(repo: Repo, wf_id: str, dest: Path, replacements: dict[str, Path]) -> Path:
+    """A copy of the workflow's dbt project at `dest` with some files replaced -- how a broken
+    dbt variant is validated without touching the project under test."""
+    shutil.copytree(repo.wf(wf_id, "dbt"), dest)
+    for relative, source in replacements.items():
+        shutil.copy(source, dest / relative)
+    return dest

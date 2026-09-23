@@ -30,11 +30,21 @@ EXPECTED = {
                 "inputs": ["1"], "outputs": ["6", "7"], "targets_before": []},
     "wf_0005": {"file": "vendor_dedupe.yxmd", "nodes": 4, "sets": ("normal", "empty"),
                 "inputs": ["1"], "outputs": ["4"], "targets_before": []},
+    "wf_0006": {"file": "subscription_revenue.yxmd", "nodes": 5, "sets": vocab.GOLDEN_SETS,
+                "inputs": ["1"], "outputs": ["5"], "targets_before": []},
+    # 7 tools plus Tool Containers 10 and 11 (output-targets phase 2, Task C: the dbt sample).
+    "wf_0007": {"file": "regional_targets.yxmd", "nodes": 9, "sets": vocab.GOLDEN_SETS,
+                "inputs": ["1", "2"], "outputs": ["6", "7"], "targets_before": ["ATTAINMENT_HISTORY"]},
 }
 WORKFLOWS = sorted(EXPECTED)
 
 SAMPLE_JSON_KEYS = {"id", "title", "owner", "schedule", "segmentation",
                     "expected_terminal", "answers", "logical"}
+
+# Optional: the output kind a sample asks for (`build_samples.seed` copies it into the manifest,
+# where `target_check.py --prefer auto` reads it). Only the dbt sample sets it.
+OPTIONAL_SAMPLE_JSON_KEYS = {"output_target"}
+OUTPUT_TARGETS = {"procedures", "dbt"}
 
 # The only credential-shaped strings allowed to exist in the repo: obviously fake
 # placeholders that give the parser's scrubber (dag-contract §6) something to remove.
@@ -90,7 +100,7 @@ def main_root(wf: str) -> ET.Element:
 
 # --- the checks the plan's Step 1 names ---
 
-def test_samples_are_exactly_the_five_planned_workflows():
+def test_samples_are_exactly_the_planned_workflows():
     assert sorted(p.name for p in SAMPLES.glob("wf_*") if p.is_dir()) == WORKFLOWS
 
 
@@ -129,7 +139,8 @@ def test_every_connection_endpoint_exists(wf):
 @pytest.mark.parametrize("wf", WORKFLOWS)
 def test_sample_json_has_the_planned_keys(wf):
     meta = sample_json(wf)
-    assert set(meta) == SAMPLE_JSON_KEYS
+    assert SAMPLE_JSON_KEYS <= set(meta) <= SAMPLE_JSON_KEYS | OPTIONAL_SAMPLE_JSON_KEYS
+    assert meta.get("output_target", "procedures") in OUTPUT_TARGETS
     assert meta["id"] == wf and meta["owner"] == "wf_owner"
     assert meta["expected_terminal"] in vocab.STATUSES
     # Presence and type only: the bounds are per-workflow (wf_0002 needs min_tools 2 for its
@@ -272,3 +283,11 @@ def test_golden_input_files_are_utf8_lf():
 def test_every_workflow_documents_its_golden_rows():
     for wf in WORKFLOWS:
         assert (SAMPLES / wf / "README.md").read_text(encoding="utf-8").strip(), wf
+
+
+def test_the_dbt_sample_asks_for_the_dbt_output_kind():
+    """wf_0007 exists to be migrated as a dbt project (output-targets design §7.3); every other
+    sample leaves the preference to `mappings/global.yaml` (procedures)."""
+    for wf in WORKFLOWS:
+        expected = "dbt" if wf == "wf_0007" else None
+        assert sample_json(wf).get("output_target") == expected, wf

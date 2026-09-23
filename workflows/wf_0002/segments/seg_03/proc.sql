@@ -14,10 +14,13 @@ BEGIN
 
   ALTER SESSION SET TIMEZONE = 'America/New_York', WEEK_START = 1;
 
+  -- contract C4: each mapped table's name is built once, then referenced as IDENTIFIER(:<name>)
+  LET CUSTOMER_ORDER_FACT_TGT VARCHAR := TGT_DB || '.' || TGT_SCHEMA || '.CUSTOMER_ORDER_FACT';
+
   -- Output tool 10 (write mode Append Existing, logical CUSTOMER_ORDER_FACT): the rows are added
   -- to whatever the table already holds, and Alteryx maps incoming columns to the target BY NAME,
   -- which the explicit column list spells out.
-  INSERT INTO IDENTIFIER(:TGT_DB || '.' || :TGT_SCHEMA || '.CUSTOMER_ORDER_FACT')
+  INSERT INTO IDENTIFIER(:CUSTOMER_ORDER_FACT_TGT)
       (CUST_ID, NAME, CITY, TIER, ORDER_ID, AMOUNT, ORDER_DATE, MATCH_FLAG)
   WITH
   -- tool 5 (anchor J): Join on CUST_ID -- an inner equi-join. The right side's CUST_ID collides

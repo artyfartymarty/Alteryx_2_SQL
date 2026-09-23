@@ -1,0 +1,76 @@
+{
+  "workflow": "wf_0006",
+  "segment": "seg_01",
+  "target": "sql",
+  "inputs": [
+    {
+      "logical": "SUBSCRIPTIONS",
+      "tool_id": "1",
+      "columns": [
+        { "name": "CUSTOMER", "type": "VARCHAR(20)", "nullable": true },
+        { "name": "PERIOD", "type": "VARCHAR(7)", "nullable": true },
+        { "name": "BILLED", "type": "FLOAT", "nullable": true },
+        { "name": "CAP", "type": "FLOAT", "nullable": true },
+        { "name": "CANCELLED", "type": "BOOLEAN", "nullable": true }
+      ],
+      "keys": [],
+      "expected_rows": { "min": 0, "max": 5000000 },
+      "large": false
+    }
+  ],
+  "outputs": [
+    {
+      "stream": "2_T",
+      "kind": "work",
+      "table": "MIG_WORK.WF0006_SEG_01_OUT",
+      "logical": null,
+      "columns": [
+        { "name": "CUSTOMER", "type": "VARCHAR(20)", "nullable": true },
+        { "name": "PERIOD", "type": "VARCHAR(7)", "nullable": true },
+        { "name": "BILLED", "type": "FLOAT", "nullable": false },
+        { "name": "CAP", "type": "FLOAT", "nullable": true },
+        { "name": "CANCELLED", "type": "BOOLEAN", "nullable": true }
+      ],
+      "keys": ["CUSTOMER", "PERIOD"]
+    }
+  ],
+  "output": {
+    "stream": "2_T",
+    "kind": "work",
+    "table": "MIG_WORK.WF0006_SEG_01_OUT",
+    "logical": null,
+    "columns": [
+      { "name": "CUSTOMER", "type": "VARCHAR(20)", "nullable": true },
+      { "name": "PERIOD", "type": "VARCHAR(7)", "nullable": true },
+      { "name": "BILLED", "type": "FLOAT", "nullable": false },
+      { "name": "CAP", "type": "FLOAT", "nullable": true },
+      { "name": "CANCELLED", "type": "BOOLEAN", "nullable": true }
+    ],
+    "keys": ["CUSTOMER", "PERIOD"]
+  },
+  "row_relation": "filter",
+  "ordering": {
+    "keys": [],
+    "alteryx_deterministic": true,
+    "order_dependent_columns": []
+  },
+  "tolerances": {},
+  "normalizations": [],
+  "parity_risks": [
+    {
+      "tool_id": "2",
+      "class": "NULL_SEMANTICS",
+      "note": "`NULL > 0` is NULL, which is not true, so a period with no BILLED amount leaves on the unwired False anchor -- that is what makes BILLED NOT NULL on this stream, and it is also what keeps the Python tool in seg_02 from meeting a NULL it would have to guess about."
+    },
+    {
+      "tool_id": "2",
+      "class": "LOGIC",
+      "note": "The predicate is strict: a BILLED of exactly 0 is dropped as well, not kept as a zero-revenue period. The `normal` golden set carries one of each so the two cases are told apart."
+    },
+    {
+      "tool_id": "1",
+      "class": "TYPE",
+      "note": "CUSTOMER and PERIOD are V_String(20)/V_String(7) in the yxdb, and `CREATE OR REPLACE TRANSIENT TABLE … AS` takes each column's type from the expression that produced it rather than enforcing the declared width; the `edge` set's 20-character CUSTOMER sits exactly on its limit and proves nothing about one character further."
+    }
+  ]
+}

@@ -1,0 +1,90 @@
+{
+  "workflow": "wf_0006",
+  "segment": "seg_02",
+  "target": "snowpark",
+  "inputs": [
+    {
+      "from": "seg_01",
+      "stream": "2_T",
+      "table": "MIG_WORK.WF0006_SEG_01_OUT",
+      "columns": [
+        { "name": "CUSTOMER", "type": "VARCHAR(20)", "nullable": true },
+        { "name": "PERIOD", "type": "VARCHAR(7)", "nullable": true },
+        { "name": "BILLED", "type": "FLOAT", "nullable": false },
+        { "name": "CAP", "type": "FLOAT", "nullable": true },
+        { "name": "CANCELLED", "type": "BOOLEAN", "nullable": true }
+      ],
+      "keys": ["CUSTOMER", "PERIOD"],
+      "expected_rows": { "min": 0, "max": 5000000 },
+      "large": false
+    }
+  ],
+  "outputs": [
+    {
+      "stream": "3_1",
+      "kind": "work",
+      "table": "MIG_WORK.WF0006_SEG_02_OUT",
+      "logical": null,
+      "columns": [
+        { "name": "CUSTOMER", "type": "VARCHAR(254)", "nullable": false },
+        { "name": "PERIOD", "type": "VARCHAR(254)", "nullable": true },
+        { "name": "RECOGNIZED", "type": "FLOAT", "nullable": false },
+        { "name": "DEFERRED", "type": "FLOAT", "nullable": false }
+      ],
+      "keys": ["CUSTOMER", "PERIOD"]
+    }
+  ],
+  "output": {
+    "stream": "3_1",
+    "kind": "work",
+    "table": "MIG_WORK.WF0006_SEG_02_OUT",
+    "logical": null,
+    "columns": [
+      { "name": "CUSTOMER", "type": "VARCHAR(254)", "nullable": false },
+      { "name": "PERIOD", "type": "VARCHAR(254)", "nullable": true },
+      { "name": "RECOGNIZED", "type": "FLOAT", "nullable": false },
+      { "name": "DEFERRED", "type": "FLOAT", "nullable": false }
+    ],
+    "keys": ["CUSTOMER", "PERIOD"]
+  },
+  "row_relation": "1:1",
+  "ordering": {
+    "keys": ["CUSTOMER", "PERIOD"],
+    "alteryx_deterministic": true,
+    "order_dependent_columns": ["RECOGNIZED", "DEFERRED"]
+  },
+  "tolerances": {},
+  "normalizations": [],
+  "parity_risks": [
+    {
+      "tool_id": "3",
+      "class": "LOGIC",
+      "note": "The deferred balance carries from one row to the next inside a customer, so RECOGNIZED and DEFERRED depend on the order the rows are processed in. The script fixes that order itself with `sort_values([\"CUSTOMER\", \"PERIOD\"])`, and (CUSTOMER, PERIOD) is unique on the incoming stream in every golden set, so the sort is total and the result is reproducible."
+    },
+    {
+      "tool_id": "3",
+      "class": "LOGIC",
+      "note": "A cancelled period resets the carried balance to zero BEFORE that period's own cap is applied, so a cancellation is visible in RECOGNIZED as well as in DEFERRED. broken_sql/seg_02/01_cancellation_reset_ignored.py is that rule removed."
+    },
+    {
+      "tool_id": "3",
+      "class": "NULL_SEMANTICS",
+      "note": "pandas `groupby` drops rows whose key is NULL, so a NULL CUSTOMER would silently vanish rather than form its own schedule -- which is why CUSTOMER is declared NOT NULL on this stream. Nothing upstream guarantees a non-NULL CUSTOMER; the Filter only guarantees BILLED."
+    },
+    {
+      "tool_id": "3",
+      "class": "NULL_SEMANTICS",
+      "note": "A NULL CAP is silently NOT a cap: `float(NULL)` is `nan` on both engines and `min(x, nan)` returns `x`, so the row recognizes everything billed and carries nothing forward. Both sides do the identical thing, so parity holds and no diff would ever surface it -- it is a data-quality risk in the source, recorded here rather than guarded against."
+    },
+    {
+      "tool_id": "3",
+      "class": "NULL_SEMANTICS",
+      "note": "A NULL CANCELLED is where the two engines disagree by default: the simulator types the column as pandas `boolean`, where `bool(pd.NA)` raises, while the Local Testing Framework's `to_pandas()` yields `None`, where `bool(None)` is quietly `False`. A migration must not turn a loud failure into silent output, so `proc.py` tests `pd.isna(row[\"CANCELLED\"])` and raises -- the procedure fails on exactly the row the Alteryx script fails on, and `validate_snowpark.py` would report it as a FAIL. No golden set carries such a row: the simulator cannot build one, because the Python tool raises before it can be written. How REAL Alteryx types a NULL Bool field inside the Python tool is UNVERIFIED -- the simulator's nullable dtype is this project's assumption, not an observation."
+    },
+    {
+      "tool_id": "3",
+      "class": "ROUNDING",
+      "note": "Both sides compute in IEEE doubles and round to 2 decimals with Python's own `round`, which is round-half-to-even on the binary value -- not the half-away-from-zero Alteryx uses in its formula engine. That agreement is only guaranteed because the same Python expression runs on both sides; a SQL rewrite of this tool would not round the same way."
+    }
+  ]
+}

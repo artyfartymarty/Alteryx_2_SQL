@@ -1,0 +1,331 @@
+<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2023.1">
+  <Nodes>
+    <Node ToolID="10">
+      <GuiSettings Plugin="AlteryxGuiToolkit.ToolContainer.ToolContainer">
+        <Position x="30" y="30" width="286" height="204" />
+      </GuiSettings>
+      <Properties>
+        <Configuration>
+          <Caption>Pair plan targets with actuals</Caption>
+          <Style TextColor="#314c4a" FillColor="#ecf2f2" BorderColor="#314c4a" Transparency="25" Margin="25" />
+          <Disabled value="False" />
+          <Folded value="False" />
+        </Configuration>
+        <Annotation DisplayMode="0">
+          <Name />
+          <DefaultAnnotationText />
+        </Annotation>
+      </Properties>
+      <ChildNodes>
+        <Node ToolID="1">
+          <GuiSettings Plugin="AlteryxBasePluginsGui.DbFileInput.DbFileInput">
+            <Position x="54" y="66" />
+          </GuiSettings>
+          <Properties>
+            <Configuration>
+              <Passwords />
+              <File OutputFileName="" RecordLimit="" SearchSubDirs="False" FileFormat="19">C:\data\plan\targets.yxdb</File>
+              <FormatSpecificOptions />
+            </Configuration>
+            <Annotation DisplayMode="0">
+              <Name />
+              <DefaultAnnotationText>Plan targets by region and period</DefaultAnnotationText>
+            </Annotation>
+            <MetaInfo connection="Output">
+              <RecordInfo>
+                <Field name="REGION" type="V_String" size="10" source="File: C:\data\plan\targets.yxdb" />
+                <Field name="PERIOD" type="V_String" size="7" source="File: C:\data\plan\targets.yxdb" />
+                <Field name="TARGET" type="FixedDecimal" size="19" scale="2" source="File: C:\data\plan\targets.yxdb" />
+              </RecordInfo>
+            </MetaInfo>
+          </Properties>
+          <EngineSettings EngineDll="AlteryxBasePluginsEngine.dll" EngineDllEntryPoint="AlteryxDbFileInput" />
+        </Node>
+        <Node ToolID="2">
+          <GuiSettings Plugin="AlteryxBasePluginsGui.DbFileInput.DbFileInput">
+            <Position x="54" y="162" />
+          </GuiSettings>
+          <Properties>
+            <Configuration>
+              <Passwords />
+              <File OutputFileName="" RecordLimit="" SearchSubDirs="False" FileFormat="19">C:\data\sales\actuals.yxdb</File>
+              <FormatSpecificOptions />
+            </Configuration>
+            <Annotation DisplayMode="0">
+              <Name />
+              <DefaultAnnotationText>Booked actuals, one row per sales line</DefaultAnnotationText>
+            </Annotation>
+            <MetaInfo connection="Output">
+              <RecordInfo>
+                <Field name="REGION" type="V_String" size="10" source="File: C:\data\sales\actuals.yxdb" />
+                <Field name="PERIOD" type="V_String" size="7" source="File: C:\data\sales\actuals.yxdb" />
+                <Field name="ACTUAL" type="FixedDecimal" size="19" scale="2" source="File: C:\data\sales\actuals.yxdb" />
+              </RecordInfo>
+            </MetaInfo>
+          </Properties>
+          <EngineSettings EngineDll="AlteryxBasePluginsEngine.dll" EngineDllEntryPoint="AlteryxDbFileInput" />
+        </Node>
+        <Node ToolID="3">
+          <GuiSettings Plugin="AlteryxBasePluginsGui.Join.Join">
+            <Position x="198" y="114" />
+          </GuiSettings>
+          <Properties>
+            <Configuration>
+              <JoinInfo connection="Left">
+                <Field field="REGION" />
+                <Field field="PERIOD" />
+              </JoinInfo>
+              <JoinInfo connection="Right">
+                <Field field="REGION" />
+                <Field field="PERIOD" />
+              </JoinInfo>
+              <JoinByRecordPos value="False" />
+              <SelectConfiguration>
+                <Configuration outputConnection="Join">
+                  <OrderChanged value="False" />
+                  <CommaDecimal value="False" />
+                  <SelectFields>
+                    <SelectField field="Right_REGION" selected="False" />
+                    <SelectField field="Right_PERIOD" selected="False" />
+                    <SelectField field="*Unknown" selected="True" />
+                  </SelectFields>
+                </Configuration>
+              </SelectConfiguration>
+            </Configuration>
+            <Annotation DisplayMode="0">
+              <Name />
+              <DefaultAnnotationText>Targets to actuals on REGION, PERIOD</DefaultAnnotationText>
+            </Annotation>
+            <MetaInfo connection="Left">
+              <RecordInfo>
+                <Field name="REGION" type="V_String" size="10" source="File: C:\data\plan\targets.yxdb" />
+                <Field name="PERIOD" type="V_String" size="7" source="File: C:\data\plan\targets.yxdb" />
+                <Field name="TARGET" type="FixedDecimal" size="19" scale="2" source="File: C:\data\plan\targets.yxdb" />
+              </RecordInfo>
+            </MetaInfo>
+            <MetaInfo connection="Join">
+              <RecordInfo>
+                <Field name="REGION" type="V_String" size="10" source="File: C:\data\plan\targets.yxdb" />
+                <Field name="PERIOD" type="V_String" size="7" source="File: C:\data\plan\targets.yxdb" />
+                <Field name="TARGET" type="FixedDecimal" size="19" scale="2" source="File: C:\data\plan\targets.yxdb" />
+                <Field name="ACTUAL" type="FixedDecimal" size="19" scale="2" source="File: C:\data\sales\actuals.yxdb" />
+              </RecordInfo>
+            </MetaInfo>
+            <MetaInfo connection="Right">
+              <RecordInfo>
+                <Field name="REGION" type="V_String" size="10" source="File: C:\data\sales\actuals.yxdb" />
+                <Field name="PERIOD" type="V_String" size="7" source="File: C:\data\sales\actuals.yxdb" />
+                <Field name="ACTUAL" type="FixedDecimal" size="19" scale="2" source="File: C:\data\sales\actuals.yxdb" />
+              </RecordInfo>
+            </MetaInfo>
+          </Properties>
+          <EngineSettings EngineDll="AlteryxBasePluginsEngine.dll" EngineDllEntryPoint="AlteryxJoin" />
+        </Node>
+      </ChildNodes>
+    </Node>
+    <Node ToolID="11">
+      <GuiSettings Plugin="AlteryxGuiToolkit.ToolContainer.ToolContainer">
+        <Position x="342" y="30" width="394" height="204" />
+      </GuiSettings>
+      <Properties>
+        <Configuration>
+          <Caption>Current-year attainment</Caption>
+          <Style TextColor="#514c31" FillColor="#f2f1ec" BorderColor="#514c31" Transparency="25" Margin="25" />
+          <Disabled value="False" />
+          <Folded value="False" />
+        </Configuration>
+        <Annotation DisplayMode="0">
+          <Name />
+          <DefaultAnnotationText />
+        </Annotation>
+      </Properties>
+      <ChildNodes>
+        <Node ToolID="4">
+          <GuiSettings Plugin="AlteryxBasePluginsGui.Filter.Filter">
+            <Position x="366" y="114" />
+          </GuiSettings>
+          <Properties>
+            <Configuration>
+              <Expression>Left([PERIOD], 4) = [User.CurrentYear]</Expression>
+              <Mode>Custom</Mode>
+            </Configuration>
+            <Annotation DisplayMode="0">
+              <Name />
+              <DefaultAnnotationText>Keep the current year's periods</DefaultAnnotationText>
+            </Annotation>
+            <MetaInfo connection="True">
+              <RecordInfo>
+                <Field name="REGION" type="V_String" size="10" source="File: C:\data\plan\targets.yxdb" />
+                <Field name="PERIOD" type="V_String" size="7" source="File: C:\data\plan\targets.yxdb" />
+                <Field name="TARGET" type="FixedDecimal" size="19" scale="2" source="File: C:\data\plan\targets.yxdb" />
+                <Field name="ACTUAL" type="FixedDecimal" size="19" scale="2" source="File: C:\data\sales\actuals.yxdb" />
+              </RecordInfo>
+            </MetaInfo>
+            <MetaInfo connection="False">
+              <RecordInfo>
+                <Field name="REGION" type="V_String" size="10" source="File: C:\data\plan\targets.yxdb" />
+                <Field name="PERIOD" type="V_String" size="7" source="File: C:\data\plan\targets.yxdb" />
+                <Field name="TARGET" type="FixedDecimal" size="19" scale="2" source="File: C:\data\plan\targets.yxdb" />
+                <Field name="ACTUAL" type="FixedDecimal" size="19" scale="2" source="File: C:\data\sales\actuals.yxdb" />
+              </RecordInfo>
+            </MetaInfo>
+          </Properties>
+          <EngineSettings EngineDll="AlteryxBasePluginsEngine.dll" EngineDllEntryPoint="AlteryxFilter" />
+        </Node>
+        <Node ToolID="5">
+          <GuiSettings Plugin="AlteryxSpatialPluginsGui.Summarize.Summarize">
+            <Position x="474" y="114" />
+          </GuiSettings>
+          <Properties>
+            <Configuration>
+              <SummarizeFields>
+                <SummarizeField field="REGION" action="GroupBy" rename="REGION" />
+                <SummarizeField field="PERIOD" action="GroupBy" rename="PERIOD" />
+                <SummarizeField field="TARGET" action="Sum" rename="TARGET_TOTAL" />
+                <SummarizeField field="ACTUAL" action="Sum" rename="ACTUAL_TOTAL" />
+                <SummarizeField field="REGION" action="Count" rename="LINES" />
+              </SummarizeFields>
+            </Configuration>
+            <Annotation DisplayMode="0">
+              <Name />
+              <DefaultAnnotationText>Target and actual per region and period</DefaultAnnotationText>
+            </Annotation>
+            <MetaInfo connection="Output">
+              <RecordInfo>
+                <Field name="REGION" type="V_String" size="10" source="Summarize: GroupBy_REGION" />
+                <Field name="PERIOD" type="V_String" size="7" source="Summarize: GroupBy_PERIOD" />
+                <Field name="TARGET_TOTAL" type="FixedDecimal" size="19" scale="2" source="Summarize: Sum_TARGET" />
+                <Field name="ACTUAL_TOTAL" type="FixedDecimal" size="19" scale="2" source="Summarize: Sum_ACTUAL" />
+                <Field name="LINES" type="Int64" size="8" source="Summarize: Count_REGION" />
+              </RecordInfo>
+            </MetaInfo>
+          </Properties>
+          <EngineSettings EngineDll="AlteryxSpatialPluginsEngine.dll" EngineDllEntryPoint="AlteryxSummarize" />
+        </Node>
+        <Node ToolID="6">
+          <GuiSettings Plugin="AlteryxBasePluginsGui.DbFileOutput.DbFileOutput">
+            <Position x="618" y="66" />
+          </GuiSettings>
+          <Properties>
+            <Configuration>
+              <Passwords />
+              <File MaxRecords="" FileFormat="19">C:\data\out\region_attainment.yxdb</File>
+              <FormatSpecificOptions>
+                <OutputOption>Overwrite</OutputOption>
+              </FormatSpecificOptions>
+              <MultiFile value="False" />
+            </Configuration>
+            <Annotation DisplayMode="0">
+              <Name />
+              <DefaultAnnotationText>region_attainment.yxdb</DefaultAnnotationText>
+            </Annotation>
+            <MetaInfo connection="Output">
+              <RecordInfo>
+                <Field name="REGION" type="V_String" size="10" source="Summarize: GroupBy_REGION" />
+                <Field name="PERIOD" type="V_String" size="7" source="Summarize: GroupBy_PERIOD" />
+                <Field name="TARGET_TOTAL" type="FixedDecimal" size="19" scale="2" source="Summarize: Sum_TARGET" />
+                <Field name="ACTUAL_TOTAL" type="FixedDecimal" size="19" scale="2" source="Summarize: Sum_ACTUAL" />
+                <Field name="LINES" type="Int64" size="8" source="Summarize: Count_REGION" />
+              </RecordInfo>
+            </MetaInfo>
+          </Properties>
+          <EngineSettings EngineDll="AlteryxBasePluginsEngine.dll" EngineDllEntryPoint="AlteryxDbFileOutput" />
+        </Node>
+        <Node ToolID="7">
+          <GuiSettings Plugin="AlteryxBasePluginsGui.DbFileOutput.DbFileOutput">
+            <Position x="618" y="162" />
+          </GuiSettings>
+          <Properties>
+            <Configuration>
+              <Passwords />
+              <File MaxRecords="" FileFormat="23">&lt;scrubbed:prod_plan&gt;|||dbo.ATTAINMENT_HISTORY</File>
+              <FormatSpecificOptions>
+                <OutputOption>Update; Insert if new</OutputOption>
+                <TableStyle>Quoted</TableStyle>
+                <TransactionSize>0</TransactionSize>
+              </FormatSpecificOptions>
+              <UpdateKeys>
+                <Field field="REGION" />
+                <Field field="PERIOD" />
+              </UpdateKeys>
+              <MultiFile value="False" />
+            </Configuration>
+            <Annotation DisplayMode="0">
+              <Name />
+              <DefaultAnnotationText>dbo.ATTAINMENT_HISTORY</DefaultAnnotationText>
+            </Annotation>
+            <MetaInfo connection="Output">
+              <RecordInfo>
+                <Field name="REGION" type="V_String" size="10" source="Summarize: GroupBy_REGION" />
+                <Field name="PERIOD" type="V_String" size="7" source="Summarize: GroupBy_PERIOD" />
+                <Field name="TARGET_TOTAL" type="FixedDecimal" size="19" scale="2" source="Summarize: Sum_TARGET" />
+                <Field name="ACTUAL_TOTAL" type="FixedDecimal" size="19" scale="2" source="Summarize: Sum_ACTUAL" />
+                <Field name="LINES" type="Int64" size="8" source="Summarize: Count_REGION" />
+              </RecordInfo>
+            </MetaInfo>
+          </Properties>
+          <EngineSettings EngineDll="AlteryxBasePluginsEngine.dll" EngineDllEntryPoint="AlteryxDbFileOutput" />
+        </Node>
+      </ChildNodes>
+    </Node>
+  </Nodes>
+  <Connections>
+    <Connection>
+      <Origin ToolID="1" Connection="Output" />
+      <Destination ToolID="3" Connection="Left" />
+    </Connection>
+    <Connection>
+      <Origin ToolID="2" Connection="Output" />
+      <Destination ToolID="3" Connection="Right" />
+    </Connection>
+    <Connection>
+      <Origin ToolID="3" Connection="Join" />
+      <Destination ToolID="4" Connection="Input" />
+    </Connection>
+    <Connection>
+      <Origin ToolID="4" Connection="True" />
+      <Destination ToolID="5" Connection="Input" />
+    </Connection>
+    <Connection>
+      <Origin ToolID="5" Connection="Output" />
+      <Destination ToolID="6" Connection="Input" />
+    </Connection>
+    <Connection>
+      <Origin ToolID="5" Connection="Output" />
+      <Destination ToolID="7" Connection="Input" />
+    </Connection>
+  </Connections>
+  <Properties>
+    <Memory default="True" />
+    <GlobalRecordLimit value="0" />
+    <TempFiles default="True" />
+    <Annotation on="True" includeToolName="False" />
+    <ConvErrorLimit value="10" />
+    <ConvErrorLimit_Stopped value="False" />
+    <CancelOnError value="False" />
+    <DisableBrowse value="False" />
+    <EnablePerformanceProfiling value="False" />
+    <DisableAllOutput value="False" />
+    <ShowAllMacroMessages value="False" />
+    <ShowConnectionStatusIsOn value="True" />
+    <ShowConnectionStatusOnlyWhenRunning value="True" />
+    <ZoomLevel value="0" />
+    <LayoutType>Horizontal</LayoutType>
+    <Constants>
+      <Constant>
+        <Namespace>User</Namespace>
+        <Name>User.CurrentYear</Name>
+        <Value>2026</Value>
+        <IsNumeric value="False" />
+      </Constant>
+    </Constants>
+    <RuntimeProperties>
+      <Actions />
+      <Questions />
+      <ModuleType>Wizard</ModuleType>
+      <MacroCustomHelp value="False" />
+      <RunE2 value="False" />
+    </RuntimeProperties>
+  </Properties>
+</AlteryxDocument>

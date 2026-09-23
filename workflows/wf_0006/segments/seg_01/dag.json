@@ -1,0 +1,166 @@
+{
+  "workflow": "wf_0006",
+  "segment": "seg_01",
+  "nodes": [
+    {
+      "tool_id": "1",
+      "type": "input",
+      "plugin": "AlteryxBasePluginsGui.DbFileInput.DbFileInput",
+      "container_id": null,
+      "config": {
+        "source": "C:\\data\\billing\\subscriptions.yxdb",
+        "format": "yxdb",
+        "query": null,
+        "alias": null,
+        "csv": null,
+        "record_limit": null
+      },
+      "raw_config": "<Configuration>\n          <Passwords />\n          <File OutputFileName=\"\" RecordLimit=\"\" SearchSubDirs=\"False\" FileFormat=\"19\">C:\\data\\billing\\subscriptions.yxdb</File>\n          <FormatSpecificOptions />\n        </Configuration>",
+      "annotation": "Subscription billing extract",
+      "in_anchors": [],
+      "out_anchors": [
+        "Output"
+      ],
+      "meta": {
+        "Output": [
+          {
+            "name": "CUSTOMER",
+            "type": "V_String",
+            "size": 20,
+            "scale": null
+          },
+          {
+            "name": "PERIOD",
+            "type": "V_String",
+            "size": 7,
+            "scale": null
+          },
+          {
+            "name": "BILLED",
+            "type": "Double",
+            "size": 8,
+            "scale": null
+          },
+          {
+            "name": "CAP",
+            "type": "Double",
+            "size": 8,
+            "scale": null
+          },
+          {
+            "name": "CANCELLED",
+            "type": "Bool",
+            "size": 1,
+            "scale": null
+          }
+        ]
+      }
+    },
+    {
+      "tool_id": "2",
+      "type": "filter",
+      "plugin": "AlteryxBasePluginsGui.Filter.Filter",
+      "container_id": null,
+      "config": {
+        "expression": "[BILLED] > 0"
+      },
+      "raw_config": "<Configuration>\n          <Expression>[BILLED] &gt; 0</Expression>\n          <Mode>Custom</Mode>\n        </Configuration>",
+      "annotation": "Only billed periods",
+      "in_anchors": [
+        "Input"
+      ],
+      "out_anchors": [
+        "T",
+        "F"
+      ],
+      "meta": {
+        "T": [
+          {
+            "name": "CUSTOMER",
+            "type": "V_String",
+            "size": 20,
+            "scale": null
+          },
+          {
+            "name": "PERIOD",
+            "type": "V_String",
+            "size": 7,
+            "scale": null
+          },
+          {
+            "name": "BILLED",
+            "type": "Double",
+            "size": 8,
+            "scale": null
+          },
+          {
+            "name": "CAP",
+            "type": "Double",
+            "size": 8,
+            "scale": null
+          },
+          {
+            "name": "CANCELLED",
+            "type": "Bool",
+            "size": 1,
+            "scale": null
+          }
+        ],
+        "F": [
+          {
+            "name": "CUSTOMER",
+            "type": "V_String",
+            "size": 20,
+            "scale": null
+          },
+          {
+            "name": "PERIOD",
+            "type": "V_String",
+            "size": 7,
+            "scale": null
+          },
+          {
+            "name": "BILLED",
+            "type": "Double",
+            "size": 8,
+            "scale": null
+          },
+          {
+            "name": "CAP",
+            "type": "Double",
+            "size": 8,
+            "scale": null
+          },
+          {
+            "name": "CANCELLED",
+            "type": "Bool",
+            "size": 1,
+            "scale": null
+          }
+        ]
+      }
+    }
+  ],
+  "edges": [
+    {
+      "src": "1",
+      "src_anchor": "Output",
+      "dst": "2",
+      "dst_anchor": "Input",
+      "dst_order": 1,
+      "wireless": false
+    }
+  ],
+  "inbound": [],
+  "outbound": [
+    {
+      "src": "2",
+      "src_anchor": "T",
+      "dst": "3",
+      "dst_anchor": "Input",
+      "dst_order": 1,
+      "wireless": false,
+      "to_segment": "seg_02"
+    }
+  ]
+}

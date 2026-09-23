@@ -1,0 +1,18 @@
+[
+  {
+    "segment": "seg_02",
+    "target": "dbt",
+    "file": "dbt/models/region_attainment.sql",
+    "golden_set": "normal",
+    "expect": { "class": "LOGIC", "columns": [], "stream": "5_Output" },
+    "note": "Observed three times, identically, laid over the canned project with tests/helpers.overlay_dbt_project and judged by validate_dbt.py on normal: FAIL, needs_human false, one LOGIC cluster on stream 5_Output with scope rows, 'rows only in actual', count 1 -- the prior-year WEST 2025-12 group, which the filter would have removed. No column is NULL in that row, so the cluster names no column and stays LOGIC rather than NULL_SEMANTICS (design spec 7.3 predicted LOGIC). ATTAINMENT_HISTORY still passes: its own model keeps the filter, and only the file named here is replaced. Suspect CTE t4_filter. compile_check.py --target dbt reports OK for this model (tool 4 still has its comment in attainment_history.sql), so only the runtime comparison catches it."
+  },
+  {
+    "segment": "seg_02",
+    "target": "dbt",
+    "file": "dbt/models/attainment_history.sql",
+    "golden_set": "normal",
+    "expect": { "class": "LOGIC", "columns": [], "stream": "5_Output" },
+    "note": "Observed eight times (three recorded runs plus five more), always FAIL with needs_human false and one LOGIC cluster on stream 5_Output, scope rows, 'rows only in expected', count 2: dbt runs the narrowed merge with exit 0, the before-row WEST 2025-12 is overwritten by WEST 2026-01's values (its PERIOD included), and of EAST's two periods only one survives, written over the before-row EAST 2026-01 -- nothing is inserted, because every incoming region already matches a row. Which EAST period survives is not deterministic on dbt-duckdb (a MERGE with two source rows per target row): it varied between runs, so the idempotency flag was false in two of the eight runs while the class, columns and stream never changed (design spec 7.3 predicted LOGIC, rows). compile_check.py --target dbt refuses this model statically as well (dbt:model_config, unique_key)."
+  }
+]

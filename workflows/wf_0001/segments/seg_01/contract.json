@@ -1,6 +1,7 @@
 {
   "workflow": "wf_0001",
   "segment": "seg_01",
+  "target": "sql",
   "inputs": [
     {
       "logical": "ORDERS",

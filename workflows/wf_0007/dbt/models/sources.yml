@@ -1,0 +1,15 @@
+version: 2
+sources:
+  - name: src
+    schema: "{{ var('src_schema') }}"
+    tables:
+      - name: TARGETS
+        columns:
+          - name: REGION
+          - name: PERIOD
+          - name: TARGET
+      - name: ACTUALS
+        columns:
+          - name: REGION
+          - name: PERIOD
+          - name: ACTUAL

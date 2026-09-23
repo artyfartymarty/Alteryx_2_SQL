@@ -14,6 +14,9 @@ BEGIN
 
   ALTER SESSION SET TIMEZONE = 'America/New_York', WEEK_START = 1;
 
+  -- contract C4: each mapped table's name is built once, then referenced as IDENTIFIER(:<name>)
+  LET GL_LEDGER_SRC VARCHAR := SRC_DB || '.' || SRC_SCHEMA || '.GL_LEDGER';
+
   -- ===========================================================================================
   -- Outbound stream 3_Output: the extract seg_02 sorts, de-duplicates and summarises.
   -- ===========================================================================================
@@ -31,7 +34,7 @@ BEGIN
           AMOUNT,
           REGION,
           ENTRY_ID
-      FROM IDENTIFIER(:SRC_DB || '.' || :SRC_SCHEMA || '.GL_LEDGER')
+      FROM IDENTIFIER(:GL_LEDGER_SRC)
       WHERE AMOUNT <> 0
   ),
   -- tool 2 (anchor T): Filter [REGION] = [User.Region], with the workflow constant User.Region

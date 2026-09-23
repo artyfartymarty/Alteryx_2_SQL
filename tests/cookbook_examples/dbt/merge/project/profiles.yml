@@ -1,0 +1,23 @@
+# The dbt profile of every migrated workflow: scripts/lib/dbt_project.py PROFILES_TEMPLATE, and
+# compile_check.py --target dbt refuses any other content. No credential is ever written here:
+# every Snowflake value is read from the environment when dbt runs. `local` is the DuckDB double
+# scripts/validate_dbt.py uses; `snowflake` has never been run (dbt-snowflake is not installed).
+alteryx_migration:
+  target: local
+  outputs:
+    local:
+      type: duckdb
+      path: "{{ env_var('MIG_DBT_DUCKDB_PATH', 'dbt_sandbox.duckdb') }}"
+      schema: "{{ var('tgt_schema') }}"
+      threads: 1
+    snowflake:
+      type: snowflake
+      account: "{{ env_var('SNOWFLAKE_ACCOUNT') }}"
+      user: "{{ env_var('SNOWFLAKE_USER') }}"
+      authenticator: "{{ env_var('SNOWFLAKE_AUTHENTICATOR', 'externalbrowser') }}"
+      private_key_path: "{{ env_var('SNOWFLAKE_PRIVATE_KEY_PATH', '') }}"
+      role: "{{ env_var('SNOWFLAKE_ROLE') }}"
+      warehouse: "{{ env_var('SNOWFLAKE_WAREHOUSE') }}"
+      database: "{{ env_var('SNOWFLAKE_DATABASE') }}"
+      schema: "{{ var('tgt_schema') }}"
+      threads: 4

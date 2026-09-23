@@ -9,11 +9,26 @@
 // not apply to WAITING_FOR_ANSWERS, whose whole point is to be re-run every pass so a newly
 // merged answer can move intake forward, or to a T3 workflow's MANUAL, which is a normal (if
 // permanent) resting state, not an escalation.
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { auditArgs, notesPath } from "./hooks.ts";
 import { fileExists, loadManifest, readJsonOr, reloadManifest, saveManifest, wfDir } from "./manifest.ts";
 import { STAGES } from "./types.ts";
-import type { AgentError, AgentResult, Env, Manifest, Role, RunOptions, ShResult, Stage } from "./types.ts";
+import type {
+  AgentCtx,
+  AgentError,
+  AgentResult,
+  AnalyzerBatch,
+  Env,
+  Manifest,
+  OutputKind,
+  Role,
+  RunOptions,
+  SegmentTarget,
+  ShResult,
+  Stage,
+  Tier,
+} from "./types.ts";
 
 /** A stage whose status is one of these has nothing left to do. NEEDS_HUMAN / QUARANTINED /
  * BLOCKED are not listed here even though they also stop a plain re-run from retrying the stage
@@ -51,19 +66,25 @@ export function toolCallsUsed(m: Manifest): number {
 }
 
 function escalate(env: Env, m: Manifest, stage: Stage, result: AgentResult): Step {
-  const why = result.detail === "budget" ? "budget" : (result.error ?? "error");
+  // A reason a verify callback already recorded for THIS stage wins over the agent-level one
+  // (output-targets design §3.2): a contract that raised a target reaches escalate as a generic
+  // "missing-output" (that is how a failed verify is reported to runAgent), and "missing-output"
+  // would tell a human nothing about the contradiction that actually stopped the workflow.
+  const why = m.reasons?.[stage] ?? (result.detail === "budget" ? "budget" : (result.error ?? "error"));
   m.status[stage] = "NEEDS_HUMAN";
   reasons(m)[stage] = why;
   env.log(`${m.id}: ${stage} → NEEDS_HUMAN (${why})`);
   return "stop";
 }
 
-/** Exit 2 from a script is never a domain verdict: it is a broken invocation or a crash. */
+/** Exit 2 from a script is never a domain verdict: it is a broken invocation or a crash. A few
+ * callers route a non-2 exit here too, for a script whose failure is never a domain verdict at all
+ * (target_check.py, a classifier) -- so the log names the code it actually saw. */
 function scriptError(env: Env, m: Manifest, stage: Stage, script: string, result: ShResult): Step {
   m.status[stage] = "NEEDS_HUMAN";
   reasons(m)[stage] = "script-error";
   const tail = `${result.out}\n${result.err}`.trim().split("\n").slice(-3).join(" | ");
-  env.log(`${m.id}: ${script} exited 2 — ${tail}`);
+  env.log(`${m.id}: ${script} exited ${result.code} — ${tail}`);
   return "stop";
 }
 
@@ -83,14 +104,22 @@ async function runAgent(
   env: Env,
   m: Manifest,
   role: Role,
+  stage: Stage,
   task: string,
-  ctx: { segment?: string; iteration?: number } = {},
+  ctx: AgentCtx = {},
   verify?: () => Promise<boolean>,
 ): Promise<AgentResult> {
   const budget = env.config.budgets.maxToolCallsPerWorkflow;
   let rateLimits = 0;
   let retried = false;
   for (;;) {
+    // A park reason describes the LAST attempt (round 2, R2). A failed `verify` is reported to
+    // this loop as a generic "missing-output", which `RETRY_ONCE` retries — so the reason that
+    // verify recorded belongs to the attempt that has just been abandoned, and leaving it would
+    // make `escalate` prefer it over whatever stops attempt 2 (denied, context-overflow, budget).
+    // Cleared here, before every attempt, so it can only ever describe the one that ended the
+    // stage; the stage-level clears stay, for the reason loaded from disk at the start of a run.
+    if (m.reasons) delete m.reasons[stage];
     const used = toolCallsUsed(m);
     if (used > budget) {
       env.log(`${m.id}: tool-call budget exceeded (${used} > ${budget}); not starting ${role}`);
@@ -151,6 +180,7 @@ async function stageParse(env: Env, m: Manifest): Promise<Step> {
       env,
       m,
       "parser-recovery",
+      "parse",
       `scripts/parse.py failed or violated invariants for ${m.id} (attempt ${attempt + 1} of ${max}). ` +
         `Read workflows/${m.id}/source/ and workflows/${m.id}/parsed/parse_report.json, diagnose the XML variant, ` +
         `add the smallest extension under scripts/parsers/ext/ with a fixture in tests/parser_corpus/, and re-parse.`,
@@ -162,6 +192,40 @@ async function stageParse(env: Env, m: Manifest): Promise<Step> {
   m.tier = "T3";
   env.log(`${m.id}: still unparsable after ${max} recovery attempts → QUARANTINED, tier T3`);
   return "stop";
+}
+
+/** Characters of inline context the intake and analyzer tasks carry (≈ 4 000 tokens). Task F
+ * (output-targets design §8): two earlier live tests overflowed the local model's context window
+ * during intake because the agent had to find `parsed/dag.json` and `intake/touchpoints.json`
+ * tool call by tool call -- `scripts/prompt_context.py` renders a compact, budgeted summary of
+ * them once, up front, instead. */
+export const PROMPT_CONTEXT_CHARS = 16000;
+
+/** Task W4: appended to every form of the intake, analyzer and fixer tasks (batched included),
+ * always as part of the INSTRUCTIONS, before any fenced inline context that follows (Task F: the
+ * data fence never carries an instruction) -- so the notes path reaches the agent whether or not
+ * that call's own context block rendered. */
+function notesInstruction(role: Role, wfId: string): string {
+  return ` Keep your decisions and open items in ${notesPath(wfId, role)} as you go; the durable ` +
+    `record stays in the contract and the files you write. The directory already exists; write ` +
+    `the file with your file-writing tool; do not create directories.`;
+}
+
+/** Runs `scripts/prompt_context.py --role <role>` and returns the block to append to that role's
+ * task text -- `""` on any failure, so a broken renderer degrades the task (no inline context,
+ * same as before this existed) rather than stopping the stage. The rendered text is DATA the
+ * workflow itself wrote (annotations, tool names, touchpoint keys): it is appended after the
+ * task's own instructions, never interpolated into them, so nothing in it can rewrite what the
+ * agent is told to do. */
+async function inlineContext(env: Env, m: Manifest, role: "intake" | "analyzer"): Promise<string> {
+  const rendered = await env.py("scripts/prompt_context.py",
+    [m.id, "--role", role, "--budget-chars", String(PROMPT_CONTEXT_CHARS)]);
+  if (!rendered.ok) {
+    env.log(`${m.id}: prompt_context.py --role ${role} exited ${rendered.code}; the ${role} task goes without inline context`);
+    return "";
+  }
+  const text = rendered.out.trim();
+  return text ? `\n\n${text}` : "";
 }
 
 async function stageIntake(env: Env, m: Manifest): Promise<Step> {
@@ -177,12 +241,16 @@ async function stageIntake(env: Env, m: Manifest): Promise<Step> {
   if (prompt.code === 2) return scriptError(env, m, "intake", "scripts/intake_prompt.py", prompt);
 
   if (!(await fileExists(wfDir(env.root, m.id, "intake", "plan.md")))) {
+    const context = await inlineContext(env, m, "intake");
     const result = await runAgent(
       env,
       m,
       "intake",
+      "intake",
       `Run intake for ${m.id}. Read workflows/${m.id}/parsed/dag.json, workflows/${m.id}/intake/touchpoints.json ` +
-        `and mappings/global.yaml, then write workflows/${m.id}/intake/mappings.yaml, open_questions.md and plan.md.`,
+        `and mappings/global.yaml, then write workflows/${m.id}/intake/mappings.yaml, open_questions.md and plan.md.` +
+        notesInstruction("intake", m.id) +
+        context,
       {},
       () => fileExists(wfDir(env.root, m.id, "intake", "plan.md")),
     );
@@ -195,7 +263,8 @@ async function stageIntake(env: Env, m: Manifest): Promise<Step> {
 
   const questions = wfDir(env.root, m.id, "intake", "open_questions.md");
   if (status === "WAITING_FOR_ANSWERS") {
-    if (env.hasGh) {
+    const noGh = ghUnavailable(env);
+    if (!noGh) {
       const issue = await env.sh("gh", [
         "issue",
         "create",
@@ -206,7 +275,7 @@ async function stageIntake(env: Env, m: Manifest): Promise<Step> {
       ]);
       if (!issue.ok) env.log(`${m.id}: gh issue create failed: ${issue.err.trim()}`);
     } else {
-      env.log(`${m.id}: waiting for answers — gh not installed, answer the boxes in ${questions}`);
+      env.log(`${m.id}: waiting for answers — ${noGh}, answer the boxes in ${questions}`);
     }
     return "stop";
   }
@@ -215,21 +284,192 @@ async function stageIntake(env: Env, m: Manifest): Promise<Step> {
   return "stop";
 }
 
+/** `sql` is the HIGHEST target and `manual` the lowest. The analyzer may only ever move a segment
+ * DOWN this ladder (output-targets design §3.2: "It may **lower** a target (`sql` → `snowpark`, or
+ * either → `manual`) … it may never raise one"). A contract that moves back towards `sql` claims
+ * the deterministic classifier was wrong about, say, a Python tool — a contradiction only a human
+ * can settle, so the workflow parks instead of translating against it. */
+const TARGET_RANK: Record<string, number> = { manual: 0, snowpark: 1, sql: 2 };
+
+interface TargetVerdict {
+  ok: boolean;
+  /** Set when `ok` is false: the exact string recorded as `reasons.analyze`. */
+  reason?: string;
+  /** `targets.json`'s own proposal, kept so the caller can say why a dbt preference was dropped. */
+  proposedKind?: string;
+  outputKind?: OutputKind;
+  /** One line per segment the analyzer legitimately lowered, to log once the stage succeeds. */
+  lowered: string[];
+}
+
+async function readTargets(
+  env: Env,
+  m: Manifest,
+): Promise<{ output_kind?: string; segments?: Record<string, string> }> {
+  return readJsonOr(wfDir(env.root, m.id, "segments", "targets.json"), {});
+}
+
+/**
+ * The mirror design §3.3 asks for, for a workflow with no contracts to check: `targets.json`'s own
+ * `output_kind` verbatim. `target_check.py` writes `targets.json` for a tier-T3 workflow like any
+ * other, so the decision it made is on disk — it is only §3.2's lower-only verification (which
+ * reads contracts, and can drop a `dbt` proposal when one was lowered off `sql`) that has nothing
+ * to run against. An unwritable or out-of-vocabulary kind falls back to `procedures`, the same
+ * default `target_check.py` itself resolves to.
+ */
+async function mirroredKind(env: Env, m: Manifest): Promise<OutputKind> {
+  return (await readTargets(env, m)).output_kind === "dbt" ? "dbt" : "procedures";
+}
+
+/**
+ * The §3.2 check the orchestrator owes the pipeline: every contract carries a `target`, none of
+ * them ranks above `targets.json`'s proposal, and the workflow's `output_kind` is `dbt` only if
+ * the script proposed dbt AND every contract is still plain `sql` (an analyzer that lowers one
+ * segment to Snowpark legitimately makes the whole workflow non-dbt).
+ */
+async function checkTargets(env: Env, m: Manifest, segments: string[]): Promise<TargetVerdict> {
+  const targets = await readTargets(env, m);
+  const proposals = targets.segments ?? {};
+  const lowered: string[] = [];
+  let everyTargetIsSql = true;
+
+  for (const segment of segments) {
+    const contract = await readJsonOr<{ target?: string }>(
+      wfDir(env.root, m.id, "segments", segment, "contract.json"),
+      {},
+    );
+    const target = contract.target;
+    if (typeof target !== "string" || !(target in TARGET_RANK)) {
+      return { ok: false, reason: `target-missing: ${segment}`, lowered };
+    }
+    const proposal = proposals[segment];
+    if (typeof proposal !== "string" || !(proposal in TARGET_RANK)) {
+      // Nothing was verified, which is the same failure as a contract with no target of its own —
+      // and design §3.2 has exactly two reason formats, so the detail goes to the log, not a third.
+      env.log(`${m.id}: ${segment} has no target proposal in segments/targets.json — nothing to verify against`);
+      return { ok: false, reason: `target-missing: ${segment}`, lowered };
+    }
+    if (TARGET_RANK[target] > TARGET_RANK[proposal]) {
+      return { ok: false, reason: `target-mismatch: ${segment} raised ${proposal} to ${target}`, lowered };
+    }
+    if (target !== proposal) lowered.push(`${m.id}: ${segment} lowered ${proposal} to ${target} — see analysis.md`);
+    if (target !== "sql") everyTargetIsSql = false;
+  }
+
+  return {
+    ok: true,
+    proposedKind: targets.output_kind,
+    outputKind: targets.output_kind === "dbt" && everyTargetIsSql ? "dbt" : "procedures",
+    lowered,
+  };
+}
+
+/** A reason recorded by an EARLIER attempt at analyze must not outlive that attempt (final fix
+ * wave M5). `escalate` prefers `m.reasons.analyze` over the agent-level error, because a failed
+ * verify reaches it as a generic "missing-output" — so a reason left standing would make an
+ * attempt that fails BEFORE verify (denied, timeout, budget) park with the previous attempt's
+ * `target-mismatch: …` instead of whatever actually stopped it. `reloadManifest` copies the whole
+ * on-disk manifest over `m`, so this has to run after each reload, not once before them. */
+function clearAnalyzeReason(m: Manifest): void {
+  if (m.reasons) delete m.reasons.analyze;
+}
+
+/** The analyzer's character budget (Task W2): above it, `scripts/plan_batches.py` plans more than one
+ * batch and the workflow is analysed batch by batch. An estimate, not tokens (≈ characters / 4). */
+const ANALYZER_BUDGET_CHARS = 60000;
+
+function analyzerBudgetChars(env: Env): number {
+  return env.config.analyzerBudgetChars ?? ANALYZER_BUDGET_CHARS;
+}
+
+const TIERS: Tier[] = ["T1", "T2", "T3"];
+
+function asTier(value: unknown): Tier | undefined {
+  return TIERS.includes(value as Tier) ? (value as Tier) : undefined;
+}
+
+/** `segments/seams.json` as `scripts/check_seams.py` writes it. */
+interface SeamReport {
+  seams?: { producer?: string | null; consumer?: string; stream?: string; status?: string }[];
+  duplicates?: { table?: string; producers?: string[] }[];
+}
+
+/**
+ * Runs `scripts/check_seams.py <wf> [--segments …]` (Task W2) and returns the reason to park with
+ * if a seam disagrees, or undefined when every one agrees. The report is deleted first, so the
+ * reason can only ever come from this call's own `segments/seams.json`: `seam-mismatch:
+ * <producer>-><consumer> <stream>` for the first mismatching seam (a duplicate that no seam reads
+ * names its producers and table instead), and `script-error` for exit 2 or an exit 1 that left no
+ * mismatch to name.
+ */
+async function seamReason(env: Env, m: Manifest, segments?: string[]): Promise<string | undefined> {
+  const file = wfDir(env.root, m.id, "segments", "seams.json");
+  await rm(file, { force: true });
+  const checked = await env.py("scripts/check_seams.py", segments ? [m.id, "--segments", segments.join(",")] : [m.id]);
+  if (checked.ok) return undefined;
+  if (checked.code !== 1) {
+    env.log(`${m.id}: scripts/check_seams.py exited ${checked.code} — ${checked.err.trim().split("\n").slice(-1)[0] ?? ""}`);
+    return "script-error";
+  }
+  const report = await readJsonOr<SeamReport>(file, {});
+  const seam = (report.seams ?? []).find((s) => s.status === "mismatch");
+  const duplicate = (report.duplicates ?? [])[0];
+  const why = seam
+    ? `seam-mismatch: ${seam.producer ?? "?"}->${seam.consumer} ${seam.stream}`
+    : duplicate
+      ? `seam-mismatch: ${(duplicate.producers ?? []).join("+")}->? ${duplicate.table}`
+      : "script-error";
+  env.log(`${m.id}: ${why} — ${checked.err.trim().split("\n").slice(0, 3).join(" | ")}`);
+  return why;
+}
+
 async function stageAnalyze(env: Env, m: Manifest): Promise<Step> {
   const segmented = await env.py("scripts/segment.py", [m.id]);
   await reloadManifest(env.root, m);
+  clearAnalyzeReason(m);
   if (segmented.code === 2) return scriptError(env, m, "analyze", "scripts/segment.py", segmented);
   if (!segmented.ok) return domainFailure(env, m, "analyze", "segmentation", segmented);
 
+  // `--prefer auto` is always what the orchestrator passes: target_check.py itself resolves the
+  // preference from manifest.output_target, then mappings/global.yaml's program.output_target,
+  // then "procedures" (output-targets design §3.3), so the orchestrator never re-implements it.
+  // Exit 1 is NOT a failure here (design §3.1): targets.json IS written, and it is written
+  // precisely so the analyzer can see the `unknown` nodes and record them in analysis.md /
+  // unsupported.json — parking the stage would make the one case that exit code exists for
+  // unreachable. Only exit 2, a broken invocation, stops the stage.
+  const targets = await env.py("scripts/target_check.py", [m.id, "--prefer", "auto"]);
+  if (targets.code === 2) return scriptError(env, m, "analyze", "scripts/target_check.py", targets);
+  if (!targets.ok) env.log(`${m.id}: target_check: unknown nodes in ${m.id}; the analyzer decides`);
+
+  // Task W2: one analyzer call must fit its context. plan_batches.py groups consecutive waves under
+  // the character budget; ONE batch (every committed sample) is today's single call, unchanged.
+  // It has no domain failure: anything but exit 0 is a broken invocation.
+  const planned = await env.py("scripts/plan_batches.py", [m.id, "--budget-chars", String(analyzerBudgetChars(env))]);
+  if (!planned.ok) return scriptError(env, m, "analyze", "scripts/plan_batches.py", planned);
+  const plan = await readJsonOr<{ batches?: unknown; warnings?: unknown }>(wfDir(env.root, m.id, "segments", "batches.json"), {});
+  const entries = Array.isArray(plan.batches) ? plan.batches : [];
+  if (!entries.every(isBatch)) return scriptError(env, m, "analyze", "scripts/plan_batches.py", planned);
+  const batches = entries.map((batch) => ({ id: batch.id, segments: [...batch.segments] }));
+  for (const warning of Array.isArray(plan.warnings) ? plan.warnings : []) env.log(`${m.id}: plan_batches: ${String(warning)}`);
+
   const order = await readOrder(env, m.id);
   const segments = order.flat();
+  if (batches.length > 1) return await analyzeInBatches(env, m, batches, segments);
+
+  const context = await inlineContext(env, m, "analyzer");
+  let verdict: TargetVerdict | undefined;
   const result = await runAgent(
     env,
     m,
     "analyzer",
+    "analyze",
     `Analyze ${m.id}: classify every tool in workflows/${m.id}/parsed/dag.json, confirm the cuts in ` +
       `workflows/${m.id}/segments/order.json, and write a contract.json for each segment plus analysis.md, ` +
-      `unsupported.json and the tier in manifest.json.`,
+      `unsupported.json and the tier in manifest.json. Read workflows/${m.id}/segments/targets.json and copy ` +
+      `each segment's target into its contract.json (you may only lower a target: sql → snowpark → manual, ` +
+      `never back towards sql), saying in analysis.md why for each one you lowered.` +
+      notesInstruction("analyzer", m.id) +
+      context,
     {},
     async () => {
       // The tier decision comes first (docs/spec/01-copilot-setup.md §3's state diagram:
@@ -239,15 +479,156 @@ async function stageAnalyze(env: Env, m: Manifest): Promise<Step> {
       // assigned a segment to translate, so it must never be held to the "every segment has a
       // contract.json" bar that only the T1/T2 -> golden path needs.
       const unsupported = await readJsonOr<{ tier?: string }>(wfDir(env.root, m.id, "unsupported.json"), {});
-      if (unsupported.tier === "T3") return true;
+      if (unsupported.tier === "T3") {
+        // No contracts exist, so §3.2's lower-only check has nothing to verify — but §3.3's
+        // mirror is not conditional on that: `targets.json` was written for this workflow too and
+        // its `output_kind` is the decision, so the manifest records it rather than staying silent.
+        verdict = { ok: true, outputKind: await mirroredKind(env, m), lowered: [] };
+        return true;
+      }
       for (const segment of segments) {
         if (!(await fileExists(wfDir(env.root, m.id, "segments", segment, "contract.json")))) return false;
       }
-      return segments.length > 0;
+      if (segments.length === 0) return false;
+      const checked = await checkTargets(env, m, segments);
+      if (!checked.ok) {
+        reasons(m).analyze = checked.reason!;
+        return false;
+      }
+      // Task W2: every seam is checked by code, never by a model.
+      const seams = await seamReason(env, m);
+      if (seams) {
+        reasons(m).analyze = seams;
+        return false;
+      }
+      verdict = checked;
+      return true;
     },
   );
   if (!result.ok) return escalate(env, m, "analyze", result);
   await reloadManifest(env.root, m);
+  clearAnalyzeReason(m);   // the stage succeeded: a DONE analyze carries no reason at all
+  return await finishAnalyze(env, m, verdict);
+}
+
+function isBatch(value: unknown): value is AnalyzerBatch {
+  const batch = value as AnalyzerBatch | null;
+  return (
+    typeof batch?.id === "string" &&
+    Array.isArray(batch.segments) &&
+    batch.segments.length > 0 &&
+    batch.segments.every((segment) => typeof segment === "string")
+  );
+}
+
+/**
+ * The analyzer, batch by batch (Task W2, docs/reference/large-workflows.md). Each call is told its
+ * batch's segments and gets `prompt_context.py --batch`'s context (the workflow map, the target
+ * proposal, the producer contracts earlier batches wrote, its own segments' detail), and its policy
+ * lane narrows to its batch (`ctx.batch`): its segments' contract.json files and its two fragments.
+ * Its verify callback holds it to that: the fragments exist and, unless the workflow is already T3,
+ * every contract exists, no target is raised, and every seam INTO its segments agrees. One retry per
+ * batch, as for the single call. Then `stitch_analysis.py` — never an agent — writes analysis.md and
+ * unsupported.json, and the tier is read from the stitched file.
+ */
+async function analyzeInBatches(env: Env, m: Manifest, batches: AnalyzerBatch[], segments: string[]): Promise<Step> {
+  // Fragments of an earlier plan (more batches, other ids) must never be stitched or verified.
+  await rm(wfDir(env.root, m.id, "analysis"), { recursive: true, force: true });
+  let tierSoFar: Tier | undefined;
+  for (const [index, batch] of batches.entries()) {
+    const rendered = await env.py("scripts/prompt_context.py",
+      [m.id, "--role", "analyzer", "--batch", batch.id, "--budget-chars", String(analyzerBudgetChars(env))]);
+    if (!rendered.ok) {
+      env.log(`${m.id}: prompt_context.py --batch ${batch.id} exited ${rendered.code}; the batch goes without inline context`);
+    }
+    const context = rendered.ok && rendered.out.trim() ? `\n\n${rendered.out.trim()}` : "";
+    const fragment = (suffix: string) => wfDir(env.root, m.id, "analysis", `${batch.id}${suffix}`);
+    const task =
+      `Analyze ${m.id}, batch ${index + 1} of ${batches.length} (${batch.id}): segments ${batch.segments.join(", ")}. ` +
+      `The workflow is too large for one analyzer call, so it is analysed batch by batch in wave order; the ` +
+      `workflow map, the target proposal and the contracts earlier batches wrote at this batch's input seams are ` +
+      `below. Classify every tool of these segments (workflows/${m.id}/parsed/dag.json; each segment's own tools ` +
+      `are in workflows/${m.id}/segments/<segment>/dag.json) and write ONLY: a contract.json for each of these ` +
+      `segments, workflows/${m.id}/analysis/${batch.id}.md (this batch's part of analysis.md) and ` +
+      `workflows/${m.id}/analysis/${batch.id}.unsupported.json (this batch's tier and unsupported tools, in ` +
+      `unsupported.json's shape). Copy each segment's target from workflows/${m.id}/segments/targets.json into its ` +
+      `contract.json (you may only lower a target: sql → snowpark → manual, never back towards sql), saying in ` +
+      `the fragment why for each one you lowered. For every input that comes from a segment of an earlier batch, ` +
+      `copy that producer's outputs[] entry: same table, same columns in order, same type family, same ` +
+      `nullability, same keys — scripts/check_seams.py checks every seam after you. The orchestrator stitches ` +
+      `analysis.md and unsupported.json and records the tier; do not write them or manifest.json.` +
+      notesInstruction("analyzer", m.id) +
+      context;
+    const result = await runAgent(env, m, "analyzer", "analyze", task, { batch }, async () => {
+      if (!(await fileExists(fragment(".md")))) return false;
+      // The fragment's unsupported.json must carry a tier the stitch can rank: a missing or unreadable
+      // one is this batch's missing output, retried once here, never left for the stitch to refuse.
+      const tier = asTier((await readJsonOr<{ tier?: unknown }>(fragment(".unsupported.json"), {})).tier);
+      if (!tier) return false;
+      // A T3 workflow is never translated, so — exactly as for the single call — it is never held to
+      // the contract bar, in this batch or any later one (a later batch's seams would read contracts
+      // a T3 batch never had to write).
+      if (tier === "T3" || tierSoFar === "T3") return true;
+      for (const segment of batch.segments) {
+        if (!(await fileExists(wfDir(env.root, m.id, "segments", segment, "contract.json")))) return false;
+      }
+      const checked = await checkTargets(env, m, batch.segments);
+      if (!checked.ok) {
+        reasons(m).analyze = checked.reason!;
+        return false;
+      }
+      const seams = await seamReason(env, m, batch.segments);
+      if (seams) {
+        reasons(m).analyze = seams;
+        return false;
+      }
+      return true;
+    });
+    if (!result.ok) return escalate(env, m, "analyze", result);
+    await reloadManifest(env.root, m);
+    clearAnalyzeReason(m);
+    const tier = asTier((await readJsonOr<{ tier?: unknown }>(fragment(".unsupported.json"), {})).tier);
+    if (tier === "T3") tierSoFar = "T3";
+  }
+
+  const stitched = await env.py("scripts/stitch_analysis.py", [m.id]);
+  if (stitched.code === 2) return scriptError(env, m, "analyze", "scripts/stitch_analysis.py", stitched);
+  if (!stitched.ok) return domainFailure(env, m, "analyze", "stitch", stitched);
+  return await finishAnalyze(env, m, undefined, segments);
+}
+
+/**
+ * The tail both analyze paths share: the tier from `unsupported.json` (the analyzer's single call
+ * writes it; `stitch_analysis.py` writes it for a batched one), then — for the batched path, whose
+ * verify callbacks each saw one batch — §3.2's lower-only check over EVERY segment, which is what
+ * decides `output_kind` (a T3 workflow mirrors `targets.json` instead); then the verdict is logged
+ * and recorded, analyze is DONE, and a T3 workflow's translate goes MANUAL.
+ */
+async function finishAnalyze(env: Env, m: Manifest, verdict?: TargetVerdict, segments?: string[]): Promise<Step> {
+  const tier = asTier((await readJsonOr<{ tier?: unknown }>(wfDir(env.root, m.id, "unsupported.json"), {})).tier);
+  if (tier) m.tier = tier;
+  if (!verdict && segments) {
+    if (m.tier === "T3") {
+      verdict = { ok: true, outputKind: await mirroredKind(env, m), lowered: [] };
+    } else {
+      const checked = await checkTargets(env, m, segments);
+      if (!checked.ok) {
+        m.status.analyze = "NEEDS_HUMAN";
+        reasons(m).analyze = checked.reason!;
+        env.log(`${m.id}: analyze → NEEDS_HUMAN (${checked.reason})`);
+        return "stop";
+      }
+      verdict = checked;
+    }
+  }
+
+  if (verdict) {
+    for (const line of verdict.lowered) env.log(line);
+    if (verdict.proposedKind === "dbt" && verdict.outputKind !== "dbt") {
+      env.log(`${m.id}: targets.json proposed output_kind dbt, but a contract lowered a segment off sql — procedures`);
+    }
+    m.output_kind = verdict.outputKind;
+  }
 
   m.status.analyze = "DONE";
   if (m.tier === "T3") {
@@ -277,8 +658,9 @@ async function stageGolden(env: Env, m: Manifest): Promise<Step> {
         `     writes source/*.instrumented.yxmd + golden/capture_map.json, and prints the AlteryxEngineCmd ` +
         `command to run that instrumented copy — run it, so <capture-dir> fills with .yxdb captures\n` +
         `  2) python scripts/inject_outputs.py ${m.id} --capture-dir <capture-dir> --import-set normal\n` +
-        `     imports those captures as golden set "normal" under workflows/${m.id}/golden/\n` +
-        `then re-run`,
+        `     imports those captures as golden set "normal" under workflows/${m.id}/golden/ and records it in\n` +
+        `     manifest.json golden_sets (import "normal" first; repeat both steps per golden set)\n` +
+        `then resume with --from-stage golden --only ${m.id}`,
     );
     m.status.golden = "BLOCKED";
     return "stop";
@@ -311,46 +693,124 @@ function agentFailureReason(role: Role, result: AgentResult): string {
   return result.detail === "budget" ? "budget" : `${role} ${result.error ?? "error"}`;
 }
 
+/** A failing script's own words, made safe to put in an agent prompt: `auditArgs` is the same
+ * redact-then-bound helper `CopilotRunner` already applies to `AgentResult.detail` (redaction
+ * first, so a truncated secret cannot survive the cut), reused rather than reimplemented. */
+function diagnosis(result: ShResult): string {
+  return auditArgs(`${result.err}\n${result.out}`.trim()) || "(no output)";
+}
+
+/** How far one call of `migrateSegment` runs. The defaults are the ordinary loop (translator on
+ * iteration 0, then fixers, up to `maxFixIterations`); the chain check (Task W1) asks for exactly
+ * one fixer round — `{ firstIteration: 1, iterations: 2, note }` — on the segment where the stitched
+ * workflow first diverged. */
+interface SegmentOptions {
+  /** The first iteration to run; 0 is the translator's turn, anything later a fixer's. */
+  firstIteration?: number;
+  /** One past the last iteration (default `maxFixIterations`). */
+  iterations?: number;
+  /** Replaces the fixer's standing "read validation.json and review.json first and change only what
+   * their diagnosis points at" sentence — for the chain check's round, where the segment's own
+   * validation.json PASSes by construction and `validation_workflow.json` holds the diagnosis. */
+  repairTask?: string;
+}
+
 /** translate → review → validate for one segment, bounded by maxFixIterations. */
-async function migrateSegment(env: Env, m: Manifest, segment: string): Promise<SegmentOutcome> {
-  const iterations = env.config.maxFixIterations;
+async function migrateSegment(env: Env, m: Manifest, segment: string, opts: SegmentOptions = {}): Promise<SegmentOutcome> {
+  const first = opts.firstIteration ?? 0;
+  const iterations = opts.iterations ?? env.config.maxFixIterations;
+  // How many iterations this call can spend — what every exhausted-loop reason reports.
+  const spent = iterations - first;
+  const contractFile = wfDir(env.root, m.id, "segments", segment, "contract.json");
   const procSql = wfDir(env.root, m.id, "segments", segment, "proc.sql");
   const procPy = wfDir(env.root, m.id, "segments", segment, "proc.py");
   // The reason reported if every iteration is spent without a PASS or an early escalation —
   // updated as the loop learns more, so the final NEEDS_HUMAN names the LAST thing that actually
   // happened (F13: "seg_02: validation FAIL after 3 iterations", "seg_01: reviewer BLOCK …").
-  let lastReason = `validation FAIL after ${iterations} iterations`;
+  let lastReason = `validation FAIL after ${spent} iterations`;
+  // Set when an iteration ends BEFORE review, so the next fixer is not sent to read a
+  // validation.json / review.json that this segment does not have yet (fix round 1, I2).
+  let failedBeforeReview: string | undefined;
 
-  for (let iteration = 0; iteration < iterations; iteration++) {
+  for (let iteration = first; iteration < iterations; iteration++) {
+    // Re-read per iteration: the analyzer's contract is the one authority on what this segment is
+    // written in, and a --from-stage analyze between two runs can legitimately have changed it.
+    const contract = await readJsonOr<{ target?: SegmentTarget }>(contractFile, {});
+    // `manual` is the bottom of the ladder: a segment the analyzer judged no generator should
+    // attempt (design §3.2). A T3 workflow normally never gets here at all, but nothing forces
+    // unsupported.json's tier and this contract to agree, so the guard lives at the point of harm
+    // — no agent is dispatched and nothing is written (fix round 1, I1).
+    if (contract.target === "manual") {
+      env.log(`${m.id} ${segment}: contract target is manual — no generator may attempt it; segment needs a human`);
+      return { verdict: "NEEDS_HUMAN", reason: "manual-segment" };
+    }
+    const target: "sql" | "snowpark" = contract.target === "snowpark" ? "snowpark" : "sql";
     const role: Role = iteration === 0 ? "translator" : "fixer";
+    const pythonNote =
+      ` This is a Snowpark Python segment: its source of truth is proc.py, and proc.sql is rendered from it by ` +
+      `scripts/render_snowpark.py — never edit proc.sql by hand.`;
     const task =
       iteration === 0
-        ? `Translate segment ${segment} of ${m.id} per workflows/${m.id}/segments/${segment}/contract.json and dag.json.`
-        : `Repair segment ${segment} of ${m.id}: read workflows/${m.id}/segments/${segment}/validation.json and ` +
-          `review.json first and change only what their diagnosis points at.`;
-    const written = await runAgent(env, m, role, task, { segment, iteration }, async () =>
-      (await fileExists(procSql)) || (await fileExists(procPy)),
+        ? `Translate segment ${segment} of ${m.id} per workflows/${m.id}/segments/${segment}/contract.json and dag.json.` +
+          (target === "snowpark" ? pythonNote : "")
+        : (opts.repairTask ??
+            `Repair segment ${segment} of ${m.id}: read workflows/${m.id}/segments/${segment}/validation.json and ` +
+              `review.json first and change only what their diagnosis points at.`) +
+          (failedBeforeReview ? ` ${failedBeforeReview}` : "") +
+          (target === "snowpark" ? pythonNote : "") +
+          notesInstruction("fixer", m.id);
+    const written = await runAgent(env, m, role, "translate", task, { segment, iteration }, async () =>
+      target === "snowpark" ? fileExists(procPy) : (await fileExists(procSql)) || (await fileExists(procPy)),
     );
     if (!written.ok) {
       env.log(`${m.id} ${segment}: ${role} ${written.error ?? "error"} — segment needs a human`);
       return { verdict: "NEEDS_HUMAN", reason: agentFailureReason(role, written) };
     }
 
-    const compiled = await env.py("scripts/compile_check.py", [m.id, segment]);
+    if (target === "snowpark") {
+      // proc.sql is a rendered artefact, never hand-written: it has to exist and match proc.py
+      // before compile_check.py can check the pair (output-targets design §4.2/§5.1).
+      const rendered = await env.py("scripts/render_snowpark.py", [m.id, segment]);
+      if (rendered.code === 2) {
+        env.log(`${m.id} ${segment}: render_snowpark.py exited 2 — ${rendered.err.trim()}`);
+        return { verdict: "NEEDS_HUMAN", reason: "script-error" };
+      }
+      if (!rendered.ok) {
+        // Exit 1 is the renderer's one domain failure (`$$` in proc.py): the agent's own output is
+        // unrenderable, which is the same kind of problem a compile error is — let it try again.
+        env.log(`${m.id} ${segment}: render failed on iteration ${iteration} — ${rendered.err.trim()}`);
+        lastReason = `render_snowpark failed after ${spent} iterations`;
+        failedBeforeReview =
+          `The previous attempt failed before review: scripts/render_snowpark.py said: ${diagnosis(rendered)}`;
+        continue;
+      }
+    }
+
+    const compiled = await env.py(
+      "scripts/compile_check.py",
+      target === "snowpark" ? [m.id, segment, "--target", target] : [m.id, segment],
+    );
     if (compiled.code === 2) {
       env.log(`${m.id} ${segment}: compile_check.py exited 2 — ${compiled.err.trim()}`);
       return { verdict: "NEEDS_HUMAN", reason: "script-error" };
     }
     if (!compiled.ok) {
       env.log(`${m.id} ${segment}: compile check failed on iteration ${iteration} — ${compiled.err.trim()}`);
-      lastReason = `compile check failed after ${iterations} iterations`;
+      lastReason = `compile check failed after ${spent} iterations`;
+      failedBeforeReview =
+        `The previous attempt failed before review: scripts/compile_check.py failed; read compile_check.json. ` +
+        `It said: ${diagnosis(compiled)}`;
       continue;
     }
+    // Past compile: review.json and validation.json are about to exist, so the standing fixer
+    // task is accurate again and last iteration's pre-review diagnosis must not be repeated.
+    failedBeforeReview = undefined;
 
     const reviewed = await runAgent(
       env,
       m,
       "reviewer",
+      "translate",
       `Review segment ${segment} of ${m.id} against its contract and write review.json.`,
       { segment, iteration },
       () => fileExists(wfDir(env.root, m.id, "segments", segment, "review.json")),
@@ -362,7 +822,7 @@ async function migrateSegment(env: Env, m: Manifest, segment: string): Promise<S
     );
     if (review.verdict === "BLOCK") {
       env.log(`${m.id} ${segment}: review BLOCK on iteration ${iteration}`);
-      lastReason = `reviewer BLOCK after ${iterations} iterations`;
+      lastReason = `reviewer BLOCK after ${spent} iterations`;
       continue;
     }
 
@@ -370,7 +830,11 @@ async function migrateSegment(env: Env, m: Manifest, segment: string): Promise<S
       env,
       m,
       "validator",
-      `Validate segment ${segment} of ${m.id} against every golden set and write validation.json.`,
+      "translate",
+      target === "snowpark"
+        ? `Validate segment ${segment} of ${m.id} against every golden set with scripts/validate_snowpark.py and ` +
+          `write validation.json.`
+        : `Validate segment ${segment} of ${m.id} against every golden set and write validation.json.`,
       { segment, iteration },
       () => fileExists(wfDir(env.root, m.id, "segments", segment, "validation.json")),
     );
@@ -388,9 +852,295 @@ async function migrateSegment(env: Env, m: Manifest, segment: string): Promise<S
       return { verdict: "NEEDS_HUMAN", reason: "needs_human" };
     }
     if (verdict.startsWith("PASS")) return { verdict };
-    lastReason = `validation FAIL after ${iterations} iterations`;
+    lastReason = `validation FAIL after ${spent} iterations`;
   }
   return { verdict: "NEEDS_HUMAN", reason: lastReason };
+}
+
+// ---------- a dbt workflow: ONE project, one translate loop (output-targets design §4.3, §6) ----------
+
+/** design §4.3 / §6: a dbt workflow deploys with one command; this file replaces master.sql. */
+export function dbtReadme(wfId: string): string {
+  return [
+    `# ${wfId} — deploy as a dbt project`,
+    ``,
+    `Generated by orchestrate.ts. This workflow's output kind is \`dbt\`: there is no master.sql and no per-segment`,
+    `procedure. Nothing in this repository has run it against Snowflake.`,
+    ``,
+    "```",
+    `dbt run --project-dir workflows/${wfId}/dbt --profiles-dir workflows/${wfId}/dbt --target snowflake --vars '{"src_schema": "<SRC>", "tgt_schema": "<TGT>"}'`,
+    "```",
+    ``,
+    `<SRC> is the schema that holds the mapped source tables under their logical names; <TGT> is where the models`,
+    `are written. Every connection value comes from the SNOWFLAKE_* variables named in workflows/${wfId}/dbt/profiles.yml.`,
+    `dbt-snowflake must be installed first; it is not part of requirements.txt.`,
+    ``,
+  ].join("\n");
+}
+
+/** The model a contract output becomes — the mirror of `scripts/lib/dbt_project.model_name`: a
+ * final target's model is its logical name lower-cased, a work stream's its MIG_WORK table name
+ * lower-cased (design §4.3). Anything that is not `kind: "target"` is a work stream there too. An
+ * output without the key its kind is named by throws, as the Python raises KeyError — never the
+ * model name "undefined". */
+export function dbtModelName(output: { kind?: string; logical?: string | null; table?: string | null }): string {
+  const key = output.kind === "target" ? "logical" : "table";
+  const value = output[key];
+  if (value === undefined || value === null) {
+    throw new Error(`dbtModelName: a ${output.kind ?? "work"} output is named by its "${key}", and this one has none: ${JSON.stringify(output)}`);
+  }
+  return key === "logical" ? String(value).toLowerCase() : String(value).split(".").pop()!.toLowerCase();
+}
+
+/** `<model> (<segment>)` for every contract output of the given segments — what the fixer is told
+ * to look at after a validation FAIL. */
+async function failingModels(env: Env, m: Manifest, segments: string[]): Promise<string> {
+  const names: string[] = [];
+  for (const segment of segments) {
+    const contract = await readJsonOr<{ outputs?: { kind?: string; logical?: string; table?: string }[] }>(
+      wfDir(env.root, m.id, "segments", segment, "contract.json"),
+      {},
+    );
+    for (const output of contract.outputs ?? []) names.push(`${dbtModelName(output)} (${segment})`);
+  }
+  return names.join(", ");
+}
+
+interface DbtOutcome {
+  /** Per segment, the verdict of the LAST validation of the project as it now stands. */
+  verdicts: Record<string, string>;
+  /** Why the project needs a human; undefined when every segment PASSed. */
+  reason?: string;
+}
+
+/** translate → compile check → review → validate for the whole dbt project, bounded by
+ * maxFixIterations — `migrateSegment`'s loop, run once per workflow instead of once per segment. */
+async function migrateDbt(env: Env, m: Manifest, segments: string[]): Promise<DbtOutcome> {
+  const iterations = env.config.maxFixIterations;
+  const dbtFile = (...rest: string[]) => wfDir(env.root, m.id, "dbt", ...rest);
+  const reportOf = (segment: string) => wfDir(env.root, m.id, "segments", segment, "validation.json");
+  let lastReason = `validation FAIL after ${iterations} iterations`;
+  let failedBeforeReview: string | undefined;
+  let failing = "";
+  let verdicts: Record<string, string> = {};
+
+  for (let iteration = 0; iteration < iterations; iteration++) {
+    // Every agent turn may change the project, so a verdict from an earlier validation no longer
+    // describes it: a park must never report a PASS for a project nothing validated since.
+    verdicts = {};
+    const role: Role = iteration === 0 ? "translator" : "fixer";
+    const task =
+      iteration === 0
+        ? `Translate ${m.id} into ONE dbt project under workflows/${m.id}/dbt/ (its output kind is dbt): read every ` +
+          `segment's contract.json and dag.json and follow docs/reference/output-targets.md §3.3 and cookbook/dbt.md.`
+        : `Repair the dbt project of ${m.id}: read workflows/${m.id}/dbt/review.json and every segment's ` +
+          `validation.json first and change only what their diagnosis points at.` +
+          (failing ? ` Failing models: ${failing}.` : "") +
+          (failedBeforeReview ? ` ${failedBeforeReview}` : "") +
+          notesInstruction("fixer", m.id);
+    const written = await runAgent(env, m, role, "translate", task, { iteration, dbt: true }, () =>
+      fileExists(dbtFile("dbt_project.yml")),
+    );
+    if (!written.ok) {
+      env.log(`${m.id}: ${role} ${written.error ?? "error"} on the dbt project — it needs a human`);
+      return { verdicts, reason: agentFailureReason(role, written) };
+    }
+
+    // DV6: a dbt project is one unit, so the check takes no segment.
+    const compiled = await env.py("scripts/compile_check.py", [m.id, "--target", "dbt"]);
+    if (compiled.code === 2) {
+      env.log(`${m.id}: compile_check.py --target dbt exited 2 — ${compiled.err.trim()}`);
+      return { verdicts, reason: "script-error" };
+    }
+    if (!compiled.ok) {
+      env.log(`${m.id}: dbt compile check failed on iteration ${iteration} — ${compiled.err.trim()}`);
+      lastReason = `compile check failed after ${iterations} iterations`;
+      failing = "";   // M1: the failing models are an older project's; the check's words replace them
+      failedBeforeReview =
+        `The previous attempt failed before review: scripts/compile_check.py ${m.id} --target dbt failed; read ` +
+        `workflows/${m.id}/dbt/compile_check.json. It said: ${diagnosis(compiled)}`;
+      continue;
+    }
+    failedBeforeReview = undefined;
+
+    const reviewed = await runAgent(
+      env,
+      m,
+      "reviewer",
+      "translate",
+      `Review the dbt project of ${m.id} against every segment's contract and write workflows/${m.id}/dbt/review.json.`,
+      { iteration, dbt: true },
+      () => fileExists(dbtFile("review.json")),
+    );
+    if (!reviewed.ok) return { verdicts, reason: agentFailureReason("reviewer", reviewed) };
+    if ((await readJsonOr<{ verdict?: string }>(dbtFile("review.json"), {})).verdict === "BLOCK") {
+      env.log(`${m.id}: review BLOCK on the dbt project, iteration ${iteration}`);
+      lastReason = `reviewer BLOCK after ${iterations} iterations`;
+      failing = "";   // M1: dbt/review.json is newer than the last validation's failing models
+      continue;
+    }
+
+    const validated = await runAgent(
+      env,
+      m,
+      "validator",
+      "translate",
+      `Validate the dbt project of ${m.id} against every golden set with scripts/validate_dbt.py ${m.id}; it writes ` +
+        `every segment's validation.json.`,
+      { iteration, dbt: true },
+      async () => {
+        for (const segment of segments) if (!(await fileExists(reportOf(segment)))) return false;
+        return true;
+      },
+    );
+    if (!validated.ok) return { verdicts, reason: agentFailureReason("validator", validated) };
+    const reports = await Promise.all(
+      segments.map((segment) => readJsonOr<{ verdict?: string; needs_human?: boolean }>(reportOf(segment), {})),
+    );
+    // needs_human wins over any verdict, as it does per segment (task-15-int ruling 4): a
+    // PASS_WITH_ACCEPTED_DIFF that also says needs_human is not a green light for that segment.
+    verdicts = Object.fromEntries(
+      segments.map((segment, i) => [segment, reports[i].needs_human ? "NEEDS_HUMAN" : String(reports[i].verdict ?? "")]),
+    );
+    if (reports.some((report) => report.needs_human)) {
+      env.log(`${m.id}: validate_dbt says a diff is not in the project — it needs a human`);
+      return { verdicts, reason: "needs_human" };
+    }
+    if (segments.every((segment) => verdicts[segment].startsWith("PASS"))) return { verdicts };
+    failing = await failingModels(env, m, segments.filter((segment) => !verdicts[segment].startsWith("PASS")));
+    lastReason = `validation FAIL after ${iterations} iterations`;
+  }
+  return { verdicts, reason: lastReason };
+}
+
+/** stageTranslate for `output_kind: "dbt"`: one loop for the whole project, then every segment's
+ * status from its own report, and `procs/README.md` (never master.sql) once every segment PASSes. */
+async function translateDbt(env: Env, m: Manifest, order: string[][]): Promise<Step> {
+  const segments = order.flat();
+  m.segment_status ??= {};
+  // F11's crash-window rule, per workflow: a recorded NEEDS_HUMAN segment parks the project.
+  if (segments.some((segment) => m.segment_status![segment] === "NEEDS_HUMAN")) {
+    m.status.translate = "NEEDS_HUMAN";
+    reasons(m).translate = "dbt: needs_human (recorded)";
+    env.log(`${m.id}: the dbt project has a recorded NEEDS_HUMAN segment — stopping the workflow`);
+    return "stop";
+  }
+  // …and a project whose every segment already PASSed (saved, then interrupted before VALIDATED)
+  // is not translated again: the project is one unit, so it is all or nothing.
+  if (!segments.every((segment) => String(m.segment_status![segment] ?? "").startsWith("PASS"))) {
+    const outcome = await migrateDbt(env, m, segments);
+    for (const segment of segments) {
+      const verdict = outcome.verdicts[segment] ?? "";
+      m.segment_status[segment] = outcome.reason && !verdict.startsWith("PASS") ? "NEEDS_HUMAN" : verdict;
+    }
+    if (outcome.reason) {
+      // Set BEFORE the save that records segment_status (F11's ordering).
+      m.status.translate = "NEEDS_HUMAN";
+      reasons(m).translate = `dbt: ${outcome.reason}`;
+      await saveManifest(env.root, m);
+      env.log(`${m.id}: the dbt project needs a human (${outcome.reason}) — stopping the workflow`);
+      return "stop";
+    }
+    await saveManifest(env.root, m);
+  }
+
+  // Task W1: a dbt project's run IS the chain — validate_dbt.py wrote the workflow's chain report
+  // from the same run that PASSed every segment, so no extra run: translate needs that report to
+  // say PASS* (absent or anything else parks; a chain FAIL is never a fixer task for dbt here).
+  const chain = await readJsonOr<ChainReport>(wfDir(env.root, m.id, "validation_workflow.json"), {});
+  if (!String(chain.verdict ?? "").startsWith("PASS")) {
+    m.status.translate = "NEEDS_HUMAN";
+    reasons(m).translate = "dbt: chain FAIL";
+    env.log(`${m.id}: translate → NEEDS_HUMAN (dbt: chain FAIL) — validation_workflow.json says ${chain.verdict ?? "nothing"}`);
+    return "stop";
+  }
+  // Final fix wave N-dbt: needs_human wins over a passing chain verdict, the M6 rule chainCheck follows.
+  if (chain.needs_human) {
+    m.status.translate = "NEEDS_HUMAN";
+    reasons(m).translate = "dbt: chain needs_human";
+    env.log(`${m.id}: translate → NEEDS_HUMAN (dbt: chain needs_human) — validation_workflow.json says ${chain.verdict} and needs_human`);
+    return "stop";
+  }
+
+  const procs = wfDir(env.root, m.id, "procs");
+  await mkdir(procs, { recursive: true });
+  await rm(path.join(procs, "master.sql"), { force: true });   // a dbt workflow has none (design §4.3)
+  await writeFile(path.join(procs, "README.md"), dbtReadme(m.id), "utf8");
+  m.status.translate = "VALIDATED";
+  return "continue";
+}
+
+// ---------- the chain test: the stitched workflow, not just its segments (Task W1, ruling R-W1) ----------
+
+/** What the orchestrator reads from `workflows/<wf>/validation_workflow.json`. */
+interface ChainReport {
+  verdict?: string;
+  needs_human?: boolean;
+  divergence_kind?: "boundary" | "chain_drift" | null;
+  first_divergence?: { segment?: string; stream?: string | null; output?: string | null; set?: string } | null;
+}
+
+/**
+ * After every segment PASSed on its own (fed golden intermediates), run the chain once
+ * (`validate_workflow.py <wf>`: every segment on its upstream segments' actual output). A PASS lets
+ * translate reach VALIDATED. Ruling R-W1 routes a FAIL: a `boundary` divergence gets ONE fixer round
+ * on the segment where the chain first diverged — then that segment's own compile / review /
+ * validate, then the chain again; a `chain_drift` (every boundary within tolerance, a final output
+ * not) is accumulated tolerance, an approval question for a human, never a fixer task.
+ */
+async function chainCheck(env: Env, m: Manifest): Promise<Step> {
+  const park = (why: string): Step => {
+    m.status.translate = "NEEDS_HUMAN";
+    reasons(m).translate = why;
+    env.log(`${m.id}: translate → NEEDS_HUMAN (${why})`);
+    return "stop";
+  };
+  const reportFile = wfDir(env.root, m.id, "validation_workflow.json");
+  let fixedSegment: string | undefined;
+  for (let round = 0; round < 2; round++) {
+    // M1 (fix round 1): a report on disk must belong to THIS call; an older one is never acted on.
+    await rm(reportFile, { force: true });
+    const ran = await env.py("scripts/validate_workflow.py", [m.id]);
+    if (ran.code === 2) {
+      env.log(`${m.id}: validate_workflow.py exited 2 — ${ran.err.trim()}`);
+      return park("chain: script-error");
+    }
+    if (!(await fileExists(reportFile))) {
+      env.log(`${m.id}: validate_workflow.py exited ${ran.code} and wrote no validation_workflow.json — ${ran.err.trim()}`);
+      return park("chain: script-error");
+    }
+    const report = await readJsonOr<ChainReport>(reportFile, {});
+    // M6: needs_human wins over a passing verdict too, as it does per segment (task-15-int ruling 4).
+    if (ran.ok) return report.needs_human ? park("chain: needs_human") : "continue";
+    const at = report.first_divergence ?? {};
+    if (report.divergence_kind === "chain_drift") return park(`chain-drift: ${at.output ?? at.stream ?? "unknown output"}`);
+    if (report.needs_human) return park("chain: needs_human");
+    if (round === 1) {
+      // M4: where the chain still diverges, and which segment the one round repaired.
+      return park(`chain: ${at.segment ?? "?"} ${at.stream ?? "(raised)"} after 1 fixer round on ${fixedSegment}`);
+    }
+    if (!at.segment) return park("chain: FAIL with no first_divergence");
+    const segment = at.segment;
+    // I1 (fix round 1): the fixer is about to rewrite a segment the manifest says PASSed. Its PASS is
+    // withdrawn and saved first, so a crash anywhere in the round leaves that segment to be translated
+    // and gated again on resume — never skipped as PASSed while its procedure is unchecked.
+    delete m.segment_status![segment];
+    await saveManifest(env.root, m);
+    // M3: the segment's own validation.json PASSes by construction here (it was fed golden
+    // intermediates), so the task points at the chain report instead of that report's diagnosis.
+    const repairTask =
+      `Repair segment ${segment} of ${m.id}: the stitched workflow (scripts/validate_workflow.py) diverges first at ` +
+      `${segment}/${at.stream ?? "(it raised)"} on golden set ${at.set} — read first_divergence and this segment's diff ` +
+      `clusters in workflows/${m.id}/validation_workflow.json before anything else. This segment's own validation.json ` +
+      `PASSes, as expected: it was fed golden intermediates, while the chain ran it on its upstream segments' actual ` +
+      `output. Fix what the chain report points at and keep that per-segment PASS.`;
+    const fixed = await migrateSegment(env, m, segment, { firstIteration: 1, iterations: 2, repairTask });
+    fixedSegment = segment;
+    m.segment_status![segment] = fixed.verdict;
+    if (!String(fixed.verdict).startsWith("PASS")) return park(`chain: ${segment}: ${fixed.reason ?? "needs_human"}`);
+    await saveManifest(env.root, m);
+  }
+  return park("chain: FAIL");
 }
 
 async function stageTranslate(env: Env, m: Manifest): Promise<Step> {
@@ -401,6 +1151,7 @@ async function stageTranslate(env: Env, m: Manifest): Promise<Step> {
     env.log(`${m.id}: segments/order.json lists no segments`);
     return "stop";
   }
+  if (m.output_kind === "dbt") return await translateDbt(env, m, order);
 
   m.segment_status ??= {};
 
@@ -449,31 +1200,51 @@ async function stageTranslate(env: Env, m: Manifest): Promise<Step> {
     await saveManifest(env.root, m);
   }
 
+  // Task W1: every segment PASSed alone; the stitched whole must PASS too before master.sql.
+  if ((await chainCheck(env, m)) === "stop") return "stop";
+
   const master = wfDir(env.root, m.id, "procs", "master.sql");
   await mkdir(path.dirname(master), { recursive: true });
+  // G3 (fix round 1): a procedures workflow has no dbt deployment — a README.md left by an earlier
+  // dbt run of the same workflow would tell a human to `dbt run` something that no longer applies.
+  await rm(path.join(path.dirname(master), "README.md"), { force: true });
   await writeFile(master, masterSql(m.id, order), "utf8");
   m.status.translate = "VALIDATED";
   return "continue";
 }
 
 async function stageDocument(env: Env, m: Manifest): Promise<Step> {
-  const result = await runAgent(
-    env,
-    m,
-    "documenter",
-    `Document ${m.id}: write workflows/${m.id}/docs/migration.md from the parsed dag, the contracts, the ` +
-      `translation notes and the validation reports. Restate only what those artifacts say.`,
-    {},
-    () => fileExists(wfDir(env.root, m.id, "docs", "migration.md")),
+  // Ruling R-C1: the record carries a Deployment section per output kind, pointed at the one
+  // artefact that says how that kind deploys — never deployed from the agent's session.
+  const task =
+    m.output_kind === "dbt"
+      ? `Document ${m.id}: write workflows/${m.id}/docs/migration.md from the parsed dag, the contracts, ` +
+        `workflows/${m.id}/dbt/translation_notes.md and the validation reports. Its Deployment section is the dbt run ` +
+        `command in workflows/${m.id}/procs/README.md. Restate only what those artifacts say.`
+      : `Document ${m.id}: write workflows/${m.id}/docs/migration.md from the parsed dag, the contracts, the ` +
+        `translation notes and the validation reports. Its Deployment section names procs/master.sql and every ` +
+        `segments/<seg>/proc.sql. Restate only what those artifacts say.`;
+  const result = await runAgent(env, m, "documenter", "document", task, {}, () =>
+    fileExists(wfDir(env.root, m.id, "docs", "migration.md")),
   );
   if (!result.ok) return escalate(env, m, "document", result);
   m.status.document = "DONE";
   return "continue";
 }
 
+/** Why this run does not use GitHub, or undefined when it may: `gh: disabled` when GitHub integration
+ * is off (the default; `github.enabled` or `--gh` turns it on), `gh not installed` when it is on but
+ * `gh` did not answer. Either way the stage carries on exactly as before (Task P4 fix round 1, B3). */
+function ghUnavailable(env: Env): string | undefined {
+  if (!env.ghEnabled) return "gh: disabled";
+  if (!env.hasGh) return "gh not installed";
+  return undefined;
+}
+
 async function stagePr(env: Env, m: Manifest): Promise<Step> {
-  if (!env.hasGh) {
-    env.log(`${m.id}: gh not installed; skipping PR`);
+  const noGh = ghUnavailable(env);
+  if (noGh) {
+    env.log(`${m.id}: ${noGh}; skipping PR`);
     return "continue";
   }
   const created = await env.sh("gh", [
@@ -634,10 +1405,15 @@ export function masterSql(wfId: string, order: string[][]): string {
     `RETURNS STRING LANGUAGE SQL`,
     `EXECUTE AS CALLER`,
     `AS`,
+    // Snowflake CLI, SnowSQL and the Python connector's execute_stream/execute_string do not parse
+    // a Snowflake Scripting block unless it is delimited: the body travels in `$$ … $$`, exactly as
+    // every segment's proc.sql does.
+    `$$`,
     `BEGIN`,
     body,
     `  RETURN 'OK';`,
     `END;`,
+    `$$;`,
     ``,
   ].join("\n");
 }

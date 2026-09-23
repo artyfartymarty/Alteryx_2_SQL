@@ -1,0 +1,24 @@
+{
+  "id": "wf_0007",
+  "title": "Regional targets and attainment",
+  "owner": "wf_owner",
+  "schedule": "0 6 * * 1-5",
+  "segmentation": {
+    "min_tools": 2,
+    "max_tools": 40
+  },
+  "expected_terminal": "VALIDATED",
+  "output_target": "dbt",
+  "answers": {
+    "plan/targets.yxdb": "PLANNING.RAW.TARGETS",
+    "sales/actuals.yxdb": "SALES.RAW.ACTUALS",
+    "out/region_attainment.yxdb": "ANALYTICS.CURATED.REGION_ATTAINMENT",
+    "7": "ANALYTICS.CURATED.ATTAINMENT_HISTORY"
+  },
+  "logical": {
+    "1": "TARGETS",
+    "2": "ACTUALS",
+    "6": "REGION_ATTAINMENT",
+    "7": "ATTAINMENT_HISTORY"
+  }
+}

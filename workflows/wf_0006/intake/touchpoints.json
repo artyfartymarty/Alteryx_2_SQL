@@ -1,0 +1,65 @@
+[
+  {
+    "id": "Q1",
+    "kind": "input",
+    "tool_id": "1",
+    "annotation": "Subscription billing extract",
+    "format": "yxdb",
+    "source": "C:\\data\\billing\\subscriptions.yxdb",
+    "key": "billing/subscriptions.yxdb",
+    "fields": [
+      "CUSTOMER",
+      "PERIOD",
+      "BILLED",
+      "CAP",
+      "CANCELLED"
+    ],
+    "field_source": "yxdb_header",
+    "record_count": 9,
+    "query": null,
+    "table": null,
+    "write_mode": null,
+    "keys": [],
+    "pre_sql": null,
+    "post_sql": null,
+    "blocking": true,
+    "resolved": null,
+    "candidates": [
+      {
+        "snowflake": "ANALYTICS.RAW.SUBSCRIPTIONS",
+        "basis": "naming"
+      }
+    ]
+  },
+  {
+    "id": "Q2",
+    "kind": "output",
+    "tool_id": "5",
+    "annotation": "revenue_by_period.yxdb",
+    "format": "yxdb",
+    "source": "C:\\data\\out\\revenue_by_period.yxdb",
+    "key": "out/revenue_by_period.yxdb",
+    "fields": [
+      "PERIOD",
+      "TOTAL_RECOGNIZED",
+      "TOTAL_DEFERRED",
+      "CUSTOMERS"
+    ],
+    "field_source": "meta",
+    "record_count": null,
+    "query": null,
+    "table": null,
+    "write_mode": "overwrite",
+    "keys": [],
+    "pre_sql": null,
+    "post_sql": null,
+    "blocking": true,
+    "resolved": null,
+    "candidates": [
+      {
+        "snowflake": "ANALYTICS.CURATED.REVENUE_BY_PERIOD",
+        "basis": "naming"
+      }
+    ]
+  }
+]

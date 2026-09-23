@@ -9,9 +9,10 @@ So re-answering a touchpoint with its OWN unchanged FQN collided with its own pr
 (already in the seeded "taken" set), fell back to `<SCHEMA>_<TABLE>`, and the FOLLOWING run saw
 THAT fallback name on file instead -- freeing the plain name again. Reproduction: `ORDERS` ->
 `RAW_ORDERS` -> `ORDERS` -> `RAW_ORDERS` on alternating no-op resumes. Load-bearing: translated
-procedures read `IDENTIFIER(:SRC_DB || '.' || :SRC_SCHEMA || '.ORDERS')`, `load_golden.load_set`
-builds the sandbox view schema from these exact names, and the orchestrator runs intake more than
-once per workflow -- so a harmless re-run would silently break a validated workflow.
+procedures read `IDENTIFIER(:ORDERS_SRC)` after `LET ORDERS_SRC VARCHAR := … || '.ORDERS'`,
+`load_golden.load_set` builds the sandbox view schema from these exact names, and the orchestrator
+runs intake more than once per workflow -- so a harmless re-run would silently break a validated
+workflow.
 """
 from __future__ import annotations
 

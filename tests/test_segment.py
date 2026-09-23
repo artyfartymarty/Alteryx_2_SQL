@@ -121,6 +121,23 @@ def test_unsplittable_oversized_group_is_kept_and_warned():
     assert any("no splittable bridge" in w for w in r["warnings"])
 
 
+def test_python_tool_is_a_hard_cut_like_a_macro():
+    """A `python` node is always its own segment (task 1 brief): `is_hard` must cut on both its
+    inbound and outbound edges, exactly as it already does for a macro."""
+    nodes = [
+        {"tool_id": "1", "type": "formula", "container_id": None},
+        {"tool_id": "2", "type": "python", "container_id": None},
+        {"tool_id": "3", "type": "formula", "container_id": None},
+    ]
+    edges = [
+        {"src": "1", "src_anchor": "Output", "dst": "2", "dst_anchor": "Input", "dst_order": 1},
+        {"src": "2", "src_anchor": "1", "dst": "3", "dst_anchor": "Input"},
+    ]
+    r = segment.segment({"workflow": "x", "nodes": nodes, "edges": edges}, min_tools=10)
+    o = owner(r)
+    assert o["1"] != o["2"] and o["2"] != o["3"] and ["2"] in r["segments"].values()
+
+
 # --- run(): file outputs, manifest, idempotency, stale-directory cleanup ---
 
 SIMPLE_DAG = {
@@ -280,3 +297,20 @@ def test_main_exits_1_when_the_group_graph_has_a_cycle(tmp_path):
 
     result = lib_io.read_json(repo.wf("wf_cyclic", "segments", "segmentation.json"))
     assert any("cycle" in w for w in result["warnings"]) and exit_code == 1
+
+
+def test_an_unsplittable_group_is_warned_about_once_however_often_step_6_iterates():
+    """Final fix wave M3: step 6 loops until no group splits; an unsplittable over-cap group used to
+    be warned about once per outer iteration -- three times here, while the second component's
+    formula chain took three rounds to split down to the cap."""
+    nodes = ([{"tool_id": "1", "type": "sort", "container_id": None}] +
+             [{"tool_id": str(i), "type": "record_id", "container_id": None} for i in range(2, 8)] +
+             [{"tool_id": str(i), "type": "formula", "container_id": None} for i in range(8, 20)])
+    chain = lambda first, last: [{"src": str(i), "src_anchor": "Output", "dst": str(i + 1), "dst_anchor": "Input"}
+                                 for i in range(first, last)]
+    r = segment.segment({"workflow": "x", "nodes": nodes, "edges": chain(1, 7) + chain(8, 19)},
+                        min_tools=1, max_tools=3)
+    assert len(r["segments"]) == 5, r["segments"]
+    over_cap = [w for w in r["warnings"] if "stays above its size cap" in w]
+    assert over_cap == ["segment ['1', '2', '3', '4', '5', '6', '7'] stays above its size cap (7 > 3): "
+                        "no splittable bridge remains"], r["warnings"]

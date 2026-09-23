@@ -4,12 +4,13 @@ Nothing here has run against a real Snowflake account. "Works" means: sqlglot's 
 parser accepts the statement and DuckDB produces the value we hand-computed.
 """
 import logging
+import sys
 from decimal import Decimal
 
 import pytest
 
 from lib.backend import DuckDBBackend, BackendError, local_name, get_backend
-from lib.types_map import alteryx_to_snowflake, type_family
+from lib.types_map import alteryx_to_snowflake, alteryx_to_snowpark, snowpark_to_alteryx, type_family
 
 T = {"fields": [{"name": "ACCT", "type": "V_String", "size": 20, "scale": None},
                 {"name": "AMT", "type": "FixedDecimal", "size": 19, "scale": 2},
@@ -20,6 +21,97 @@ def test_names(): assert local_name("FIN.RAW.GL") == ("FIN__RAW", "GL") and loca
 def test_types():
     assert alteryx_to_snowflake(T["fields"][1]) == "NUMBER(19,2)" and alteryx_to_snowflake({"type": "String", "size": 10}) == "VARCHAR(10)"
     assert type_family("NUMBER(19,2)") == "number" and type_family("TIMESTAMP_NTZ") == "timestamp" and type_family("VARCHAR(10)") == "string"
+
+
+# --- alteryx_to_snowpark: types_map.py's Snowpark counterpart to alteryx_to_snowflake, described
+# in task-3-brief.md's prose but not exercised by any of Task 3's given tests -----------------
+#
+# Task 3 fix round 1 (coordinator ruling): mirrors alteryx_to_snowflake's own string policy exactly
+# -- fixed String(n)/WString(n) size, V_String/V_WString always unsized -- rather than the uniform
+# "size when present" rule this file used before the ruling.
+
+@pytest.mark.parametrize("field,expected", [
+    ({"type": "Int32", "size": 4, "scale": None}, "LongType()"),
+    ({"type": "Int64", "size": 8, "scale": None}, "LongType()"),
+    ({"type": "Byte", "size": 1, "scale": None}, "LongType()"),
+    ({"type": "Float", "size": 4, "scale": None}, "DoubleType()"),
+    ({"type": "Double", "size": 8, "scale": None}, "DoubleType()"),
+    ({"type": "FixedDecimal", "size": 19, "scale": 2}, "DecimalType(19, 2)"),
+    ({"type": "FixedDecimal", "size": 19, "scale": None}, "DecimalType(19, 0)"),
+    ({"type": "Bool", "size": 1, "scale": None}, "BooleanType()"),
+    ({"type": "Date", "size": 10, "scale": None}, "DateType()"),
+    ({"type": "DateTime", "size": 19, "scale": None}, "TimestampType()"),
+    ({"type": "Time", "size": 8, "scale": None}, "TimeType()"),
+    ({"type": "String", "size": 10, "scale": None}, "StringType(10)"),
+    ({"type": "WString", "size": 10, "scale": None}, "StringType(10)"),
+    ({"type": "V_String", "size": 50, "scale": None}, "StringType()"),
+    ({"type": "V_WString", "size": 50, "scale": None}, "StringType()"),
+    ({"type": "V_String", "size": None, "scale": None}, "StringType()"),
+])
+def test_alteryx_to_snowpark_maps_every_field_family(field, expected):
+    assert repr(alteryx_to_snowpark(field)) == expected
+
+
+def test_alteryx_to_snowpark_raises_for_an_unmapped_type():
+    with pytest.raises(ValueError, match="Blob"):
+        alteryx_to_snowpark({"type": "Blob", "size": 0, "scale": None, "name": "B"})
+
+
+def test_alteryx_to_snowpark_is_importable_without_the_field_mattering():
+    # types_map itself must stay importable with no Snowpark installed (lazy import inside the
+    # function); this module already imports it fine at collection time, which is most of that
+    # guarantee -- this just confirms the function is reachable and returns real snowpark types.
+    from snowflake.snowpark.types import DataType
+    assert isinstance(alteryx_to_snowpark({"type": "Bool", "size": 1, "scale": None}), DataType)
+
+
+# --- snowpark_to_alteryx: alteryx_to_snowpark's exact inverse (task-4 fix round 1, ruling R1) ---
+# -- used by validate_snowpark.py to read a procedure's ACTUAL output schema back from Snowpark
+# itself, never from the contract it was supposed to match.
+#
+# Every field alteryx_to_snowpark accepts must round-trip through snowpark_to_alteryx back to the
+# same {"type", "size", "scale"}, except three documented lossy cases: Snowpark has no narrower
+# integer than Long (Byte/Int16/Int32 -> Int64), and no "wide-char" string distinction
+# (WString(n) -> String(n), V_WString -> V_String) -- both directions collapse to the one Snowpark
+# type family, so the *narrower* Alteryx name can never come back.
+@pytest.mark.parametrize("field,expected", [
+    ({"type": "Int64", "size": 8, "scale": None}, {"type": "Int64", "size": None, "scale": None}),
+    ({"type": "Int32", "size": 4, "scale": None}, {"type": "Int64", "size": None, "scale": None}),  # lossy: narrows to Int64
+    ({"type": "Byte", "size": 1, "scale": None}, {"type": "Int64", "size": None, "scale": None}),   # lossy: narrows to Int64
+    ({"type": "Double", "size": 8, "scale": None}, {"type": "Double", "size": None, "scale": None}),
+    ({"type": "Float", "size": 4, "scale": None}, {"type": "Double", "size": None, "scale": None}),  # lossy: widens to Double
+    ({"type": "FixedDecimal", "size": 19, "scale": 2}, {"type": "FixedDecimal", "size": 19, "scale": 2}),
+    ({"type": "FixedDecimal", "size": 38, "scale": None}, {"type": "FixedDecimal", "size": 38, "scale": 0}),  # scale 0 preserved as FixedDecimal, not Int64
+    ({"type": "Bool", "size": 1, "scale": None}, {"type": "Bool", "size": None, "scale": None}),
+    ({"type": "Date", "size": 10, "scale": None}, {"type": "Date", "size": None, "scale": None}),
+    ({"type": "DateTime", "size": 19, "scale": None}, {"type": "DateTime", "size": None, "scale": None}),
+    ({"type": "Time", "size": 8, "scale": None}, {"type": "Time", "size": None, "scale": None}),
+    ({"type": "String", "size": 10, "scale": None}, {"type": "String", "size": 10, "scale": None}),
+    ({"type": "WString", "size": 10, "scale": None}, {"type": "String", "size": 10, "scale": None}),  # lossy: WString -> String
+    ({"type": "V_String", "size": 50, "scale": None}, {"type": "V_String", "size": None, "scale": None}),
+    ({"type": "V_WString", "size": 50, "scale": None}, {"type": "V_String", "size": None, "scale": None}),  # lossy: V_WString -> V_String
+    ({"type": "V_String", "size": None, "scale": None}, {"type": "V_String", "size": None, "scale": None}),
+])
+def test_snowpark_to_alteryx_round_trips_alteryx_to_snowpark(field, expected):
+    assert snowpark_to_alteryx(alteryx_to_snowpark(field)) == expected
+
+
+def test_snowpark_to_alteryx_decimal_scale_zero_is_fixed_decimal_not_int64():
+    # Explicit regression for finding 4/R2: a DecimalType(p, 0) must stay FixedDecimal, never
+    # silently become Int64 just because its scale happens to be zero.
+    from snowflake.snowpark.types import DecimalType
+    assert snowpark_to_alteryx(DecimalType(38, 0)) == {"type": "FixedDecimal", "size": 38, "scale": 0}
+
+
+def test_snowpark_to_alteryx_raises_for_an_unmapped_type():
+    from snowflake.snowpark.types import VariantType
+    with pytest.raises(ValueError, match="Variant"):
+        snowpark_to_alteryx(VariantType())
+
+
+def test_snowpark_to_alteryx_is_importable_without_the_field_mattering():
+    result = snowpark_to_alteryx(alteryx_to_snowpark({"type": "Bool", "size": 1, "scale": None}))
+    assert result == {"type": "Bool", "size": None, "scale": None}
 
 def test_three_part_names_transient_and_snowflake_functions():
     b = DuckDBBackend()
@@ -42,7 +134,11 @@ def test_merge_runs():
 
 def test_bad_sql_names_the_statement():
     with pytest.raises(BackendError, match="SELEC"): DuckDBBackend().execute("SELEC 1")
-def test_snowflake_backend_fails_clearly_without_connector():
+def test_snowflake_backend_fails_clearly_without_connector(monkeypatch):
+    """Simulates the connector being absent (installing snowflake-snowpark-python pulls in
+    snowflake-connector-python as a dependency, so it really is present in this venv); the
+    backend must still fail with a clear message rather than a raw connection error."""
+    monkeypatch.setitem(sys.modules, "snowflake.connector", None)
     with pytest.raises(BackendError, match="snowflake-connector-python"): get_backend("snowflake")
 
 

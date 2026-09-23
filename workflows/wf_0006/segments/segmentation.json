@@ -1,0 +1,33 @@
+{
+  "segments": {
+    "seg_01": [
+      "1",
+      "2"
+    ],
+    "seg_02": [
+      "3"
+    ],
+    "seg_03": [
+      "4",
+      "5"
+    ]
+  },
+  "order": [
+    [
+      "seg_01"
+    ],
+    [
+      "seg_02"
+    ],
+    [
+      "seg_03"
+    ]
+  ],
+  "warnings": [],
+  "params": {
+    "min_tools": 1,
+    "max_tools": 40,
+    "formula_heavy_cap": 20,
+    "max_prompt_chars": 60000
+  }
+}

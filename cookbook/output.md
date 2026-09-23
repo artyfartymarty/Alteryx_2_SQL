@@ -34,10 +34,11 @@ SELECT
 FROM MIG_COOKBOOK.IN_1
 ```
 
-In a real segment procedure the target is written through
-`IDENTIFIER(:TGT_DB || '.' || :TGT_SCHEMA || '.<LOGICAL>')` (contract C4), never a literal Snowflake
-table name — see `samples/wf_0001/canned/segments/seg_01/proc.sql`'s two `CREATE OR REPLACE TABLE
-IDENTIFIER(…) AS` statements. `Append Existing` is an `INSERT INTO … (<named columns>) <select>`
+In a real segment procedure the target's name is built once at the top of the body,
+`LET <LOGICAL>_TGT VARCHAR := TGT_DB || '.' || TGT_SCHEMA || '.<LOGICAL>';`, and written through
+`IDENTIFIER(:<LOGICAL>_TGT)` (contract C4), never a literal Snowflake table name — see
+`samples/wf_0001/canned/segments/seg_01/proc.sql`'s `LET` block and its two `CREATE OR REPLACE TABLE
+IDENTIFIER(:…_TGT) AS` statements. Snowflake documents `IDENTIFIER(` with one value -- a string literal, session variable, bind variable or Snowflake Scripting variable -- not an expression, which is why the name is built first. Inside the `LET` the procedure's arguments are named without a colon (Snowflake's expression syntax); the colon binds a variable inside a SQL statement, which is why `IDENTIFIER(:<LOGICAL>_TGT)` keeps it. This is the documented form; nothing here has run on Snowflake, and the first real-account run confirms it. `Append Existing` is an `INSERT INTO … (<named columns>) <select>`
 (`samples/wf_0002/canned/segments/seg_03/proc.sql`'s tool 10, which names every column explicitly
 because Alteryx maps by name); `Update; Insert if new` is a `MERGE` on the configured keys. Neither
 of those two is exercised by this page's own executable example — see Parity risk 3.
@@ -72,9 +73,10 @@ of those two is exercised by this page's own executable example — see Parity r
 
 ## Do not  (known wrong translations)
 
-- Do not write the target by its literal Snowflake name; use
-  `IDENTIFIER(:TGT_DB || '.' || :TGT_SCHEMA || '.<LOGICAL>')` (contract C4) exactly as every source
-  read does.
+- Do not write the target by its literal Snowflake name; use `IDENTIFIER(:<LOGICAL>_TGT)` after
+  `LET <LOGICAL>_TGT VARCHAR := TGT_DB || '.' || TGT_SCHEMA || '.<LOGICAL>';` (contract C4) exactly
+  as every source read does, and never an expression inside `IDENTIFIER(…)`
+  (`scripts/compile_check.py`'s `c4:identifier_expression`).
 - Do not translate `Update; Insert if new` as two separate statements (`UPDATE` then `INSERT ...
   WHERE NOT EXISTS`) instead of one `MERGE` unless the target engine cannot express `MERGE` — the
   two-statement form is not atomic and can double-count a row that a concurrent writer inserts

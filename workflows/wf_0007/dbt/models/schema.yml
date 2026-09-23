@@ -1,0 +1,35 @@
+version: 2
+models:
+  - name: wf0007_seg_01_out
+    description: "seg_01's work stream 3_J (MIG_WORK.WF0007_SEG_01_OUT): tools 1-3."
+    columns:
+      - name: REGION
+        data_tests:
+          - not_null
+      - name: PERIOD
+        data_tests:
+          - not_null
+      - name: TARGET
+      - name: ACTUAL
+  - name: region_attainment
+    description: "Tool 6, overwrite: logical REGION_ATTAINMENT."
+    columns:
+      - name: REGION
+        data_tests:
+          - not_null
+      - name: PERIOD
+        data_tests:
+          - not_null
+      - name: TARGET_TOTAL
+      - name: ACTUAL_TOTAL
+      - name: LINES
+        data_tests:
+          - not_null
+  - name: attainment_history
+    description: "Tool 7, Update; Insert if new on REGION, PERIOD (merge): logical ATTAINMENT_HISTORY."
+    columns:
+      - name: REGION
+      - name: PERIOD
+      - name: TARGET_TOTAL
+      - name: ACTUAL_TOTAL
+      - name: LINES

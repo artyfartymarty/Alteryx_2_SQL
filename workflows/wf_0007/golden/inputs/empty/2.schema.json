@@ -1,0 +1,20 @@
+[
+  {
+    "name": "REGION",
+    "type": "V_String",
+    "size": 10,
+    "scale": null
+  },
+  {
+    "name": "PERIOD",
+    "type": "V_String",
+    "size": 7,
+    "scale": null
+  },
+  {
+    "name": "ACTUAL",
+    "type": "FixedDecimal",
+    "size": 19,
+    "scale": 2
+  }
+]

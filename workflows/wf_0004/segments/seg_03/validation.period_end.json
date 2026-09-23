@@ -50,7 +50,7 @@
   "normalizations_applied": [],
   "idempotent": true,
   "idempotency_diff": [],
-  "runtime_ms": 250,
+  "runtime_ms": 190,
   "credits": null,
   "needs_human": false,
   "truncated": false

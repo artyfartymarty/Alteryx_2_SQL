@@ -29,7 +29,7 @@
   "normalizations_applied": [],
   "idempotent": true,
   "idempotency_diff": [],
-  "runtime_ms": 156,
+  "runtime_ms": 84,
   "credits": null,
   "needs_human": false,
   "truncated": false

@@ -19,7 +19,7 @@ import inject_outputs
 import parse
 import segment
 from lib import yxdb
-from lib.io import read_json, write_json
+from lib.io import load_manifest, read_json, write_json
 from lib.paths import Repo
 
 SAMPLES = Path(__file__).parents[1] / "samples"
@@ -451,3 +451,68 @@ def test_main_instrument_unexpected_exception_exits_2(tmp_path, monkeypatch):
 
     assert rc == 2
     assert not repo.wf("wf_0003", "source", "gl_period_close.instrumented.yxmd").exists()
+
+
+# --- Task P4 fix round 1, B2: an import records its golden set -------------------------------------
+#
+# The orchestrator's golden stage (`stageGolden` in orchestrator/stages.ts) looks only at
+# `manifest.golden_sets`; with `golden.producer: "alteryx"` an import that did not record its set left
+# the workflow BLOCKED however many captures were imported. The end-to-end half (a real import, then
+# `--from-stage golden` reaching DONE) is orchestrator/test/integration.test.ts.
+
+def _write_captures(capture_dir: Path) -> None:
+    fields = [{"name": "ACCT", "type": "V_String", "size": 20, "scale": None}]
+    for filename in ("in_1.yxdb", "mid_seg_01_3_Output.yxdb", "out_10.yxdb"):
+        yxdb.write_yxdb(capture_dir / filename, fields, [["4000"]])
+
+
+def test_an_import_records_its_set_in_manifest_golden_sets_once_and_in_order(tmp_path, capsys):
+    repo = _prepared_repo(tmp_path)
+    inject_outputs.main(["wf_0003", "--capture-dir", CAPTURE_DIR, "--root", str(tmp_path)])
+    capture_dir = tmp_path / "captures"
+    _write_captures(capture_dir)
+
+    def run(golden_set: str) -> int:
+        return inject_outputs.main(["wf_0003", "--capture-dir", str(capture_dir),
+                                    "--import-set", golden_set, "--root", str(tmp_path)])
+
+    assert load_manifest(repo, "wf_0003").get("golden_sets") in (None, [])
+    assert run("normal") == 0
+    assert load_manifest(repo, "wf_0003")["golden_sets"] == ["normal"]
+    assert run("edge") == 0
+    assert load_manifest(repo, "wf_0003")["golden_sets"] == ["normal", "edge"]
+    assert run("normal") == 0                       # a re-import replaces the CSVs, never duplicates the set
+    assert load_manifest(repo, "wf_0003")["golden_sets"] == ["normal", "edge"]
+    capsys.readouterr()
+
+
+def test_a_failed_import_records_no_golden_set(tmp_path, capsys):
+    repo = _prepared_repo(tmp_path)
+    inject_outputs.main(["wf_0003", "--capture-dir", CAPTURE_DIR, "--root", str(tmp_path)])
+    empty_capture_dir = tmp_path / "empty_but_present"
+    empty_capture_dir.mkdir()
+
+    rc = inject_outputs.main(["wf_0003", "--capture-dir", str(empty_capture_dir),
+                              "--import-set", "normal", "--root", str(tmp_path)])
+
+    assert rc == 1
+    assert load_manifest(repo, "wf_0003").get("golden_sets") in (None, [])
+    capsys.readouterr()
+
+
+def test_an_import_whose_set_cannot_be_recorded_exits_2_and_says_so(tmp_path, capsys):
+    """Every CSV is written before the manifest is touched; a manifest that cannot be read is a crash
+    (exit 2) whose message says the set was imported but not recorded, never a silent success."""
+    repo = _prepared_repo(tmp_path)
+    inject_outputs.main(["wf_0003", "--capture-dir", CAPTURE_DIR, "--root", str(tmp_path)])
+    capture_dir = tmp_path / "captures"
+    _write_captures(capture_dir)
+    repo.wf("wf_0003", "manifest.json").write_text("{ not json", encoding="utf-8")
+    capsys.readouterr()
+
+    rc = inject_outputs.main(["wf_0003", "--capture-dir", str(capture_dir),
+                              "--import-set", "normal", "--root", str(tmp_path)])
+
+    assert rc == 2
+    assert "NOT recorded" in capsys.readouterr().err
+    assert repo.wf("wf_0003", "golden", "inputs", "normal", "1.csv").exists()

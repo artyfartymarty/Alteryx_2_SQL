@@ -1,0 +1,11 @@
+- Every model is one CTE per tool, each preceded by its `-- tool <id>:` comment; tools 1-3 are `models/wf0007_seg_01_out.sql`, the `seg_01` work stream `3_J`.
+- The `seg_02` CTE chain (`t4_filter_t`, `t5_summarize`) is repeated in both target models, `region_attainment.sql` and `attainment_history.sql`: a model is one CTE per tool and there is one model per contract output, so no intermediate model may hold tool 5's stream, and each target carries the chain itself.
+- `User.CurrentYear` is inlined as the text literal `'2026'`, as wf_0003 inlines its constants: it is a workflow constant with `IsNumeric False`, so the comparison stays string against string.
+- `Left([PERIOD], 4)` is `LEFT(PERIOD, 4)`: the first four characters whatever follows them, so a malformed `PERIOD` such as `'2026-1'` is kept exactly as Alteryx keeps it.
+- Tool 3's join is an inner join on `l.REGION = r.REGION AND l.PERIOD = r.PERIOD`: only the J anchor is wired, a NULL key matches nothing (which `=` keeps), and a key with several actual lines pairs its target with each of them (the fan-out is kept, not collapsed).
+- Summarize's `Sum` is `SUM` (NULLs skipped; an all-NULL group sums to NULL, never 0) cast to `DECIMAL(19,2)` — Snowflake's `NUMBER(19,2)` under the one spelling DuckDB accepts too, because dbt-duckdb runs the model text as written, with no transpiling.
+- Summarize's `Count` counts rows, so `LINES` is `COUNT(*)`.
+- Tool 6 (Overwrite) is `materialized='table'`; tool 7 (Update; Insert if new on `REGION, PERIOD`) is `materialized='incremental', incremental_strategy='merge', unique_key=['REGION', 'PERIOD']` — both key columns, the same keys as the contract and `intake/mappings.yaml`.
+- `attainment_history.sql` has no `is_incremental()` filter: the Alteryx output writes every row the run produces, and the merge decides update or insert; rows the run does not produce (prior-year history included) are left alone.
+- Both target models carry `alias='<LOGICAL>'` in upper case: dbt will not adopt the pre-existing upper-case `ATTAINMENT_HISTORY` table for a lower-case model name.
+- dbt-duckdb's merge updates and inserts by column name (`UPDATE BY NAME` / `INSERT BY NAME`); Snowflake's MERGE semantics for the same model have not been checked from here.

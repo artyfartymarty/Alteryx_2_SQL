@@ -2,3 +2,6 @@ duckdb>=1.4
 sqlglot>=30
 pyyaml>=6
 pytest>=8
+snowflake-snowpark-python[pandas]>=1.55
+dbt-core>=1.12
+dbt-duckdb>=1.11

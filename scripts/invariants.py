@@ -108,4 +108,6 @@ def main(argv=None) -> int:
 
 
 if __name__ == "__main__":
+    from lib.console import utf8_console
+    utf8_console()
     sys.exit(main())

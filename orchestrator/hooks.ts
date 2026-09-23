@@ -7,7 +7,7 @@ import { inspect } from "node:util";
 import type { SessionHooks } from "@github/copilot-sdk";
 import { decide, SANDBOX_SCHEMAS, UNRECOGNIZED_TOOL } from "./policy.ts";
 import { saveManifest, wfDir } from "./manifest.ts";
-import type { Env, Manifest, Role } from "./types.ts";
+import type { AnalyzerBatch, Env, Manifest, Role } from "./types.ts";
 
 /** Audit lines are truncated and scrubbed: they are read by humans and kept in the repo. */
 export const AUDIT_ARG_LIMIT = 500;
@@ -46,7 +46,34 @@ export interface HookState {
    * `CopilotRunner.run`'s own `finally` block (belt-and-braces for the crash path, where
    * `onSessionEnd` was observed live not to fire at all) is never counted twice. */
   metricsRecorded: boolean;
+  /** Task W4: how many `session.compaction_complete` events this session saw with `data.success
+   * === true`. A failed compaction is logged (`CopilotRunner.run`) but never counted here. */
+  compactions: number;
+  /** Task W4: the highest `assistant.usage` `data.inputTokens` this session saw, 0 if none
+   * arrived. `recordMetrics` keeps the maximum across every session of the same role. */
+  peakInputTokens: number;
 }
+
+/** The three roles that keep a running notes file (Task W4): long stretches of tool calls can
+ * outlast what a compacted context still remembers, so intake, analyzer and fixer each write
+ * their own `workflows/<wf>/notes/<role>.md` as they go. The notes are a re-read aid, never the
+ * durable record -- that stays in the contract and the files each role writes. */
+export const NOTES_ROLES: Role[] = ["intake", "analyzer", "fixer"];
+
+/** Where a notes-keeping role's own notes file lives -- the one extra lane `policy.ts` opens for
+ * it, and the path both the task text (`orchestrator/stages.ts`) and the post-compaction reminder
+ * below name. Task N1: `CopilotRunner.run` creates this file's parent directory (recursive,
+ * idempotent) before the session starts, since no role's policy lane allows creating a directory
+ * itself -- so the task text can truthfully say the directory already exists. */
+export const notesPath = (wfId: string, role: Role): string => `workflows/${wfId}/notes/${role}.md`;
+
+/** The one short follow-up `CopilotRunner.run` sends (`mode: "immediate"`, never `"enqueue"`)
+ * right after every successful compaction of a notes-keeping role's session. Fixed text naming
+ * only the notes path -- it never includes anything the workflow itself wrote, so a compacted
+ * session cannot be steered by data instead of the orchestrator. */
+export const notesReminder = (role: Role, wfId: string): string =>
+  `Your context was just compacted. Re-read ${notesPath(wfId, role)} (your decisions and open items) ` +
+  `and the files you have already written before continuing; they are the record, not your memory.`;
 
 export function redact(text: string): string {
   return text.replace(SECRET_ASSIGNMENT, "<redacted>");
@@ -105,20 +132,39 @@ export function errorText(value: unknown): string {
  * duration. Idempotent per session via `state.metricsRecorded`: both `onSessionEnd` and
  * `CopilotRunner.run`'s own `finally` block call this, and whichever runs first wins — the other
  * is a no-op, so a session is never double-counted.
+ *
+ * Task W4 adds two more fields, on the same two rules: `compactions` accumulates like
+ * `toolCalls` (every session's count adds to the workflow's running total), and
+ * `peakInputTokens` keeps the MAXIMUM across every session of this role, like a high-water mark
+ * rather than a sum -- a later, smaller session must never lower it.
  */
 export function recordMetrics(wf: Manifest, role: Role, state: HookState, ms: number): void {
   if (state.metricsRecorded) return;
   state.metricsRecorded = true;
-  const previous = wf.metrics[role] as { toolCalls?: unknown } | undefined;
+  const previous = wf.metrics[role] as { toolCalls?: unknown; compactions?: unknown; peakInputTokens?: unknown } | undefined;
   const priorCalls = typeof previous?.toolCalls === "number" ? previous.toolCalls : 0;
-  wf.metrics[role] = { ...(previous ?? {}), lastMs: ms, toolCalls: priorCalls + state.toolCalls };
+  const priorCompactions = typeof previous?.compactions === "number" ? previous.compactions : 0;
+  const priorPeak = typeof previous?.peakInputTokens === "number" ? previous.peakInputTokens : 0;
+  wf.metrics[role] = {
+    ...(previous ?? {}),
+    lastMs: ms,
+    toolCalls: priorCalls + state.toolCalls,
+    compactions: priorCompactions + state.compactions,
+    peakInputTokens: Math.max(priorPeak, state.peakInputTokens),
+  };
 }
 
+/** `dbt` is a dbt workflow's whole-project scope (output-targets design §6): the policy judges the
+ * session's writes against the dbt lanes, and every audit line records `"dbt": true`. `batch` is
+ * one call of a batched analyzer (Task W2): the policy narrows the analyzer's lanes to that batch,
+ * and every audit line records `"batch": "<id>"`. */
 export function hooksFor(
   role: Role,
   wf: Manifest,
   env: Env,
   segment?: string,
+  dbt?: boolean,
+  batch?: AnalyzerBatch,
 ): { hooks: SessionHooks; state: HookState } {
   const auditFile = wfDir(env.root, wf.id, "audit.jsonl");
   const state: HookState = {
@@ -129,11 +175,20 @@ export function hooksFor(
     contextOverflow: false,
     errors: [],
     metricsRecorded: false,
+    compactions: 0,
+    peakInputTokens: 0,
   };
   const started = Date.now();
 
   const audit = async (record: Record<string, unknown>): Promise<void> => {
-    const line = JSON.stringify({ t: new Date().toISOString(), role, segment, ...record });
+    const line = JSON.stringify({
+      t: new Date().toISOString(),
+      role,
+      segment,
+      ...(dbt ? { dbt: true } : {}),
+      ...(batch ? { batch: batch.id } : {}),
+      ...record,
+    });
     try {
       await mkdir(path.dirname(auditFile), { recursive: true });
       await appendFile(auditFile, `${line}\n`, "utf8");
@@ -148,6 +203,7 @@ export function hooksFor(
         `Workflow ${wf.id}. Manifest: workflows/${wf.id}/manifest.json. Tier: ${wf.tier ?? "unknown"}.`,
         `Program answers: mappings/global.yaml. Cookbook index: cookbook/index.md.`,
         `Sandbox schemas: ${SANDBOX_SCHEMAS.join(", ")}. Nothing is deployed from this session; output is files + a PR.`,
+        ...(batch ? [`Batch ${batch.id}: segments ${batch.segments.join(", ")} only.`] : []),
       ].join("\n"),
     }),
 
@@ -155,6 +211,8 @@ export function hooksFor(
       state.toolCalls += 1;
       const decision = decide(role, wf.id, input.toolName, input.toolArgs, segment, env.root, {
         sandboxDatabases: env.config?.policy?.sandboxDatabases,
+        dbtProject: dbt,
+        analyzerBatch: batch,
       });
       await audit({ ev: "pre", tool: input.toolName, args: auditArgs(input.toolArgs), decision: decision.permissionDecision });
       if (decision.permissionDecision === "deny") {

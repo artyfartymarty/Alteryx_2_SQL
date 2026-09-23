@@ -1,0 +1,78 @@
+{
+  "workflow": "wf_0006",
+  "segment": "seg_02",
+  "nodes": [
+    {
+      "tool_id": "3",
+      "type": "python",
+      "plugin": "AlteryxBasePluginsGui.PythonTool.PythonTool",
+      "container_id": null,
+      "config": {
+        "script": "import pandas as pd\ndf = Alteryx.read(\"#1\")\ndf = df.sort_values([\"CUSTOMER\", \"PERIOD\"]).reset_index(drop=True)\nout = []\nfor customer, group in df.groupby(\"CUSTOMER\", sort=False):\n    deferred = 0.0\n    for _, row in group.iterrows():\n        if bool(row[\"CANCELLED\"]):\n            deferred = 0.0\n        billed = 0.0 if pd.isna(row[\"BILLED\"]) else float(row[\"BILLED\"])\n        recognized = min(billed + deferred, float(row[\"CAP\"]))\n        deferred = billed + deferred - recognized\n        out.append({\"CUSTOMER\": customer, \"PERIOD\": row[\"PERIOD\"],\n                    \"RECOGNIZED\": round(recognized, 2), \"DEFERRED\": round(deferred, 2)})\nschedule = pd.DataFrame(out, columns=[\"CUSTOMER\", \"PERIOD\", \"RECOGNIZED\", \"DEFERRED\"])\nschedule[\"RECOGNIZED\"] = schedule[\"RECOGNIZED\"].astype(\"float64\")\nschedule[\"DEFERRED\"] = schedule[\"DEFERRED\"].astype(\"float64\")\nAlteryx.write(schedule, 1)"
+      },
+      "raw_config": "<Configuration>\n          <Script>import pandas as pd\ndf = Alteryx.read(\"#1\")\ndf = df.sort_values([\"CUSTOMER\", \"PERIOD\"]).reset_index(drop=True)\nout = []\nfor customer, group in df.groupby(\"CUSTOMER\", sort=False):\n    deferred = 0.0\n    for _, row in group.iterrows():\n        if bool(row[\"CANCELLED\"]):\n            deferred = 0.0\n        billed = 0.0 if pd.isna(row[\"BILLED\"]) else float(row[\"BILLED\"])\n        recognized = min(billed + deferred, float(row[\"CAP\"]))\n        deferred = billed + deferred - recognized\n        out.append({\"CUSTOMER\": customer, \"PERIOD\": row[\"PERIOD\"],\n                    \"RECOGNIZED\": round(recognized, 2), \"DEFERRED\": round(deferred, 2)})\nschedule = pd.DataFrame(out, columns=[\"CUSTOMER\", \"PERIOD\", \"RECOGNIZED\", \"DEFERRED\"])\nschedule[\"RECOGNIZED\"] = schedule[\"RECOGNIZED\"].astype(\"float64\")\nschedule[\"DEFERRED\"] = schedule[\"DEFERRED\"].astype(\"float64\")\nAlteryx.write(schedule, 1)</Script>\n        </Configuration>",
+      "annotation": "Revenue schedule with carry-over",
+      "in_anchors": [
+        "Input"
+      ],
+      "out_anchors": [
+        "1",
+        "2",
+        "3",
+        "4",
+        "5"
+      ],
+      "meta": {
+        "1": [
+          {
+            "name": "CUSTOMER",
+            "type": "V_WString",
+            "size": 254,
+            "scale": null
+          },
+          {
+            "name": "PERIOD",
+            "type": "V_WString",
+            "size": 254,
+            "scale": null
+          },
+          {
+            "name": "RECOGNIZED",
+            "type": "Double",
+            "size": 8,
+            "scale": null
+          },
+          {
+            "name": "DEFERRED",
+            "type": "Double",
+            "size": 8,
+            "scale": null
+          }
+        ]
+      }
+    }
+  ],
+  "edges": [],
+  "inbound": [
+    {
+      "src": "2",
+      "src_anchor": "T",
+      "dst": "3",
+      "dst_anchor": "Input",
+      "dst_order": 1,
+      "wireless": false,
+      "from_segment": "seg_01"
+    }
+  ],
+  "outbound": [
+    {
+      "src": "3",
+      "src_anchor": "1",
+      "dst": "4",
+      "dst_anchor": "Input",
+      "dst_order": 1,
+      "wireless": false,
+      "to_segment": "seg_03"
+    }
+  ]
+}

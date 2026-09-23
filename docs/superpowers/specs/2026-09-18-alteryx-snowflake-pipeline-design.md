@@ -66,10 +66,11 @@ RETURNS STRING LANGUAGE SQL EXECUTE AS CALLER AS
 $$
 BEGIN
   ALTER SESSION SET TIMEZONE = 'America/New_York', WEEK_START = 1;
+  LET ORDERS_SRC VARCHAR := SRC_DB || '.' || SRC_SCHEMA || '.ORDERS';
   CREATE OR REPLACE TRANSIENT TABLE MIG_WORK.WF0001_SEG_01_OUT AS
   WITH
   -- tool 1: Input Data (orders.yxdb)
-  t1_input AS (SELECT … FROM IDENTIFIER(:SRC_DB || '.' || :SRC_SCHEMA || '.ORDERS')),
+  t1_input AS (SELECT … FROM IDENTIFIER(:ORDERS_SRC)),
   …
   SELECT … FROM t9_select;
   RETURN 'OK';
@@ -77,9 +78,33 @@ END;
 $$;
 ```
 
-The body is a linear list of plain SQL statements. The runner extracts the `$$` body, splits
-statements, substitutes binds, resolves `IDENTIFIER(...)`, records and skips `ALTER SESSION`,
-rewrites `DB.SCHEMA.T` to a DuckDB schema `DB__SCHEMA`, transpiles, and executes.
+The body is one `LET` per mapped table, building its name, then a linear list of plain SQL
+statements. The runner extracts the `$$` body, splits statements, evaluates each `LET` from the
+bound parameters (a `LET` never reaches the backend), substitutes binds and `LET` variables,
+resolves `IDENTIFIER(:<var>)`, records and skips `ALTER SESSION`, rewrites `DB.SCHEMA.T` to a
+DuckDB schema `DB__SCHEMA`, transpiles, and executes.
+
+**Table references use Snowflake's documented `IDENTIFIER` form (amended 2026-09-23, phase-2 Task
+C4V).** Snowflake's documentation (docs.snowflake.com/en/sql-reference/identifier-literal) gives
+`IDENTIFIER( { string_literal | session_variable | bind_variable | snowflake_scripting_variable } )`
+-- a single value, not an expression. Until this amendment every procedure here wrote the name as
+an expression inside the call, `IDENTIFIER(:SRC_DB || '.' || :SRC_SCHEMA || '.ORDERS')`, which that
+grammar does not include and which a real account would likely refuse to compile. Every procedure
+now builds the name first -- `LET <LOGICAL>_SRC VARCHAR := SRC_DB || '.' || SRC_SCHEMA ||
+'.<LOGICAL>';` for a source, `LET <LOGICAL>_TGT VARCHAR := TGT_DB || '.' || TGT_SCHEMA ||
+'.<LOGICAL>';` for a final target, one per distinct table -- and references it only as
+`IDENTIFIER(:<LOGICAL>_SRC)` or `IDENTIFIER(:<LOGICAL>_TGT)`. Inside the `LET` the procedure's
+arguments are named without a colon: Snowflake's Scripting documentation
+(docs.snowflake.com/en/developer-guide/snowflake-scripting/variables) uses the colon to bind a
+variable inside a SQL statement, says a variable in an expression or a Scripting element needs
+none, and treats a procedure argument like a declared variable -- so the `LET` has no colon and
+`IDENTIFIER(:<LOGICAL>_SRC)`, inside a SQL statement, keeps it (coordinator ruling, 2026-09-23).
+`compile_check.py` refuses anything else (`c4:let_form` -- a colon inside a `LET` included --
+and `c4:identifier_expression`), and so does the orchestrator's SQL policy. This is
+the DOCUMENTED form, chosen because the old one is not in Snowflake's grammar; it has not run on
+Snowflake either (nothing here has), and the first real-account run -- the hand-off's verification
+ladder -- confirms it. The program spec (`docs/spec/**`) never shows `IDENTIFIER`, so this amends
+our own contract C4 (the 2026-09-18 plan's), not the program spec.
 
 `EXECUTE AS CALLER` is used because owner's-rights procedures restrict session changes. This is
 flagged in the cookbook as **verify on your account**.

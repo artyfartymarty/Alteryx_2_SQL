@@ -1,0 +1,148 @@
+{
+  "workflow": "wf_0006",
+  "segment": "seg_03",
+  "nodes": [
+    {
+      "tool_id": "4",
+      "type": "summarize",
+      "plugin": "AlteryxSpatialPluginsGui.Summarize.Summarize",
+      "container_id": null,
+      "config": {
+        "fields": [
+          {
+            "field": "PERIOD",
+            "action": "GroupBy",
+            "rename": "PERIOD",
+            "separator": null
+          },
+          {
+            "field": "RECOGNIZED",
+            "action": "Sum",
+            "rename": "TOTAL_RECOGNIZED",
+            "separator": null
+          },
+          {
+            "field": "DEFERRED",
+            "action": "Sum",
+            "rename": "TOTAL_DEFERRED",
+            "separator": null
+          },
+          {
+            "field": "CUSTOMER",
+            "action": "Count",
+            "rename": "CUSTOMERS",
+            "separator": null
+          }
+        ]
+      },
+      "raw_config": "<Configuration>\n          <SummarizeFields>\n            <SummarizeField field=\"PERIOD\" action=\"GroupBy\" rename=\"PERIOD\" />\n            <SummarizeField field=\"RECOGNIZED\" action=\"Sum\" rename=\"TOTAL_RECOGNIZED\" />\n            <SummarizeField field=\"DEFERRED\" action=\"Sum\" rename=\"TOTAL_DEFERRED\" />\n            <SummarizeField field=\"CUSTOMER\" action=\"Count\" rename=\"CUSTOMERS\" />\n          </SummarizeFields>\n        </Configuration>",
+      "annotation": "Totals by period",
+      "in_anchors": [
+        "Input"
+      ],
+      "out_anchors": [
+        "Output"
+      ],
+      "meta": {
+        "Output": [
+          {
+            "name": "PERIOD",
+            "type": "V_WString",
+            "size": 254,
+            "scale": null
+          },
+          {
+            "name": "TOTAL_RECOGNIZED",
+            "type": "Double",
+            "size": 8,
+            "scale": null
+          },
+          {
+            "name": "TOTAL_DEFERRED",
+            "type": "Double",
+            "size": 8,
+            "scale": null
+          },
+          {
+            "name": "CUSTOMERS",
+            "type": "Int64",
+            "size": 8,
+            "scale": null
+          }
+        ]
+      }
+    },
+    {
+      "tool_id": "5",
+      "type": "output",
+      "plugin": "AlteryxBasePluginsGui.DbFileOutput.DbFileOutput",
+      "container_id": null,
+      "config": {
+        "source": "C:\\data\\out\\revenue_by_period.yxdb",
+        "format": "yxdb",
+        "alias": null,
+        "table": null,
+        "write_mode": "overwrite",
+        "keys": [],
+        "pre_sql": null,
+        "post_sql": null
+      },
+      "raw_config": "<Configuration>\n          <Passwords />\n          <File MaxRecords=\"\" FileFormat=\"19\">C:\\data\\out\\revenue_by_period.yxdb</File>\n          <FormatSpecificOptions>\n            <OutputOption>Overwrite</OutputOption>\n          </FormatSpecificOptions>\n          <MultiFile value=\"False\" />\n        </Configuration>",
+      "annotation": "revenue_by_period.yxdb",
+      "in_anchors": [
+        "Input"
+      ],
+      "out_anchors": [],
+      "meta": {
+        "Output": [
+          {
+            "name": "PERIOD",
+            "type": "V_WString",
+            "size": 254,
+            "scale": null
+          },
+          {
+            "name": "TOTAL_RECOGNIZED",
+            "type": "Double",
+            "size": 8,
+            "scale": null
+          },
+          {
+            "name": "TOTAL_DEFERRED",
+            "type": "Double",
+            "size": 8,
+            "scale": null
+          },
+          {
+            "name": "CUSTOMERS",
+            "type": "Int64",
+            "size": 8,
+            "scale": null
+          }
+        ]
+      }
+    }
+  ],
+  "edges": [
+    {
+      "src": "4",
+      "src_anchor": "Output",
+      "dst": "5",
+      "dst_anchor": "Input",
+      "dst_order": 1,
+      "wireless": false
+    }
+  ],
+  "inbound": [
+    {
+      "src": "3",
+      "src_anchor": "1",
+      "dst": "4",
+      "dst_anchor": "Input",
+      "dst_order": 1,
+      "wireless": false,
+      "from_segment": "seg_02"
+    }
+  ],
+  "outbound": []
+}

@@ -39,6 +39,12 @@ GOLDEN_SETS = ("normal", "period_end", "empty", "edge")
 # Node types that carry no data-transformation semantics of their own.
 NON_DATA_TYPES = frozenset({"container", "comment", "interface", "action"})
 
+# The same, plus `browse`: a Browse tool holds a copy of its input for a human to look at and
+# transforms nothing, so a stage that asks "which nodes must this procedure account for?" skips it
+# too. `scripts/target_check.py` and `scripts/compile_check.py` both need this superset; derived
+# from NON_DATA_TYPES rather than retyped, so a type added above reaches both of them.
+DATA_LESS_TYPES = NON_DATA_TYPES | {"browse"}
+
 # Tool types whose output depends on incoming row order (plan §7.2, §8.5).
 ORDER_DEPENDENT_TYPES = frozenset({"sample", "record_id", "unique", "multi_row_formula"})
 

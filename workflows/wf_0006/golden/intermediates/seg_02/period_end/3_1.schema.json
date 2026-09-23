@@ -1,0 +1,26 @@
+[
+  {
+    "name": "CUSTOMER",
+    "type": "V_WString",
+    "size": 254,
+    "scale": null
+  },
+  {
+    "name": "PERIOD",
+    "type": "V_WString",
+    "size": 254,
+    "scale": null
+  },
+  {
+    "name": "RECOGNIZED",
+    "type": "Double",
+    "size": 8,
+    "scale": null
+  },
+  {
+    "name": "DEFERRED",
+    "type": "Double",
+    "size": 8,
+    "scale": null
+  }
+]

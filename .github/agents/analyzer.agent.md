@@ -6,12 +6,13 @@ model: gpt-6-astra
 ## Inputs
 - workflows/<id>/parsed/dag.json, workflows/<id>/intake/mappings.yaml
 - workflows/<id>/segments/ (cut proposals from scripts/segment.py)
+- workflows/<id>/segments/targets.json (output-target proposals from scripts/target_check.py)
 - cookbook/index.md (read the per-tool pages only for tool types present)
 
 ## Outputs
 - workflows/<id>/segments/seg_NN/contract.json
 - workflows/<id>/analysis.md, workflows/<id>/unsupported.json -- shape (see samples/wf_0005/canned/unsupported.json
-  for a worked example): top-level `"tier"` (`T1`|`T2`|`T3`, step 5 below), `"unsupported"` (one entry per
+  for a worked example): top-level `"tier"` (`T1`|`T2`|`T3`, step 6 below), `"unsupported"` (one entry per
   manual/unknown-classified node: `tool_id`, `type`, `plugin`, `class`, `reason`, `blocks_migration`), and
   `"unknown"` (one entry per node whose behavior is genuinely unclear: `tool_id`, `plugin`, `confidence`,
   `behavior`). The orchestrator reads `tier` from THIS file, not from manifest.json: `runner.ts`'s canned-replay
@@ -19,13 +20,33 @@ model: gpt-6-astra
   check reads it the same way (a T3 workflow never gets a contract.json and must not be held to that bar).
   Writing `tier` only into manifest.json is not enough.
 - manifest.json: tier, segments[], status.analyze
+- In a batched run (step 7) instead: the contract.json of each of the batch's own segments,
+  workflows/<id>/analysis/<batch>.md and workflows/<id>/analysis/<batch>.unsupported.json -- never analysis.md,
+  unsupported.json or manifest.json, which the orchestrator writes. <!-- amended: output targets phase 2 -->
+- workflows/<id>/notes/analyzer.md   your own running notes, in EVERY call (single or one per batch); re-read
+  this if you are told your context was just compacted. Keep your decisions and open items here as you go; the
+  durable record stays in the contract and the files you write, never the notes. <!-- amended: output targets phase 2 -->
 
 ## Procedure
 1. Classify each node: sql | snowpark | manual | unknown, citing the cookbook pattern that applies.
 2. Validate segment.py's cuts: merge segments that share an ordering dependency (Sort feeding Multi-Row Formula,
    Sample, Record ID, Running Total, Unique); split anything over ~40 tools; give every macro its own segment;
    keep each Tool Container intact unless it is oversized. Record every change and the reason.
-3. For every segment write contract.json:
+3. Output targets. After the cuts are settled, `scripts/target_check.py <id> --prefer auto` has already run
+   (the orchestrator runs it between `segment.py` and you) and written `workflows/<id>/segments/targets.json`:
+   `{"preference", "output_kind": "procedures"|"dbt", "reason", "dbt_blockers": [...], "segments": {"seg_NN":
+   "sql"|"snowpark"}, "nodes": {...}}`. Read it and copy each segment's proposal into that segment's
+   `contract.json` as a top-level `"target"`. **You may only LOWER a target**: `sql` → `snowpark`, or either →
+   `manual`, never back towards `sql`, and never `dbt` when the script refused it. Lowering is for a case the
+   node-class table cannot see (a Formula the SQL cookbook has no pattern for, say); when you lower one, say
+   which tool forced it in analysis.md and add a `parity_risks` entry. The orchestrator verifies this after you
+   (`checkTargets` in `orchestrator/stages.ts`): a missing `target` parks the workflow `NEEDS_HUMAN` with
+   `target-missing: <seg>`, and a raised one with `target-mismatch: <seg> raised <proposal> to <contract>`.
+   A `snowpark` segment is tier T2 and is translated as a Python procedure (`proc.py`), not SQL. A segment
+   lowered to `manual` is never translated at all: the orchestrator parks it `NEEDS_HUMAN` with
+   `manual-segment`, so lower to `manual` only when you also mean the workflow to be tier T3 (step 6).
+   <!-- amended: output targets phase 1 -->
+4. For every segment write contract.json:
    inputs (table FQN from mappings.yaml or upstream segment id; columns, types, nullability, keys),
    output schema, row relation (1:1 | filter | aggregate | expand), ordering keys, tolerance overrides.
    Per contract C5, contract.json also carries: `outputs[]`, a list of every outbound stream and final
@@ -44,11 +65,34 @@ model: gpt-6-astra
    the optional `"normalizations"` (a list of opt-in directives such as `"trim:NAME"` that `compare.py` applies
    to a column before comparing it, when a known-harmless difference like whitespace should not be reported).
    <!-- amended: plan Task 12 -->
-4. Flag parity risks per node: order dependence, fixed-width String truncation, ToNumber warn-and-null,
+5. Flag parity risks per node: order dependence, fixed-width String truncation, ToNumber warn-and-null,
    Round mode, FixedDecimal scale, DateTimeNow time zone, case/trim behavior in Join/Unique/Summarize,
    Cross Tab dynamic columns, Output pre/post SQL, Update/Insert write modes.
-5. Tier: T1 if all sql, T2 if any snowpark, T3 if any manual. Any unknown node -> status NEEDS_HUMAN with
+6. Tier: T1 if all sql, T2 if any snowpark, T3 if any manual. Any unknown node -> status NEEDS_HUMAN with
    the raw_config and behavior text attached in analysis.md.
+7. Seams and batches. A **seam** is the producer's `outputs[]` entry and the consumer's `inputs[]` entry for one
+   work stream: same columns in order, same type family, same nullability, same keys -- and the same `table`, with
+   the consumer's `from` naming the producer, which runs in an earlier wave. A stream the segment sub-DAGs
+   (`segments/<seg>/dag.json`) show crossing into a segment must be declared in that segment's `inputs[]`. After
+   you write the contracts the orchestrator checks every seam by code with `scripts/check_seams.py <id>` (report:
+   `workflows/<id>/segments/seams.json` -- if it already names a mismatch, fix that first); a disagreement costs
+   one retry, then parks the workflow `NEEDS_HUMAN` with `seam-mismatch: <producer>-><consumer> <stream>`.
+   A workflow whose rendered context is over the analyzer's character budget (`scripts/plan_batches.py`, 60 000
+   characters by default, an estimate rather than tokens) is analysed in **batches** of consecutive waves, one
+   call per batch; a smaller workflow keeps one call. In a batch the task names the batch and its segments, and
+   the inline context carries the workflow map, the target proposal, the producer contracts earlier batches
+   already wrote at this batch's input seams, and full detail for this batch's segments only. Write ONLY the
+   contract.json of each of the batch's segments, `workflows/<id>/analysis/<batch>.md` (this batch's part of
+   analysis.md) and `workflows/<id>/analysis/<batch>.unsupported.json` (this batch's `tier`, `unsupported` and
+   `unknown`, in unsupported.json's shape): the policy denies anything else, another batch's contracts, analysis.md,
+   unsupported.json and manifest.json included. For an input that comes from an earlier batch, copy the producer's
+   `outputs[]` entry shown inline. After each batch the orchestrator runs
+   `scripts/check_seams.py <id> --segments <the batch's segments>`; when every batch is done,
+   `scripts/stitch_analysis.py <id>` -- never an agent -- writes analysis.md (every segment exactly once, in
+   segment order) and unsupported.json (the highest tier of any batch, every tool once), and the tier is read from
+   that file. <!-- amended: output targets phase 2 -->
 
 ## Rules
-Read-only except segments/, analysis.md, unsupported.json, manifest.json. Never write SQL or execute anything.
+Read-only except segments/, analysis.md, unsupported.json, manifest.json and workflows/<id>/notes/analyzer.md --
+in a batch, only that batch's contracts, its two `analysis/<batch>` fragments and workflows/<id>/notes/analyzer.md.
+Never write SQL or execute anything. <!-- amended: output targets phase 2 -->

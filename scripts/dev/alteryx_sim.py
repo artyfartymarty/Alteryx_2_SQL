@@ -15,8 +15,10 @@ at, which is how a workflow like `samples/wf_0005` ends up with no golden data a
 from __future__ import annotations
 
 import argparse
+import ast
 import copy
 import datetime as _dt
+import importlib
 import re
 import string
 import sys
@@ -773,6 +775,151 @@ def _replace_in(value: Any, replace: Callable[[re.Match], str]) -> Any:
     return value
 
 
+PYTHON_TOOL_ALLOWED_MODULES = frozenset({"pandas", "numpy", "re", "math", "datetime", "decimal"})
+_PYTHON_TOOL_BUILTINS = {name: __builtins__[name] if isinstance(__builtins__, dict) else getattr(__builtins__, name)
+                         for name in ("abs", "all", "any", "bool", "dict", "enumerate", "float", "int", "isinstance",
+                                      "len", "list", "max", "min", "range", "round", "set", "sorted", "str", "sum",
+                                      "tuple", "zip", "reversed", "ValueError", "KeyError", "TypeError", "Exception")}
+
+
+def _guarded_import(name, globals=None, locals=None, fromlist=(), level=0):
+    """`__import__`'s contract, restricted to PYTHON_TOOL_ALLOWED_MODULES. A plain dotted
+    `import a.b` binds `a`, not `a.b` -- only the `from a.b import c` form (which passes a
+    `fromlist`) evaluates to the submodule. Returning the submodule either way would leave a
+    script that wrote `import pandas.io` with the name `pandas` bound to `pandas.io`
+    (final fix wave M7)."""
+    root = name.split(".")[0]
+    if level != 0 or root not in PYTHON_TOOL_ALLOWED_MODULES:
+        raise UnsupportedTool(f"python tool: import of {name!r} is not allowed (allowed: "
+                              f"{', '.join(sorted(PYTHON_TOOL_ALLOWED_MODULES))})")
+    module = importlib.import_module(name)
+    return module if fromlist else importlib.import_module(root)
+
+
+def _check_python_tool_script(script: str) -> ast.Module:
+    """Static pre-check, run before a single statement of the script executes. This is an
+    accident guard, not a security boundary (docs/reference/simulator-semantics.md §7.1): it
+    refuses any dunder name or attribute access -- the gadgets that recover the real, unrestricted
+    `__import__`/`open` through an imported module's own `__builtins__` dict (`pd.__builtins__`),
+    or reach the whole class graph (`().__class__.__base__.__subclasses__()`) -- and refuses any
+    `import`/`from … import` outside `PYTHON_TOOL_ALLOWED_MODULES` at parse time, on top of the
+    guarded `__import__` that already refuses it at run time.
+    """
+    try:
+        tree = ast.parse(script, "<python tool>", "exec")
+    except SyntaxError as exc:
+        raise UnsupportedTool(f"python tool script failed: SyntaxError: {exc}") from exc
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute) and node.attr.startswith("__"):
+            raise UnsupportedTool(f"python tool: attribute access {node.attr!r} is not allowed")
+        if isinstance(node, ast.Name) and node.id.startswith("__"):
+            raise UnsupportedTool(f"python tool: name {node.id!r} is not allowed")
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                root = alias.name.split(".")[0]
+                if root not in PYTHON_TOOL_ALLOWED_MODULES:
+                    raise UnsupportedTool(f"python tool: import of {alias.name!r} is not allowed "
+                                          f"(allowed: {', '.join(sorted(PYTHON_TOOL_ALLOWED_MODULES))})")
+        elif isinstance(node, ast.ImportFrom):
+            root = (node.module or "").split(".")[0]
+            if node.level != 0 or root not in PYTHON_TOOL_ALLOWED_MODULES:
+                raise UnsupportedTool(f"python tool: import of {node.module!r} is not allowed "
+                                      f"(allowed: {', '.join(sorted(PYTHON_TOOL_ALLOWED_MODULES))})")
+    return tree
+
+
+def _pandas_to_table(pdf) -> dict:
+    """DataFrame -> Table, by pandas' own type predicates rather than a str(dtype) prefix match
+    (a str(dtype) match misses pandas' nullable dtypes, e.g. "Int64"/"boolean", entirely):
+    bool (incl. nullable "boolean") -> Bool, int (incl. nullable "Int64") -> Int64,
+    float -> Double, datetime64 -> DateTime, everything else -> V_WString. `pd.isna(v)` decides
+    NULL uniformly in every branch, so a NULL of any kind (NaN, NaT, None, `pd.NA`) becomes NULL
+    rather than surfacing as the literal "<NA>" string. Column order is the frame's."""
+    import pandas as pd
+    from pandas.api.types import is_bool_dtype, is_datetime64_any_dtype, is_float_dtype, is_integer_dtype
+    fields, columns = [], []
+    for name in pdf.columns:
+        series = pdf[name]
+        if is_bool_dtype(series):  # checked before is_integer_dtype: bool is not an int type,
+            fields.append(_field(str(name), "Bool", 1))  # but be explicit rather than rely on that
+            columns.append([None if pd.isna(v) else bool(v) for v in series])
+        elif is_integer_dtype(series):
+            fields.append(_field(str(name), "Int64", 8))
+            columns.append([None if pd.isna(v) else int(v) for v in series])
+        elif is_float_dtype(series):
+            fields.append(_field(str(name), "Double", 8))
+            columns.append([None if pd.isna(v) else float(v) for v in series])
+        elif is_datetime64_any_dtype(series):
+            fields.append(_field(str(name), "DateTime", 19))
+            columns.append([None if pd.isna(v) else v.strftime("%Y-%m-%d %H:%M:%S") for v in series])
+        else:
+            fields.append(_field(str(name), "V_WString", 254))
+            columns.append([None if pd.isna(v) else str(v) for v in series])
+    return _table(fields, [list(row) for row in zip(*columns)] if columns else [])
+
+
+def _table_to_pandas(table: dict):
+    import pandas as pd
+    names = [f["name"] for f in table["fields"]]
+    pdf = pd.DataFrame([list(r) for r in table["rows"]], columns=names)
+    for f in table["fields"]:
+        if f["type"] in formula.FLOAT_TYPES:
+            pdf[f["name"]] = pd.to_numeric(pdf[f["name"]], errors="coerce").astype("float64")
+        elif f["type"] == "Bool":
+            pdf[f["name"]] = pdf[f["name"]].astype("boolean")
+    return pdf
+
+
+def run_python_tool(script: str, inputs: list[dict]) -> dict[int, dict]:
+    """Run one Python tool script in the sandbox. `inputs` are the tables on the tool's input
+    connections in `#1`, `#2`, … order. Returns the tables written to anchors 1..5.
+
+    The sandbox (guarded builtins/import plus `_check_python_tool_script`'s AST pre-check) is an
+    accident guard, not a security boundary: an allowed library can still reach the filesystem and
+    load native code (for example `DataFrame.to_csv`, or a submodule the allow-list admits by its
+    top-level package alone, such as `numpy.ctypeslib` or `pandas.io.common`); the simulator runs
+    only this repository's own committed sample scripts and must never be pointed at an untrusted
+    workflow's Python tool.
+    """
+    written: dict[int, dict] = {}
+    tree = _check_python_tool_script(script)  # refuse before a single statement runs
+
+    class Alteryx:  # the shim the real tool exposes
+        @staticmethod
+        def read(name: str):
+            index = int(str(name).lstrip("#")) - 1
+            if not 0 <= index < len(inputs):
+                raise UnsupportedTool(f"python tool: Alteryx.read({name!r}) but only {len(inputs)} input(s) are connected")
+            return _table_to_pandas(inputs[index])
+
+        @staticmethod
+        def write(pdf, anchor: int) -> None:
+            """A later write to the same anchor replaces an earlier one; only the anchors the
+            script actually wrote end up in the result."""
+            if not 1 <= int(anchor) <= 5:
+                raise UnsupportedTool(f"python tool: Alteryx.write(..., {anchor}) is not an output anchor 1..5")
+            written[int(anchor)] = _pandas_to_table(pdf)
+
+    namespace = {"__builtins__": {**_PYTHON_TOOL_BUILTINS, "__import__": _guarded_import}, "Alteryx": Alteryx}
+    try:
+        exec(compile(tree, "<python tool>", "exec"), namespace)  # noqa: S102 -- the sandbox above
+    except UnsupportedTool:
+        raise
+    except Exception as exc:  # the script's own failure is a simulator refusal, not a crash
+        raise UnsupportedTool(f"python tool script failed: {type(exc).__name__}: {exc}") from exc
+    return written
+
+
+def sim_python(node: dict, inputs_by_anchor: dict, ctx: _Context) -> dict:
+    """The Python tool: the embedded script runs in a sandbox with the Alteryx.read/write shim."""
+    inputs = list(inputs_by_anchor.get("Input") or [])
+    try:
+        written = run_python_tool(node["config"].get("script") or "", inputs)
+    except UnsupportedTool as exc:
+        raise UnsupportedTool(f"tool {node['tool_id']}: {exc}") from exc
+    return {str(anchor): table for anchor, table in sorted(written.items())}
+
+
 def sim_output(node: dict, inputs_by_anchor: dict, ctx: _Context) -> dict:
     """A file target is the incoming table; a database target is the table's state afterwards."""
     table = _primary(inputs_by_anchor)
@@ -795,7 +942,7 @@ SIMULATORS: dict[str, Callable[[dict, dict, _Context], dict]] = {
     "multi_row_formula": sim_multi_row_formula, "cross_tab": sim_cross_tab,
     "transpose": sim_transpose, "regex": sim_regex, "datetime": sim_datetime,
     "data_cleansing": sim_data_cleansing, "macro": sim_macro, "macro_input": sim_macro_input,
-    "macro_output": sim_macro_output,
+    "macro_output": sim_macro_output, "python": sim_python,
 }
 
 
@@ -1151,4 +1298,6 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    from lib.console import utf8_console
+    utf8_console()
     sys.exit(main())

@@ -1,0 +1,128 @@
+{
+  "workflow": "wf_0004",
+  "segment": null,
+  "golden_set": "normal",
+  "verdict": "PASS",
+  "checks": {
+    "seg_01:1_Output:work:MIG_WORK.WF0004_SEG_01_OUT": {
+      "schema": "PASS",
+      "nullability": "PASS",
+      "counts": {
+        "expected": 14,
+        "actual": 14,
+        "verdict": "PASS"
+      },
+      "aggregates": "PASS",
+      "aggregates_rows": {
+        "rows": 14,
+        "verdict": "PASS"
+      },
+      "set_diff": {
+        "only_expected": 0,
+        "only_actual": 0
+      },
+      "column_mismatches": {},
+      "column_counts": {},
+      "aggregate_mismatches": {}
+    },
+    "seg_02:2_Output5:work:MIG_WORK.WF0004_SEG_02_OUT": {
+      "schema": "PASS",
+      "nullability": "PASS",
+      "counts": {
+        "expected": 12,
+        "actual": 12,
+        "verdict": "PASS"
+      },
+      "aggregates": "PASS",
+      "aggregates_rows": {
+        "rows": 12,
+        "verdict": "PASS"
+      },
+      "set_diff": {
+        "only_expected": 0,
+        "only_actual": 0
+      },
+      "column_mismatches": {},
+      "column_counts": {},
+      "aggregate_mismatches": {}
+    },
+    "seg_03:4_Output:target:INVENTORY_BY_WH": {
+      "schema": "PASS",
+      "nullability": "PASS",
+      "counts": {
+        "expected": 6,
+        "actual": 6,
+        "verdict": "PASS"
+      },
+      "aggregates": "PASS",
+      "aggregates_rows": {
+        "rows": 6,
+        "verdict": "PASS"
+      },
+      "set_diff": {
+        "only_expected": 0,
+        "only_actual": 0
+      },
+      "column_mismatches": {},
+      "column_counts": {},
+      "aggregate_mismatches": {}
+    },
+    "seg_03:5_Output:target:INVENTORY_LONG": {
+      "schema": "PASS",
+      "nullability": "PASS",
+      "counts": {
+        "expected": 18,
+        "actual": 18,
+        "verdict": "PASS"
+      },
+      "aggregates": "PASS",
+      "aggregates_rows": {
+        "rows": 18,
+        "verdict": "PASS"
+      },
+      "set_diff": {
+        "only_expected": 0,
+        "only_actual": 0
+      },
+      "column_mismatches": {},
+      "column_counts": {},
+      "aggregate_mismatches": {}
+    }
+  },
+  "diff_clusters": [],
+  "normalizations_applied": [],
+  "boundaries": [
+    {
+      "segment": "seg_01",
+      "stream": "1_Output",
+      "verdict": "PASS"
+    },
+    {
+      "segment": "seg_02",
+      "stream": "2_Output5",
+      "verdict": "PASS"
+    }
+  ],
+  "finals": [
+    {
+      "segment": "seg_03",
+      "stream": "4_Output",
+      "output": "INVENTORY_BY_WH",
+      "verdict": "PASS"
+    },
+    {
+      "segment": "seg_03",
+      "stream": "5_Output",
+      "output": "INVENTORY_LONG",
+      "verdict": "PASS"
+    }
+  ],
+  "divergence_kind": null,
+  "first_divergence": null,
+  "idempotent": true,
+  "idempotency_diff": [],
+  "runtime_ms": 947,
+  "credits": null,
+  "needs_human": false,
+  "truncated": false
+}

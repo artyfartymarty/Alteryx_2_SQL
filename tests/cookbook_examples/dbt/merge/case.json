@@ -1,0 +1,30 @@
+{
+  "tool": "dbt_merge",
+  "inputs": {
+    "1": "input.csv"
+  },
+  "node": {
+    "tool_id": "2",
+    "type": "output",
+    "config": {
+      "format": "db",
+      "table": "HISTORY",
+      "write_mode": "update_insert",
+      "keys": ["ID"],
+      "pre_sql": null,
+      "post_sql": null
+    }
+  },
+  "edges": [
+    ["1", "Output", "2", "Input"]
+  ],
+  "targets_before": {
+    "HISTORY": "history_before.csv"
+  },
+  "logical_by_tool": {
+    "2": "HISTORY"
+  },
+  "compare": [
+    { "stream": "2_Output", "keys": ["ID"] }
+  ]
+}

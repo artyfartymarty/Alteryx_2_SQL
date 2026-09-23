@@ -2,6 +2,7 @@
 output, checks determinism, and writes `validation.json` (program spec §9, plan task 14).
 
     python scripts/validate_segment.py <wf_id> <seg> [--set NAME]... [--proc FILE] [--root .]
+        [--backend duckdb|snowflake] [--connection NAME] [--sandbox-database DB]
 
 This is the deterministic core the `validator` agent (and the orchestrator's mock) run exactly as
 written -- every parity verdict in the project flows through this module, and it never invents a
@@ -64,6 +65,14 @@ itself failed to complete, so no second run was even attempted) and `idempotency
 exactly when `idempotent` is `True`; both are carried onto every golden set's report, same as
 `idempotent` always was.
 
+**`--backend snowflake` (plan Task P2).** Selected only by that flag, run by a human: each run gets a
+fresh sandbox in a sandbox database the policy lists (`lib.snowflake_sandbox`), reached through a
+NAMED connection (`lib.snowflake_conn`); the golden set is loaded there, the procedure is created
+and CALLed there, and every output is judged there with the same `compare.py` into the same report.
+The two runs share that database, so the first run's outputs are snapshotted before the second
+run's fresh sandbox replaces them. Never exercised against a real account
+(`docs/reference/snowflake-backend.md`).
+
 **The top-level `validation.json`.** The verdict is the *worst* across every processed golden set
 (`FAIL` > `PASS_WITH_ACCEPTED_DIFF` > `PASS`), not merely "the first non-passing set" -- a later
 set can still be worse than an earlier one that already wasn't a plain PASS. The body (every other
@@ -77,77 +86,52 @@ from __future__ import annotations
 import argparse
 import sys
 import time
-import traceback
+from functools import partial
 from pathlib import Path
-from typing import Sequence
+from typing import Callable, Sequence
 
 import compare
 from lib import typed_csv
-from lib.backend import SANDBOX_DB, BackendError, DuckDBBackend
-from lib.io import load_manifest, read_json, read_yaml, write_json
+from lib.backend import SANDBOX_DB, BackendError, DuckDBBackend, SnowflakeBackend
+from lib.io import load_manifest, read_json, read_yaml
 from lib.paths import Repo, add_root_arg
 from lib.proc_runner import ProcError, run_proc
-from load_golden import WORK_SCHEMA, load_intermediate, load_set
+from lib.validation import (
+    VERDICT_SEVERITY, add_backend_args, aggregate_sets, actual_table, check_contract_names, clear_stale_reports,
+    combine, diverging_tables, error_text, expected_fqn, fail_report, golden_path, missing_table_report,
+    ordered_rows, print_crash, snapshot, snowflake_target, worst_verdict, write_reports,
+)
+from load_golden import check_names, golden_view_schema, load_intermediate, load_set
 
-#: Where a golden CSV is loaded before compare() runs, one table per output (compare.py's own
-#: convention is a single `MIG_COMPARE.EXPECTED`; a segment can have several outputs to compare in
-#: the same backend, so each gets its own numbered table).
-_EXPECTED_SCHEMA = "MIG_COMPARE"
-
-_VERDICT_SEVERITY = {"PASS": 0, "PASS_WITH_ACCEPTED_DIFF": 1, "FAIL": 2}
-
-
-# --- table/path resolution for one contract output ---------------------------------------------
-
-
-def _actual_table(wf_id: str, seg: str, output: dict) -> str:
-    """The sandbox table a `contract.outputs[]` entry actually lands in (plan contracts C3/C4).
-
-    A `work` output is whatever literal table name the contract gives (the procedure creates it
-    unqualified, e.g. `MIG_WORK.WF0009_SEG_01_OUT`). A `target` output has no `table` of its own --
-    the procedure writes it through `IDENTIFIER(:TGT_DB || '.' || :TGT_SCHEMA || '.<LOGICAL>')`,
-    which resolves to `MIGDB.MIG_WORK.<logical>`, matching `load_golden`'s own `WORK_SCHEMA`.
-    """
-    if output.get("kind") == "target":
-        logical = output.get("logical")
-        if not logical:
-            raise ValueError(f"{wf_id}/{seg} contract output for stream {output.get('stream')!r} "
-                             f"is a target with no `logical` name (plan contract C5)")
-        return f"{SANDBOX_DB}.{WORK_SCHEMA}.{logical}"
-    table = output.get("table")
-    if not table:
-        raise ValueError(f"{wf_id}/{seg} contract output for stream {output.get('stream')!r} "
-                         f"has no `table` name (plan contract C5)")
-    return table
-
-
-def _golden_path(repo: Repo, wf_id: str, seg: str, golden_set: str, output: dict) -> Path:
-    """`golden/outputs/<set>/<tool_id>.csv` for a `target`, `golden/intermediates/<seg>/<set>/
-    <stream>.csv` for a `work` output (plan contract C2). `tool_id`/`stream` come straight from
-    the contract, so they go through `Repo` -- a hostile value there raises `ValueError`."""
-    if output.get("kind") == "target":
-        tool_id = output.get("tool_id")
-        if not tool_id:
-            raise ValueError(f"{wf_id}/{seg} contract output for stream {output.get('stream')!r} "
-                             f"is a target with no `tool_id` (plan contract C5)")
-        return repo.wf(wf_id, "golden", "outputs", golden_set, f"{tool_id}.csv")
-    stream = output.get("stream")
-    if not stream:
-        raise ValueError(f"{wf_id}/{seg} contract output {output!r} has no `stream`")
-    return repo.wf(wf_id, "golden", "intermediates", seg, golden_set, f"{stream}.csv")
+# The report-shaping helpers below moved to `lib/validation.py` (shared with `validate_snowpark.py`)
+# and are re-exported here under their old private names so this module's own tests -- which
+# monkeypatch a couple of them directly -- keep working unchanged.
+_VERDICT_SEVERITY = VERDICT_SEVERITY
+_worst_verdict = worst_verdict
+_expected_fqn = expected_fqn
+_missing_table_report = missing_table_report
+_combine = combine
+_fail_report = fail_report
+_aggregate_sets = aggregate_sets
+_clear_stale_reports = clear_stale_reports
+_actual_table = actual_table
+_golden_path = golden_path
+_read_ordered_rows = ordered_rows
 
 
 # --- one full run: load golden data, load upstream intermediates, run the procedure -------------
 
 
-def _load_and_run(backend: DuckDBBackend, repo: Repo, wf_id: str, seg: str, golden_set: str,
-                  contract: dict, proc_sql: str, run_id: str) -> None:
+def _load_and_run(backend, repo: Repo, wf_id: str, seg: str, golden_set: str,
+                  contract: dict, proc_sql: str, run_id: str, database: str = SANDBOX_DB) -> None:
     """One complete run against a fresh backend: golden set, any upstream-segment intermediate the
     contract declares, then the procedure. Raises `FileNotFoundError`/`ValueError` for a missing or
     malformed prerequisite (usage error) and lets `ProcError`/`BackendError` from `run_proc`
-    propagate for the caller to turn into a domain FAIL.
+    propagate for the caller to turn into a domain FAIL. On a real account (`SnowflakeBackend`, plan
+    Task P2) the procedure is created and CALLed there (`call_procedure`) instead of being run
+    statement by statement, with the golden set loaded into the sandbox `database`.
     """
-    info = load_set(backend, repo, wf_id, golden_set)
+    info = load_set(backend, repo, wf_id, golden_set, database=database)
     for entry in contract.get("inputs") or []:
         stream = entry.get("stream")
         if not stream:
@@ -161,145 +145,20 @@ def _load_and_run(backend: DuckDBBackend, repo: Repo, wf_id: str, seg: str, gold
         load_intermediate(backend, repo, wf_id, upstream, golden_set, stream, table)
     args = dict(info["args"])
     args["RUN_ID"] = run_id
-    run_proc(backend, proc_sql, args)
+    if isinstance(backend, SnowflakeBackend):
+        backend.call_procedure(proc_sql, args)
+    else:
+        run_proc(backend, proc_sql, args)
 
 
-def _read_ordered_rows(backend: DuckDBBackend, table: str) -> list[tuple]:
-    """Every row of `table`, ordered by every column so two runs' outputs can be compared for
-    equality as row multisets: sorting by all columns puts duplicate rows next to each other, and
-    since duplicates are indistinguishable, their relative order can never affect the comparison."""
-    columns = backend.table_columns(table)
-    if not columns:
-        return []
-    order = ", ".join(str(i) for i in range(1, len(columns) + 1))
-    return backend.query(f"SELECT * FROM {table} ORDER BY {order}")[1]
-
-
-def _outputs_equal(a: DuckDBBackend, b: DuckDBBackend, wf_id: str, seg: str,
-                   outputs: list[dict]) -> tuple[bool, list[str]]:
-    """Row-multiset equality of every declared output table between two runs. Returns
-    `(idempotent, diverging_table_names)`. A table missing on either side is never treated as
-    equal -- idempotency cannot be verified for it, so it counts as diverging like any other
-    mismatch (findings K2/C4(a): "never true" without a genuine comparison of both runs)."""
-    diverging: list[str] = []
-    for output in outputs:
-        table = _actual_table(wf_id, seg, output)
-        if not (a.table_exists(table) and b.table_exists(table)):
-            diverging.append(table)
-            continue
-        if _read_ordered_rows(a, table) != _read_ordered_rows(b, table):
-            diverging.append(table)
+def _outputs_equal(first: dict, second: dict, tables: list[str]) -> tuple[bool, list[str]]:
+    """Row-multiset equality of every declared output table between two runs' snapshots
+    (`lib.validation.snapshot`). Returns `(idempotent, diverging_table_names)`. A table missing on
+    either side is never treated as equal -- idempotency cannot be verified for it, so it counts as
+    diverging like any other mismatch (findings K2/C4(a): "never true" without a genuine comparison
+    of both runs)."""
+    diverging = diverging_tables(first, second, tables)
     return not diverging, diverging
-
-
-# --- combining the per-output compare() reports into one report per golden set ------------------
-
-
-def _worst_verdict(verdicts: Sequence[str]) -> str:
-    if not verdicts:
-        return "PASS"
-    return max(verdicts, key=lambda verdict: _VERDICT_SEVERITY[verdict])
-
-
-def _missing_table_report(actual_fqn: str) -> dict:
-    """The procedure never created one of its declared output tables (finding C4(a)). This is an
-    *actual*-side failure -- a domain FAIL that feeds the fixer, exactly like a compile error --
-    not compare.py's own `ValueError("there is no table … to compare")`, which is reserved for a
-    usage error on the *expected* side. Shaped like one of `compare.compare()`'s own per-output
-    reports so `_combine` can merge it the same way, plus an `"error"` naming the table."""
-    return {
-        "verdict": "FAIL", "error": f"output table {actual_fqn} does not exist after running "
-                                    f"the procedure",
-        "checks": {}, "diff_clusters": [], "normalizations_applied": [], "needs_human": False,
-        "truncated": False,
-    }
-
-
-def _combine(contract: dict, golden_set: str, output_reports: list[tuple[dict, dict]]) -> dict:
-    """Merges one `compare.compare()` report (or `_missing_table_report`) per contract output into
-    one report for this segment and golden set. Nothing about a check or a cluster is re-derived:
-    every count, verdict and classification is exactly what `compare.py` produced. Only `"stream"`
-    is added, to each cluster, and a `"checks"` entry per output (keyed by stream and kind, since a
-    work stream and the target it feeds share the same `stream` id, plan contract C5). Any
-    per-output `"error"` (a missing actual table) is carried up too, joined if there is more than
-    one."""
-    verdict = _worst_verdict([report["verdict"] for _, report in output_reports])
-    clusters: list[dict] = []
-    for output, report in output_reports:
-        for cluster in report["diff_clusters"]:
-            tagged = dict(cluster)
-            tagged["stream"] = output.get("stream")
-            clusters.append(tagged)
-    clusters.sort(key=lambda cluster: (compare.CLASS_ORDER.index(cluster["class"]),
-                                       cluster.get("stream") or "", cluster["columns"]))
-    checks = {f"{output.get('stream')}:{output.get('kind')}": report["checks"]
-             for output, report in output_reports}
-    normalizations = sorted({op for _, report in output_reports
-                             for op in report["normalizations_applied"]})
-    errors = [report["error"] for _, report in output_reports if report.get("error")]
-    result = {
-        "segment": contract.get("segment"),
-        "golden_set": golden_set,
-        "verdict": verdict,
-        "checks": checks,
-        "diff_clusters": clusters,
-        "normalizations_applied": normalizations,
-        "idempotent": None,             # filled in by the caller, once per segment
-        "idempotency_diff": [],         # filled in by the caller, once per segment
-        "runtime_ms": 0,                # filled in by the caller: wall time for the whole set
-        "credits": None,                # a local DuckDB run burns no Snowflake credits
-        "needs_human": any(report["needs_human"] for _, report in output_reports),
-        "truncated": any(report.get("truncated") for _, report in output_reports),
-    }
-    if errors:
-        result["error"] = "; ".join(errors)
-    return result
-
-
-def _fail_report(contract: dict, golden_set: str, error: Exception) -> dict:
-    """A `ProcError`/`BackendError` while running the procedure: a domain FAIL that feeds the fixer
-    (program spec §9), not a human escalation -- so `needs_human` stays false. The first run itself
-    never completed, so no second run was attempted either: `idempotent` stays `None` (finding
-    K2's documented exception -- it must never become `True` without both runs being compared)."""
-    return {
-        "segment": contract.get("segment"), "golden_set": golden_set, "verdict": "FAIL",
-        "error": str(error), "checks": {}, "diff_clusters": [], "normalizations_applied": [],
-        "idempotent": None, "idempotency_diff": [], "runtime_ms": 0, "credits": None,
-        "needs_human": False, "truncated": False,
-    }
-
-
-def _aggregate_sets(sets: Sequence[str], reports: dict[str, dict]) -> dict:
-    """Combines every golden set's own report into the segment-level result written to
-    `validation.json` (finding K1's ruling): the verdict is the *worst* across every processed
-    set; the body (every other key) is copied from the first set, in processing order, whose own
-    verdict equals that worst verdict; `needs_human` is true if *any* set's own report says so,
-    regardless of which set supplied the body; `sets` lists every processed set's own verdict."""
-    worst = _worst_verdict([reports[golden_set]["verdict"] for golden_set in sets])
-    chosen = next(reports[golden_set] for golden_set in sets
-                 if reports[golden_set]["verdict"] == worst)
-    result = dict(chosen)
-    result["verdict"] = worst
-    result["needs_human"] = any(reports[golden_set]["needs_human"] for golden_set in sets)
-    result["sets"] = {golden_set: reports[golden_set]["verdict"] for golden_set in sets}
-    return result
-
-
-def _clear_stale_reports(repo: Repo, wf_id: str, seg: str) -> None:
-    """Deletes this segment's `validation.json` and every `validation.<set>.json` before anything
-    else runs (findings C4(b)/I5): a report on disk always belongs to the most recent invocation,
-    so any usage error or crash below this point leaves *no* report at all, and a golden set that
-    is no longer requested loses its own leftover report too. Deletes only those two exact shapes
-    in this one segment directory -- nothing else there is touched."""
-    seg_dir = repo.seg(wf_id, seg)
-    if not seg_dir.is_dir():
-        return
-    exact = seg_dir / "validation.json"
-    if exact.is_file():
-        exact.unlink()
-    for path in seg_dir.glob("validation.*.json"):
-        if path.is_file():
-            path.unlink()
 
 
 # --- one golden set -------------------------------------------------------------------------------
@@ -307,14 +166,20 @@ def _clear_stale_reports(repo: Repo, wf_id: str, seg: str) -> None:
 
 def _run_one_set(repo: Repo, wf_id: str, seg: str, golden_set: str, contract: dict, proc_sql: str,
                  tolerances: dict, accepted_classes: Sequence[str], approvals: Sequence[dict],
-                 segment_dag: dict | None, *, check_idempotency: bool) -> dict:
+                 segment_dag: dict | None, *, check_idempotency: bool,
+                 backend_factory: Callable[[], object] = DuckDBBackend, database: str = SANDBOX_DB) -> dict:
+    """One golden set. `backend_factory()` gives each run its own fresh backend -- a new in-memory
+    `DuckDBBackend` locally, `SnowflakeSandbox.fresh` on a real account (plan Task P2), where both
+    runs share one sandbox database: so the first run's outputs are snapshotted before the second
+    run's fresh sandbox replaces them."""
     started = time.perf_counter()
     run_id = f"validate_{wf_id}_{seg}_{golden_set}"
     outputs = contract.get("outputs") or []
-    backend = DuckDBBackend()
+    tables = [_actual_table(wf_id, seg, output, database) for output in outputs]
+    backend = backend_factory()
     try:
         try:
-            _load_and_run(backend, repo, wf_id, seg, golden_set, contract, proc_sql, run_id)
+            _load_and_run(backend, repo, wf_id, seg, golden_set, contract, proc_sql, run_id, database)
         except (ProcError, BackendError) as exc:
             report = _fail_report(contract, golden_set, exc)
             report["runtime_ms"] = int(round((time.perf_counter() - started) * 1000))
@@ -322,10 +187,10 @@ def _run_one_set(repo: Repo, wf_id: str, seg: str, golden_set: str, contract: di
 
         output_reports: list[tuple[dict, dict]] = []
         for index, output in enumerate(outputs):
-            expected_fqn = f"{_EXPECTED_SCHEMA}.EXPECTED_{index}"
+            expected_fqn = _expected_fqn(index)
             golden_path = _golden_path(repo, wf_id, seg, golden_set, output)
             backend.load_table(expected_fqn, typed_csv.read_table(golden_path))
-            actual_fqn = _actual_table(wf_id, seg, output)
+            actual_fqn = tables[index]
             if backend.table_exists(actual_fqn):
                 output_report = compare.compare(
                     backend, expected_fqn, actual_fqn, contract, tolerances, output=output,
@@ -341,17 +206,18 @@ def _run_one_set(repo: Repo, wf_id: str, seg: str, golden_set: str, contract: di
         report = _combine(contract, golden_set, output_reports)
 
         if check_idempotency:
-            other = DuckDBBackend()
+            first = snapshot(backend, tables)        # before a second fresh sandbox can replace it
+            other = backend_factory()
             try:
                 try:
-                    _load_and_run(other, repo, wf_id, seg, golden_set, contract, proc_sql, run_id)
+                    _load_and_run(other, repo, wf_id, seg, golden_set, contract, proc_sql, run_id, database)
                 except (ProcError, BackendError):
                     # The second run itself could not complete: idempotency can never be verified
                     # as True without both runs actually being compared (finding K2's ruling), and
                     # here it did not even run -- every declared output counts as diverging.
-                    idempotent, diverging = False, [_actual_table(wf_id, seg, o) for o in outputs]
+                    idempotent, diverging = False, list(tables)
                 else:
-                    idempotent, diverging = _outputs_equal(backend, other, wf_id, seg, outputs)
+                    idempotent, diverging = _outputs_equal(first, snapshot(other, tables), tables)
             finally:
                 other.close()
             report["idempotent"] = idempotent
@@ -371,7 +237,8 @@ def _run_one_set(repo: Repo, wf_id: str, seg: str, golden_set: str, contract: di
 
 
 def validate_segment(repo: Repo, wf_id: str, seg: str, golden_sets: Sequence[str] | None = None, *,
-                     proc_path: Path | None = None) -> dict:
+                     proc_path: Path | None = None, backend: str = "duckdb", connection: str | None = None,
+                     sandbox_database: str | None = None) -> dict:
     """Validates one segment's procedure against every named golden set (default:
     `manifest.golden_sets`), writes `segments/<seg>/validation.<set>.json` for each and
     `segments/<seg>/validation.json` for the segment as a whole, and returns that top-level report.
@@ -383,8 +250,13 @@ def validate_segment(repo: Repo, wf_id: str, seg: str, golden_sets: Sequence[str
     a stale one from an earlier run. Every prerequisite -- `contract.json`, the procedure file,
     `intake/mappings.yaml`, a non-empty `contract.outputs[]`, a non-empty set of golden sets -- is
     checked, and every golden set is fully processed in memory, before anything is written.
+
+    `backend="snowflake"` (plan Task P2) runs each run in a fresh sandbox on a real account --
+    `connection` names the `connections.toml` entry, `sandbox_database` a database the policy lists
+    -- with the same judging and the same report; both are checked before anything connects.
     """
     _clear_stale_reports(repo, wf_id, seg)
+    sandbox = snowflake_target(repo, backend, connection, sandbox_database)
 
     contract_path = repo.seg(wf_id, seg, "contract.json")
     if not contract_path.is_file():
@@ -423,37 +295,38 @@ def validate_segment(repo: Repo, wf_id: str, seg: str, golden_sets: Sequence[str
     accepted_classes = settings.get("accepted_diff_classes") or ()
     approvals = [a for a in (manifest.get("accepted_diffs") or []) if a.get("segment") == seg]
 
+    # Every name spliced into SQL from the contract or the mappings, checked before any backend exists
+    # (fix round 1, C2): a bad one is a usage error and nothing is executed on either backend.
+    database = SANDBOX_DB if sandbox is None else sandbox.database
+    check_contract_names(wf_id, seg, contract, database)
+    check_names(repo, wf_id, sets, database=database)
+
     reports: dict[str, dict] = {}
     idempotent: bool | None = None
     idempotency_diff: list[str] = []
     for index, golden_set in enumerate(sets):
         check = index == 0
+        engine = {} if sandbox is None else {
+            "backend_factory": partial(sandbox.fresh, [golden_view_schema(wf_id, golden_set)]),
+            "database": sandbox.database}
         report = _run_one_set(repo, wf_id, seg, golden_set, contract, proc_sql, tolerances,
-                              accepted_classes, approvals, segment_dag, check_idempotency=check)
+                              accepted_classes, approvals, segment_dag, check_idempotency=check, **engine)
         if check:
             idempotent = report["idempotent"]
             idempotency_diff = report["idempotency_diff"]
         reports[golden_set] = report
 
     # Idempotency is a property of the procedure, established once from the first golden set, and
-    # carried onto every set's report (and so onto validation.json, whichever set it is drawn from).
-    for report in reports.values():
-        report["idempotent"] = idempotent
-        report["idempotency_diff"] = idempotency_diff
-
-    result = _aggregate_sets(sets, reports)
-
-    write_json(repo.seg(wf_id, seg, "validation.json"), result)
-    for golden_set in sets:
-        write_json(repo.seg(wf_id, seg, f"validation.{golden_set}.json"), reports[golden_set])
-
-    return result
+    # carried onto every set's report (and so onto validation.json, whichever set it is drawn
+    # from); aggregating the sets and writing validation.json/validation.<set>.json is
+    # `lib.validation.write_reports`'s job, shared with `validate_snowpark.py`.
+    return write_reports(repo, wf_id, seg, sets, reports, (idempotent, idempotency_diff))
 
 
 # --- CLI --------------------------------------------------------------------------------------------
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("wf_id", help="workflow id, e.g. wf_0003")
     parser.add_argument("seg", help="segment id, e.g. seg_01")
@@ -461,16 +334,24 @@ def main(argv: Sequence[str] | None = None) -> int:
                         help="golden set to validate (repeatable); default: manifest.golden_sets")
     parser.add_argument("--proc", type=Path, default=None,
                         help="procedure file to validate (default: segments/<seg>/proc.sql)")
+    add_backend_args(parser)
     add_root_arg(parser)
+    return parser
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = build_parser()
     args = parser.parse_args(argv)
 
     repo = Repo(args.root)
     try:
-        report = validate_segment(repo, args.wf_id, args.seg, args.sets, proc_path=args.proc)
+        report = validate_segment(repo, args.wf_id, args.seg, args.sets, proc_path=args.proc,
+                                  backend=args.backend, connection=args.connection,
+                                  sandbox_database=args.sandbox_database)
     except (FileNotFoundError, ValueError) as exc:
-        parser.error(str(exc))  # exit 2: a missing prerequisite; nothing was written
+        parser.error(error_text(args.backend, str(exc)))  # exit 2: a missing prerequisite; nothing was written
     except Exception:            # noqa: BLE001 -- exit 2 is "anything unexpected"; never a bare traceback exit 1
-        traceback.print_exc()
+        print_crash(args.backend)
         return 2
 
     print(f"{args.wf_id}/{args.seg}: {report['verdict']} {report['sets']} "
@@ -479,4 +360,6 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    from lib.console import utf8_console
+    utf8_console()
     sys.exit(main())

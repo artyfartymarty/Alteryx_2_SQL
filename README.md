@@ -20,12 +20,15 @@ program spec is built in: **the pipeline asks a human to name the Snowflake tabl
 
 ### Architecture at a glance
 
-Three diagrams, all drawn from the code as it stands (`orchestrator/*.ts`, `scripts/*.py`); the
-file names in them are real. GitHub renders them inline.
+Three diagrams, all drawn from the code as it stands (`orchestrator/*.ts`, `scripts/*.py`) — the
+three output targets, the batched analyzer with its seam check, and the chain-checked translate
+stage are all in them now; the file names are real. GitHub renders them inline.
 
 **Components.** The CLI drives one manifest state machine per workflow. Deterministic Python does
-everything that produces a number or a verdict; agents are reached only through the `AgentRunner`
-seam, and a Copilot session can touch the repo only through tool calls that the hooks judge first.
+everything that produces a number or a verdict — compiling and validating all three output
+targets, checking seams and batching the analyzer, and running `dbt` as a subprocess for a dbt
+project; agents are reached only through the `AgentRunner` seam, and a Copilot session can touch
+the repo only through tool calls that the hooks judge first.
 
 ```mermaid
 flowchart TB
@@ -44,7 +47,15 @@ flowchart TB
     P1["parse.py · segment.py"]
     P2["intake_touchpoints.py · intake_prompt.py (the yxdb → table prompt)"]
     P3["dev/alteryx_sim.py (golden data)"]
-    P4["compile_check.py · validate_segment.py → compare.py"]
+    P4["compile_check.py (--target sql | snowpark | dbt)"]
+    P5["validate_segment.py · validate_snowpark.py · validate_dbt.py → compare.py"]
+    P6["validate_workflow.py (the stitched whole) → compare.py"]
+    P7["check_seams.py · plan_batches.py · stitch_analysis.py"]
+    P8["prompt_context.py"]
+    P9["lib/dbt_project.py → dbt (subprocess)"]
+    P1 ~~~ P2 ~~~ P3
+    P4 ~~~ P5 ~~~ P6
+    P7 ~~~ P8 ~~~ P9
   end
   subgraph AR["AgentRunner seam — orchestrator/runner.ts"]
     direction TB
@@ -54,7 +65,7 @@ flowchart TB
   subgraph SDK["Copilot SDK session"]
     direction TB
     AG["customAgents from .github/agents/*.agent.md — agent = role"]
-    TOOLS["model tool calls: view · glob · grep · powershell · task (sub-agent) · write …"]
+    TOOLS["model tool calls: view · create · glob · grep · powershell · ask_user · task (sub-agent)"]
     AG --> TOOLS
   end
   subgraph HK["orchestrator/hooks.ts + policy.ts"]
@@ -65,7 +76,8 @@ flowchart TB
     H1 --> AUD
     H2 --> AUD
   end
-  FS[("workflows/WF/ — manifest.json · parsed/ · intake/ · segments/ · golden/ · docs/")]
+  BACKEND[("DuckDB double | Snowflake (--backend snowflake, named connection)")]
+  FS[("workflows/WF/<br/>manifest.json · parsed/ · intake/ · segments/ · golden/ · docs/<br/>dbt/ (dbt output kind) · procs/master.sql or procs/README.md (dbt)<br/>validation_workflow.json · notes/")]
   B --> SM
   SM -->|env.py| PY
   SM -->|runAgent| AR
@@ -75,6 +87,8 @@ flowchart TB
   TOOLS -->|every call| H1
   H1 -->|allow / deny| TOOLS
   PY --> FS
+  P5 --> BACKEND
+  P6 --> BACKEND
   M --> FS
   TOOLS -->|allowed writes only| FS
   FS -->|verify outputs · next stage| SM
@@ -82,7 +96,9 @@ flowchart TB
 
 **One agent call, through the hooks.** This is what `runAgent` in `stages.ts` does for every
 role; the sub-agents a session spawns with `task` go through the same `onPreToolUse` (verified
-live, `docs/live-smoke-test.md`).
+live, `docs/live-smoke-test.md`). A mid-session context compaction sends a fixed notes-file
+reminder to the three notes-keeping roles (intake, analyzer, fixer), and every `assistant.usage`
+event tracks the call's peak input-token count.
 
 ```mermaid
 sequenceDiagram
@@ -96,6 +112,7 @@ sequenceDiagram
   participant FS as workflows/WF/
   ST->>ST: budget check — maxToolCallsPerWorkflow
   ST->>RN: run(role, task)
+  Note over RN,FS: intake, analyzer or fixer only — mkdir workflows/WF/notes/ before the session
   RN->>SDK: createSession(customAgents, agent = role, model, hooks)
   SDK->>MD: self-contained task prompt
   loop every tool call
@@ -112,42 +129,136 @@ sequenceDiagram
       Note over MD: the model sees the denial and carries on
     end
   end
+  RN->>RN: assistant.usage → peakInputTokens = max(peakInputTokens, inputTokens), every turn
+  alt session.compaction_complete — success
+    SDK->>RN: session.compaction_complete
+    RN->>RN: compactions += 1
+    opt role is intake, analyzer or fixer
+      RN->>SDK: send(notes reminder, mode immediate)
+      SDK->>MD: re-read workflows/WF/notes/ROLE.md
+    end
+  else compaction failed
+    RN->>RN: log "context compaction failed", compactions unchanged
+  end
   MD-->>SDK: done — files written
   SDK->>HK: onSessionEnd → recordMetrics
-  RN->>RN: finally — recordMetrics (idempotent), classify any error: timeout / rate-limit / context-overflow / denied
+  RN->>RN: finally — recordMetrics (idempotent: toolCalls, compactions, peakInputTokens → manifest.metrics), classify any error: timeout / rate-limit / context-overflow / denied
   RN-->>ST: AgentResult { ok, error, toolCalls, ms }
   ST->>ST: verify outputs · retry once (missing-output, timeout) · back off (rate-limit) · else escalate
 ```
 
 **Stages and where a workflow can park.** Success states are skipped on re-runs; parked states
 (double circles) are never re-executed by a plain run and reopen only with `--from-stage`.
+Analyze runs the whole workflow in one call, or batch by batch once it is large enough, with
+every batch's and the stitched whole's seams checked by code; translate now splits by
+`output_kind` — one loop per segment for a procedures workflow, chain-checked against the
+stitched whole before `VALIDATED`, or one loop for the whole project for a dbt workflow, which
+gets `procs/README.md` instead of `master.sql`.
 
 ```mermaid
-flowchart LR
+flowchart TB
   P[parse] -->|PARSED| I[intake]
   P -->|fails| PR["parser-recovery agent (≤ maxParseRecovery)"]
   PR --> P
   PR -->|still failing| Q((QUARANTINED))
   I -->|unchecked questions| W((WAITING_FOR_ANSWERS))
   W -->|answers merged · re-run| I
-  I -->|READY| A[analyze]
-  A -->|tier T3| MAN((MANUAL))
-  A -->|contracts written| G[golden]
+  I -->|READY| TC["target_check.py → segments/targets.json"]
+  TC --> AN
+  subgraph AN[analyze]
+    direction LR
+    PB{"plan_batches.py"}
+    PB -->|under budget| AC1["analyzer — one call"] --> CS["check_seams.py"]
+    PB -->|over budget| AC2["analyzer — one call per batch"] --> CS
+    CS -->|batched, after every batch| ST["stitch_analysis.py"]
+  end
+  CS -->|"seam-mismatch"| NH((NEEDS_HUMAN))
+  AN -->|tier T3| MAN((MANUAL))
+  AN -->|contracts written| G[golden]
   G --> T[translate]
+  T -->|"output_kind: procedures"| seg
+  T -->|"output_kind: dbt"| DBTT
   subgraph seg["per segment, per wave — at most maxFixIterations"]
     direction LR
-    TR[translator] --> RV[reviewer]
+    TR[translator] -->|"Snowpark: render_snowpark.py first"| CC["compile_check.py"]
+    CC --> RV[reviewer]
     RV -->|BLOCK| FX[fixer]
-    RV -->|PASS| VA["validator → validate_segment.py"]
+    RV -->|PASS| VA["validator → validate_segment.py (sql) / validate_snowpark.py (snowpark)"]
     VA -->|FAIL| FX
-    FX --> RV
+    CC -->|compile fail| FX
+    FX --> CC
   end
-  T --> seg
-  seg -->|every segment PASS| D[document] --> PRS[pr]
-  seg -->|needs_human · iterations exhausted · budget| NH((NEEDS_HUMAN))
-  NH -.->|"--from-stage only"| T
+  seg -->|every segment PASS| CHK{"validate_workflow.py — the stitched whole"}
+  seg -->|needs_human · iterations exhausted · budget| NH
+  CHK -->|PASS| D[document]
+  CHK -->|"boundary divergence: one fixer round"| FX
+  CHK -->|"chain-drift"| NH
+  CHK -->|needs_human| NH
+  subgraph DBTT["dbt — one loop, the whole project, at most maxFixIterations"]
+    direction LR
+    DTR[translator] --> DCC["compile_check.py --target dbt"] --> DRV[reviewer]
+    DRV -->|BLOCK| DFX[fixer]
+    DRV -->|PASS| DVA["validator → validate_dbt.py"]
+    DVA -->|FAIL| DFX
+    DCC -->|compile fail| DFX
+    DFX --> DCC
+  end
+  DBTT -->|every segment PASS, chain PASS| DOUT["procs/README.md — not master.sql"]
+  DBTT -->|needs_human · iterations exhausted · budget · chain FAIL| NH
+  DOUT --> D
+  D --> PRS[pr]
+  NH -.->|"--from-stage analyze"| AN
+  NH -.->|"--from-stage translate"| T
   Q -.->|"--from-stage only"| P
 ```
+
+### Three output targets
+
+A migrated workflow is not always plain SQL. The pipeline decides, per segment, what the output is,
+and records the decision with its reason. Full reference: **`docs/reference/output-targets.md`**.
+
+| Target | Status | Artefact | Checked by | Validated by |
+|---|---|---|---|---|
+| **SQL stored procedure** (`contract.json`'s `"target": "sql"`) | built, and what every committed procedures workflow's segment except `wf_0006/seg_02` uses | `segments/<seg>/proc.sql` | `compile_check.py <wf> <seg>` | `validate_segment.py` (DuckDB) |
+| **Snowpark Python procedure** (`"target": "snowpark"`) | built; `workflows/wf_0006/segments/seg_02/` is the committed worked example (§6) | `segments/<seg>/proc.py`, plus a `proc.sql` **rendered** from it by `render_snowpark.py` | `compile_check.py <wf> <seg> --target snowpark` | `validate_snowpark.py` (Snowpark Local Testing Framework) |
+| **dbt project** (`manifest.json.output_kind: "dbt"`) | built; the committed worked example is `workflows/wf_0007/` (§6) | `workflows/<wf>/dbt/**` — one project for the whole workflow | `compile_check.py <wf> --target dbt` | `validate_dbt.py` (dbt-duckdb) |
+
+How the decision is made: `scripts/target_check.py <wf> --prefer auto` classifies every node
+(`python` → `snowpark`; `r`, `run_command`, `download`, `email`, `render`, `spatial` → `manual`;
+anything else known → `sql`) and writes `segments/targets.json`. The analyzer copies each proposal
+into that segment's `contract.json` as `"target"` and **may only lower it** — `sql` → `snowpark`, or
+either → `manual`, never back towards `sql`. The orchestrator verifies that before translating
+anything: a missing target (or one `targets.json` never proposed) parks the workflow at
+`NEEDS_HUMAN` with `target-missing: <seg>`, a raised one with
+`target-mismatch: <seg> raised <proposal> to <contract>`. A segment lowered all the way to `manual`
+is never translated — it parks with `manual-segment`. `--prefer auto` is what the
+orchestrator always passes; the script resolves the organisation's preference itself from
+`manifest.json.output_target`, then `mappings/global.yaml`'s `program.output_target`
+(default `procedures`).
+
+`output_kind: "dbt"` is honoured only when the preference asks for it **and** nothing blocks it (a
+Snowpark or manual segment, an unsupported write mode, a merge without keys, non-plain pre/post SQL,
+no outputs). Such a workflow is translated ONCE, as one dbt project under `workflows/<wf>/dbt/`: a
+`table` model per work stream, a model per final target with an upper-case `alias` and the config its
+write mode needs, `sources.yml`/`schema.yml`, and a `profiles.yml` that is always the one fixed
+template (no credential, ever). The project is a closed surface, checked before dbt ever runs
+(no Python model, hook other than one plain statement against the model's own table, macro, package or Jinja in
+YAML, and every model reading only through `source()`/`ref()`). `compile_check.py <wf> --target dbt` runs `dbt parse` and sixteen
+named checks; the reviewer reviews the project once; `validate_dbt.py` runs the whole project on
+dbt-duckdb per golden set and writes every segment's `validation.json`, so per-segment statuses are
+still recorded. In place of `master.sql` the workflow gets `procs/README.md` with the one
+`dbt run … --target snowflake` command — `dbt-snowflake` is not installed here, so that command has
+never run. Agents never run `dbt` themselves; the permission policy denies it however it is spelled.
+
+None of the three validators has ever run against a real Snowflake account. What each local double
+does **not** prove is listed in `docs/reference/output-targets.md` §6 — for Snowpark, in short: a
+subset of Snowflake's functions and types, no `session.sql`, no real `RUNTIME_VERSION`/`PACKAGES`
+resolution, nothing about performance; for dbt-duckdb: DuckDB's types, case folding and `MERGE`
+semantics, hooks run on DuckDB, and the tests `schema.yml` declares are not executed.
+
+Taking any of the three targets to a real Snowflake account, the company's real Alteryx corpus and
+GitHub-hosted models is the production hand-off: `docs/handoff-production.md`, written for the agent
+that does it.
 
 ## 2. Honesty note — read this before anything else
 
@@ -181,7 +292,7 @@ Two consequences follow directly from this:
   or a real Snowflake account would produce. Every doc in this repo that could be misread that way
   says so again at the point it matters.
 
-The two live tests where a **real** GitHub Copilot CLI/SDK session was driven, against a **real**
+The three live tests where a **real** GitHub Copilot CLI/SDK session was driven, against a **real**
 local model, are documented honestly in `docs/live-smoke-test.md` — see §3 and §11 below for what
 they did and did not prove.
 
@@ -205,15 +316,18 @@ fnm exec --using=22 copilot.cmd --version
 
 `fnm` installed through WinGet lives at `%LOCALAPPDATA%\Microsoft\WinGet\Links\fnm.exe`; on
 Windows, `fnm exec` spawns without shell resolution, so `npm`/`copilot` must be invoked as
-`npm.cmd`/`copilot.cmd`. `gh` (the GitHub CLI) is optional — its absence only skips PR/issue
-creation and logs that it did (see `stagePr`/`stageIntake` in `orchestrator/stages.ts`).
+`npm.cmd`/`copilot.cmd`. `gh` (the GitHub CLI) is optional, and GitHub integration is OFF unless
+`orchestrator.config.json` sets `"github": {"enabled": true}` or a run passes `--gh`: off, the
+orchestrator never invokes `gh` (no issue for open intake questions, no pull request) and logs
+`gh: disabled`; on but not installed, it logs `gh not installed` (see `stagePr`/`stageIntake` in
+`orchestrator/stages.ts`).
 
 **Optional: a local BYOK model, for the `local` profile / `--runner copilot`.** This repo's own
 live tests used `scripts/dev/serve_model.ps1` (a loopback-only `llama-server` launcher for a
 PrismML llama.cpp fork serving `Ternary-Bonsai-2-27B-PQ2_0.gguf`, with optional `-CacheTypeK`/
 `-CacheTypeV` KV-cache quantization flags for a larger context window) against
 `orchestrator.config.json`'s `profiles.local`, pointed at `http://127.0.0.1:8080/v1`. **Full
-results, both what worked and what did not across both tests, are in `docs/live-smoke-test.md`** —
+results, both what worked and what did not across all three tests, are in `docs/live-smoke-test.md`** —
 summarized in §11 below. This step is optional: every number in this README's §4 and every worked
 example in `workflows/` comes from `--runner mock`, which needs no model, no login and no network
 at all.
@@ -277,7 +391,9 @@ FQN had to be typed explicitly. This asymmetry is deliberate (`intake_prompt._en
 careless Enter must never let an output silently land on an unverified guess.
 
 The resulting `workflows/wf_0001/intake/mappings.yaml` (contract C6 — every source and output
-carries a `logical:` name, used inside `IDENTIFIER(...)` in the generated procedure):
+carries a `logical:` name; the generated procedure builds each table's name from it with a `LET`
+and references it as `IDENTIFIER(:<LOGICAL>_SRC)` or `IDENTIFIER(:<LOGICAL>_TGT)`, Snowflake's
+documented form -- not yet run on a real account, which the first real-account run confirms):
 
 ```yaml
 sources:
@@ -326,11 +442,14 @@ The orchestrator runs this same prompt itself whenever stdin is a real TTY (`--i
 default off a TTY is `--no-interactive`); in a live Copilot session the identical prompt logic
 backs the SDK's `onUserInputRequest` handler, so the intake agent can ask the same question through
 `ask_user` (`orchestrator/runner.ts`'s `CopilotRunner.answer`) — unattended, that handler reports
-the user is unavailable rather than blocking forever.
+the user is unavailable rather than blocking forever. Off a TTY, the open questions wait in
+`intake/open_questions.md` for a human to answer; only with GitHub integration on (`--gh`, or
+`github.enabled` in `orchestrator.config.json`) does the orchestrator also open a GitHub issue with
+them.
 
 ## 6. The offline end-to-end run, and what `workflows/` shows
 
-**The five sample workflows under `workflows/` are the committed PRODUCT of running this exact
+**The seven sample workflows under `workflows/` are the committed PRODUCT of running this exact
 sequence once — they are not something you need to (re-)generate.** On a fresh clone, `workflows/`
 is already there, already at the terminal states in the table further down: nothing in this
 section needs to be run just to *see* the worked examples. What follows is how to reproduce that
@@ -388,16 +507,21 @@ fnm exec --using=22 node.exe --experimental-strip-types orchestrate.ts --root "$
 promotion to the program-wide `mappings/global.yaml` — intended, reviewed state to commit — only
 ever happens for an interactive session or an explicit `--user <name>`, never for that default.
 Every workflow's own `intake/mappings.yaml` still gets the resolved sources and outputs (recorded
-`confirmed_by: automation`); `mappings/global.yaml` is untouched by this whole sequence, which is
-exactly why the committed one still parses to nothing but its own program/session/tolerances
-values (`tests/test_foundations.py`).
+`confirmed_by: automation`); no answer is promoted into `mappings/global.yaml` by this whole
+sequence, which is exactly why the committed one still parses to nothing but its own
+program/session/tolerances values (`tests/test_foundations.py`). (Running the sequence in a scratch
+root does re-serialise *that root's* copy of the file — comments stripped, every parsed value
+identical — so "no answer is promoted" is the precise claim, not "the bytes never move".)
 
 Every stage writes into `workflows/<id>/`: `parse.py` → `parsed/dag.json`; `intake_touchpoints.py`
-+ `intake_prompt.py` + the intake agent → `intake/`; `segment.py` + the analyzer agent →
-`segments/*/contract.json`, `analysis.md`, `unsupported.json`; `alteryx_sim.py` → `golden/`; the
-translator/fixer/reviewer/validator agents and `compile_check.py`/`validate_segment.py` (real
-scripts) → `segments/*/proc.sql`, `review.json`, `validation*.json`; the documenter agent →
-`docs/migration.md`.
++ `intake_prompt.py` + the intake agent → `intake/`; `segment.py`, `target_check.py`,
+`plan_batches.py`, the analyzer agent and `check_seams.py` → `segments/*/contract.json`,
+`segments/targets.json`, `segments/batches.json`, `segments/seams.json`, `analysis.md`,
+`unsupported.json`; `alteryx_sim.py` → `golden/`; the translator/fixer/reviewer/validator agents and
+`compile_check.py`/`validate_segment.py`/`validate_snowpark.py`/`validate_dbt.py` (real scripts) →
+`segments/*/proc.sql` (or `dbt/**`), `review.json`, `validation*.json`; `validate_workflow.py` (or,
+for a dbt workflow, `validate_dbt.py` itself) → `validation_workflow*.json`; the orchestrator →
+`procs/master.sql` (or `procs/README.md`); the documenter agent → `docs/migration.md`.
 
 **Terminal states** (`workflows/<id>/manifest.json.status`):
 
@@ -408,6 +532,53 @@ scripts) → `segments/*/proc.sql`, `review.json`, `validation*.json`; the docum
 | wf_0003 | T1 | PARSED | READY | DONE | DONE | **VALIDATED** | seg_01/02: PASS |
 | wf_0004 | T1 | PARSED | READY | DONE | DONE | **VALIDATED** | seg_01/02/03: PASS |
 | wf_0005 | T3 | PARSED | READY | DONE | *(never runs — T3)* | **MANUAL** | none (T3 has no per-segment contracts) |
+| wf_0006 | T2 | PARSED | READY | DONE | DONE | **VALIDATED** | seg_01/02/03: PASS (seg_02 is the Snowpark one) |
+| wf_0007 | T1 | PARSED | READY | DONE | DONE | **VALIDATED** | seg_01/02: PASS (one dbt project) |
+
+**The worked Snowpark example is `workflows/wf_0006/segments/seg_02/`.** Its Python tool made
+`target_check.py` propose `snowpark` for that one segment (`segments/targets.json`), so the
+orchestrator sent it down the Snowpark path instead of the SQL one: `proc.py` is the source of
+truth the translator wrote, `proc.sql` is the deployable `LANGUAGE PYTHON` DDL that
+`render_snowpark.py` rendered from it (never hand-written — re-render it after any edit to
+`proc.py`), `compile_check.json` is `compile_check.py --target snowpark`'s AST verdict, and
+`validation.json` carries `"target": "snowpark"` because `validate_snowpark.py` — the Snowpark
+Local Testing Framework, not DuckDB — is what ran it against the golden sets. `seg_01` and
+`seg_03` of the same workflow stayed `sql` and were served by `validate_segment.py` exactly like
+every other committed segment, and `procs/master.sql` calls all three procedures in wave order.
+Both workflow-level artefacts every run now writes — `segments/targets.json` and the manifest's
+`output_kind` — are in all seven trees, wf_0005 included: it is tier T3 and has no contracts for the
+lower-only check to run against, but the kind `target_check.py` decided is still mirrored into its
+manifest.
+
+**The worked dbt example is `workflows/wf_0007/dbt/`.** `sample.json` asks for `output_target: dbt`
+and nothing blocks it (every segment is plain `sql`), so the manifest records `output_kind: "dbt"` and
+the workflow was translated ONCE, as one project, instead of one procedure per segment.
+`dbt_project.yml` and `profiles.yml` (always the one fixed template, no credential) are the project;
+`models/sources.yml` declares the mapped sources, `models/wf0007_seg_01_out.sql` is `seg_01`'s work
+stream as a `table` model, `models/region_attainment.sql` and `models/attainment_history.sql` are the
+two final targets (each with its upper-case `alias`; `ATTAINMENT_HISTORY` is an incremental `merge`
+on `REGION, PERIOD`), and `models/schema.yml` their columns; `README.md` describes the project and how
+it is run, and `translation_notes.md` records the translator's decisions; `compile_check.json` is
+`compile_check.py wf_0007 --target dbt`'s verdict (`dbt parse` plus the named checks) and
+`review.json` the reviewer's, once for the whole project. `validate_dbt.py` ran the
+project on dbt-duckdb for each golden set and still wrote every segment's `validation.json`, which
+carries `"target": "dbt"` for that reason, plus the workflow's `validation_workflow.json`. In place of
+`procs/master.sql` the workflow has `procs/README.md`, the one `dbt run … --target snowflake` command
+(never run here: `dbt-snowflake` is not installed). No segment has a `proc.sql`. The run's own
+by-products — `dbt_sandbox_<set>.duckdb` and `dbt/logs/` — are git-ignored and not committed.
+
+Every VALIDATED workflow also carries `validation_workflow.json` (plus one
+`validation_workflow.<set>.json` per golden set): the stitched chain test, every segment run on its
+upstream's actual output, PASS with no divergence and idempotent — `deploy.py` refuses a workflow
+without it. Every workflow carries `segments/batches.json` (one analyzer batch each — all seven are far
+under the budget), and every workflow the analyzer wrote contracts for — all but the T3 wf_0005 —
+carries `segments/seams.json` with `"ok": true`.
+
+**Reproducing the product.** Run from a `git archive` export of this repository in a scratch root
+(its own `workflows/` deleted first), the sequence above rebuilds every committed file under
+`workflows/`; `diff -rq -x audit.jsonl -x '*.duckdb' -x '*.duckdb.wal' -x logs` against it lists only
+files whose `validation*.json` `runtime_ms` (each validator's own wall clock) or `manifest.json`
+`updated_at` differ, and with those two fields normalised the diff is empty.
 
 wf_0005's `unknown` vendor plugin (`AcmeAnalytics.Dedupe.DedupeTool`, a deliberate invention — see
 `samples/wf_0005/README.md`) triggers the **parser-recovery** path: `scripts/parse.py --check`
@@ -440,7 +611,7 @@ parks that stage `NEEDS_HUMAN` with reason `budget`, exactly like any other esca
 a plain re-run will not retry it. An explicit `--from-stage <stage>` both reopens the stage and
 grants it a fresh budget for what follows.
 
-**The fixer loop, from a real run.** None of the five committed workflows needed it — every
+**The fixer loop, from a real run.** None of the seven committed workflows needed it — every
 canned segment validated on the translator's first attempt — so here is a real transcript from a
 separate, scratch-root run (seeded and answered the same way as the sequence above, scoped to just
 `wf_0001` with `--only`, and with the same kind of `<scratch>/orchestrator.config.json` giving
@@ -473,6 +644,10 @@ ran for real; only which SQL text the mock served on each iteration was scripted
 
 ## 7. Adding a real workflow
 
+**In the company's setting, follow `docs/handoff-production.md` §3 instead of the short form below**
+(it adds the corpus survey, real golden capture with `inject_outputs.py` and the review), and work
+through `docs/production-backlog.md`, its first-week checklist, first.
+
 There is no capture tool here (no Alteryx engine), so this is a manual step:
 
 1. Put the workflow's `.yxmd` (and any `.yxmc` macros, referenced under the same relative paths it
@@ -483,24 +658,33 @@ There is no capture tool here (no Alteryx engine), so this is a manual step:
    default shape and every script fills in more of it as it runs.
 3. Run the pipeline against just this workflow:
    ```bash
-   fnm exec --using=22 node.exe --experimental-strip-types orchestrate.ts --root . --only <wf_id> --interactive --runner copilot --profile local
+   fnm exec --using=22 node.exe --experimental-strip-types orchestrate.ts --root <run root> --only <wf_id> --interactive --runner copilot --profile local
    ```
+   `<run root>` is a directory outside this repository, built as `docs/handoff-production.md` §0.3
+   shows (never the repo root); the workflow goes under `<run root>/workflows/<wf_id>/source/`.
    `--interactive` puts a real human at the yxdb-to-table prompt (§5); `--runner copilot` and
    `--profile local`/`hosted` select a real Copilot session instead of the mock (needs the
    prerequisites in §3). Use `--dry-run` first to see which stages would run without doing
-   anything (`plannedStages` in `orchestrator/stages.ts`).
+   anything (`plannedStages` in `orchestrator/stages.ts`). The run touches no GitHub remote: an
+   issue for open questions and a pull request after `document` happen only with `--gh` (or
+   `github.enabled`), which publishes and so needs the owner's approval.
 4. Anything the analyzer marks manual, or any `unknown` tool the parser-recovery agent cannot
    explain, stays `NEEDS_HUMAN`/`QUARANTINED`/`MANUAL` — see the re-running paragraph in §6 for how
    to resume once a human has acted.
 
 ## 8. Switching to a real Snowflake backend, and the hosted Copilot profile
 
+The procedure for both is `docs/handoff-production.md` §1 (hosted models) and §2 (Snowflake access:
+grants, the named connection, the sandbox, `--backend snowflake`, `deploy.py`); this section is the
+background.
+
 **Backend.** Every SQL operation goes through `scripts/lib/backend.py`'s `SqlBackend` seam
 (`translate`, `execute`, `query`, `load_table`, `create_view`, `table_exists`, `table_columns`,
 `close`). `SnowflakeBackend` already implements it — a thin pass-through plus
-`snowflake-connector-python` — but it is **untested code**: nothing in this repo has run it. Before
-using it for real: install `snowflake-connector-python` into `.venv`, pass `kind="snowflake"` plus
-real `connect_args` to `get_backend`, and treat every one of its methods as needing its own
+`snowflake-connector-python` — but it is **untested code**: nothing in this repo has run it against
+an account. It takes only the NAME of an entry in your own `connections.toml` (never a password or
+any other connection argument), every validator reaches it with `--backend snowflake`, run by a
+human (`docs/reference/snowflake-backend.md`), and every one of its methods needs its own
 verification pass (the module docstring names two known DuckDB-vs-Snowflake differences —
 `VARCHAR(n)` length enforcement and identifier casing — that a real account will NOT paper over the
 way DuckDB does).
@@ -511,6 +695,28 @@ against any Snowflake account; review and adapt before running this against a re
 shadow table per migrated target), `03_reconciliation_task_template.sql` (compares shadow vs.
 production on a schedule), `04_alerts.sql` (fires on a reconciliation `FAIL`), `05_roles.sql`
 (`MIGRATION_AGENT`/`MIGRATION_CI`/`MIGRATION_RUN` and their grants).
+
+**Deploying a Snowpark Python procedure.** A `"target": "snowpark"` segment deploys through exactly
+the same file as a SQL one: `segments/<seg>/proc.sql`, which for this target is the
+`LANGUAGE PYTHON` wrapper around `proc.py`. There is no separate step to install `proc.py` — it
+travels verbatim inside the wrapper's `$$ … $$` body, and `procs/master.sql` calls the segment with
+the same name and the same five arguments as any other. Before running that DDL on a real account:
+
+1. **`RUNTIME_VERSION`** comes from `mappings/global.yaml`'s `program.snowpark_runtime` (currently
+   `"3.11"`). Confirm your account offers that Python runtime; if it does not, change the value
+   there and re-run `.venv/Scripts/python.exe scripts/render_snowpark.py <wf_id> <seg>` — never edit
+   `proc.sql` by hand, since `compile_check.py --target snowpark` re-renders it and refuses any byte
+   that differs from `proc.py`.
+2. **`PACKAGES = ('snowflake-snowpark-python', 'pandas')`** must resolve in your account's Anaconda
+   channel, and any further import the procedure uses has to be added to that list.
+3. `EXECUTE AS CALLER` applies here as to every procedure in this repo (§9.1), so the Python
+   procedure can never exceed the access its caller already has.
+4. Deploy under `MIGRATION_CI`, the same as SQL — see the paragraph below.
+
+Local validation of a Snowpark segment used the Snowpark Local Testing Framework, which implements a
+subset of Snowflake's functions and types, has no `session.sql`, and resolves no real
+`RUNTIME_VERSION` or `PACKAGES`: a local `PASS` says the logic matched the golden data, not that the
+procedure will create or run on your account (`docs/reference/output-targets.md` §6).
 
 **The policy hook is defence in depth, not the primary boundary.** `orchestrator/policy.ts` is a
 conservative textual check with no real SQL or shell parser — see `orchestrator/POLICY.md`'s own
@@ -531,8 +737,9 @@ attempts it and does not recommend it as a substitute for the context-window fin
 `docs/live-smoke-test.md` (summarized in §11). **Hand-off for the hosted profile:**
 `docs/handoff-copilot-models.md` covers the owner's model policy (Luna Max by default, the 1M-token
 context tier only for the roles that need it, no automatic escalation), where every model id is
-chosen in this repo, `scripts/dev/list_models.ts` for reading the real catalog, the one code change
-needed for per-role context tiers, and the first-run procedure.
+chosen in this repo, `scripts/dev/list_models.ts` for reading the real catalog, `scripts/dev/set_models.py`
+and the `--check-models` preflight (per-role context tiers are implemented), and the first-run
+procedure.
 
 ## 9. Deviations from the program spec
 
@@ -575,7 +782,9 @@ needed for per-role context tiers, and the first-run procedure.
    over a translation difference can repair broken reference data or explain an unclassified one.
 9. **Keyless streams are classified by nearest-match pairing** — a heuristic, not an exact
    correspondence, used only when a stream has no declared key to join golden and actual rows on.
-10. **`gh` is optional.** Its absence logs and skips PR/issue creation; workflow status is
+10. **GitHub is opt-in.** The spec's issue and pull request happen only with `--gh` or
+    `github.enabled: true`; otherwise (the default) the orchestrator never invokes `gh`, logs
+    `gh: disabled` and skips them, exactly as when `gh` is not installed; workflow status is
     unaffected (`stagePr`/`stageIntake` in `orchestrator/stages.ts`).
 
 ## 10. Repo map
@@ -602,7 +811,7 @@ scripts/
   load_golden.py, gen_source_views.py, compile_check.py, compare.py, validate_segment.py
   intake_touchpoints.py, intake_prompt.py       the yxdb-to-table prompt (§5)
   dev/{formula,alteryx_sim,build_samples,answer_samples}.py, dev/serve_model.ps1
-samples/wf_000N/{source,golden_inputs,expected_sql,broken_sql,canned}/, sample.json   fixtures for the 5 sample workflows
+samples/wf_000N/{source,golden_inputs,expected_sql,broken_sql,canned}/, sample.json   fixtures for the 7 sample workflows
 cookbook/index.md, cookbook/<tool>.md          the translator/fixer's only source of tool semantics
 tests/, tests/parser_corpus/<name>/, tests/cookbook_examples/<tool>/
 mappings/global.yaml   catalog/columns.csv     program-wide answers / a stand-in INFORMATION_SCHEMA
@@ -611,7 +820,8 @@ workflows/<wf_id>/…    the committed offline run's worked examples (§6)
 docs/
   spec/00-README.md, 01-copilot-setup.md, 02-schemas-reference.md    the program spec (never edited by this build)
   reference/{dag-contract,simulator-semantics}.md                     what the parser/simulator actually implement
-  live-smoke-test.md                                                  the real Copilot SDK runs, two so far (§3, §11 below)
+  reference/output-targets.md                                         sql / snowpark / dbt: the decision, artefacts, deployment (§1)
+  live-smoke-test.md                                                  the real Copilot SDK runs, three so far (§3, §11 below)
   superpowers/specs/2026-09-18-alteryx-snowflake-pipeline-design.md   this build's own design + deviations (§9)
 ```
 
@@ -628,9 +838,13 @@ and observed the result; **still open** means it was not exercised, whether or n
   test's two attempts (zero `unrecognized-tool` denials there). The second live test (larger
   context, 2026-09-20) then observed one genuinely unrecognized name, `list_powershell` — correctly
   denied by the fail-closed default, confirming that path works too, not just the already-known
-  names. **Still open:** no `SQL_TOOL`- or `WRITE_TOOL`-classified call was ever attempted across
-  either live test (all four attempts, across both tests, never got past intake's read-only
-  orientation phase), so those two regexes remain unverified by live evidence.
+  names. The third live test (262k context, 2026-09-23) observed the write tool for the first
+  time: `create` with `path` and `file_text`, classified by `WRITE_TOOL` and used to write
+  `intake/plan.md` and `mappings.yaml` on all three samples; it also saw `ask_user` with `question`
+  and `choices`. **Still open:** no `SQL_TOOL`-classified call was ever attempted, because a local
+  session has no SQL-named tool (every SQL statement runs through a script via the shell tool).
+  The hand-off guide's rung 2 (`docs/handoff-production.md` §1.5) reads the hosted session's
+  audit log and tightens both regexes from that evidence.
 - [ ] **Custom agent names accepted under `subagents.agents` in `config.json` (fallback:
   frontmatter `model:`).** **Partially verified.** The frontmatter fallback path is what this
   build actually uses and it worked live: a real session started successfully with `customAgents`

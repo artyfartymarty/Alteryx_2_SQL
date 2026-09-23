@@ -1,0 +1,52 @@
+{
+  "id": "wf_0007",
+  "status": {
+    "parse": "PARSED",
+    "intake": "READY",
+    "analyze": "DONE",
+    "golden": "DONE",
+    "translate": "VALIDATED",
+    "document": "DONE"
+  },
+  "metrics": {},
+  "source": {
+    "file": "regional_targets.yxmd",
+    "alteryx_version": "2023.1",
+    "engine": "E1",
+    "server_schedule": "0 6 * * 1-5",
+    "owner": "wf_owner",
+    "consumers": []
+  },
+  "segmentation": {
+    "min_tools": 2,
+    "max_tools": 40
+  },
+  "output_target": "dbt",
+  "updated_at": "2026-09-23T11:00:13.417Z",
+  "parse": {
+    "attempts": 1,
+    "extensions": []
+  },
+  "answers": {
+    "Q1": "PLANNING.RAW.TARGETS",
+    "Q2": "SALES.RAW.ACTUALS",
+    "Q3": "ANALYTICS.CURATED.REGION_ATTAINMENT",
+    "Q4": "ANALYTICS.CURATED.ATTAINMENT_HISTORY"
+  },
+  "segments": [
+    "seg_01",
+    "seg_02"
+  ],
+  "tier": "T1",
+  "output_kind": "dbt",
+  "golden_sets": [
+    "normal",
+    "period_end",
+    "empty",
+    "edge"
+  ],
+  "segment_status": {
+    "seg_01": "PASS",
+    "seg_02": "PASS"
+  }
+}

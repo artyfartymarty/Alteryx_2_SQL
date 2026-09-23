@@ -1,6 +1,7 @@
 {
   "workflow": "wf_0003",
   "segment": "seg_01",
+  "target": "sql",
   "inputs": [
     {
       "logical": "GL_LEDGER",

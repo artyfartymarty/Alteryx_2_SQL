@@ -1,0 +1,14 @@
+{
+  "ok": true,
+  "seams": [
+    {
+      "producer": "seg_01",
+      "consumer": "seg_02",
+      "stream": "3_Output",
+      "table": "MIG_WORK.WF0003_SEG_01_OUT",
+      "status": "ok",
+      "problems": []
+    }
+  ],
+  "duplicates": []
+}

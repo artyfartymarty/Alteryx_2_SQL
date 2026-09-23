@@ -1,0 +1,24 @@
+{
+  "preference": "procedures",
+  "output_kind": "procedures",
+  "reason": "preference procedures",
+  "dbt_blockers": [
+    {
+      "segment": "seg_01",
+      "kind": "unknown_node",
+      "tool_id": "2"
+    },
+    {
+      "segment": "seg_01",
+      "kind": "manual_node",
+      "tool_id": "3"
+    }
+  ],
+  "segments": {
+    "seg_01": "sql"
+  },
+  "nodes": {
+    "2": "unknown",
+    "3": "manual"
+  }
+}

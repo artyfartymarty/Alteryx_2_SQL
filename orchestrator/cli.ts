@@ -5,10 +5,14 @@ import { readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { loadAgents } from "./agents.ts";
 import { loadManifest } from "./manifest.ts";
+import { checkModels, configuredModels } from "./models.ts";
+import type { CatalogModel, CliSubagentsConfig } from "./models.ts";
 import { CopilotRunner, MockRunner } from "./runner.ts";
 import { migrateWorkflow } from "./stages.ts";
-import { STAGES } from "./types.ts";
-import type { AgentRunner, Env, Manifest, OrchestratorConfig, Profile, RunOptions, ShResult, Stage, Tier } from "./types.ts";
+import { ROLES, STAGES } from "./types.ts";
+import type {
+  AgentRunner, Env, Manifest, OrchestratorConfig, Profile, ProfileConfig, RunOptions, ShResult, Stage, Tier,
+} from "./types.ts";
 
 export const CONFIG_FILE = "orchestrator.config.json";
 
@@ -23,20 +27,33 @@ export const DEFAULT_CONFIG: OrchestratorConfig = {
   golden: { producer: "simulator" },
   budgets: { maxToolCallsPerWorkflow: 400 },
   policy: { sandboxDatabases: ["MIGDB"] },
+  // GitHub is opt-in (Task P4 fix round 1, B3): with it off the orchestrator never invokes `gh` --
+  // no issue for open questions, no pull request -- whether or not `gh` is installed. `--gh` turns
+  // it on for one run.
+  github: { enabled: false },
+  analyzerBudgetChars: 60000,
   profiles: {
     local: {
       provider: { type: "openai", baseUrl: "http://127.0.0.1:8080/v1", apiKey: "local" },
       model: "ternary-bonsai-2-27b",
       reasoningEffort: "medium",
     },
+    // One model for every role, the owner's policy (docs/handoff-copilot-models.md §1): no
+    // roleModels here, so a config file that drops its own roleModels routes every role to `model`
+    // (Task P4 fix round 1, B1). The id itself is a placeholder until scripts/dev/set_models.py.
     hosted: {
       model: "gpt-5.6-luna",
-      roleModels: {
-        intake: "gpt-6-astra",
-        analyzer: "gpt-6-astra",
-        translator: "gpt-6-astra",
-        fixer: "gpt-6-astra",
-        "parser-recovery": "gpt-6-astra",
+      reasoningEffort: "medium",
+      roleContextTiers: {
+        intake: "long_context",
+        analyzer: "long_context",
+        fixer: "long_context",
+        "parser-recovery": "long_context",
+        validator: "long_context",
+      },
+      roleReasoningEffort: {
+        documenter: "low",
+        reviewer: "low",
       },
     },
   },
@@ -101,6 +118,12 @@ export function parseArgs(argv: string[]): RunOptions {
       case "--scenario":
         opts.scenario = value();
         break;
+      case "--check-models":
+        opts.checkModels = true;
+        break;
+      case "--gh":
+        opts.gh = true;
+        break;
       default:
         throw new UsageError(`unknown option ${flag}`);
     }
@@ -162,6 +185,108 @@ export async function assertPythonExists(root: string, config: OrchestratorConfi
   }
 }
 
+/**
+ * `config.json` (the Copilot CLI config copied into `COPILOT_HOME`; `--check-models` only reads
+ * its `subagents.agents.<name>.model` map). Absent is fine — a scratch root need not carry one —
+ * but present and unparsable is a usage error, the same treatment `readConfigFile` gives
+ * `orchestrator.config.json`.
+ */
+async function readCliConfigFile(root: string): Promise<CliSubagentsConfig> {
+  const configPath = path.join(root, "config.json");
+  let text: string;
+  try {
+    text = await readFile(configPath, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return {};
+    throw new UsageError(`cannot read ${configPath}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  try {
+    return JSON.parse(text) as CliSubagentsConfig;
+  } catch (error) {
+    throw new UsageError(`${configPath} is not valid JSON: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+/** The real catalog call `--check-models` makes when no `deps.listModels` is injected: a human's
+ * own preflight, never run by an agent (docs/handoff-copilot-models.md §2 — the human signs in
+ * with `copilot`, then `/login`, first). Mirrors scripts/dev/list_models.ts. */
+async function liveListModels(): Promise<CatalogModel[]> {
+  const { CopilotClient } = await import("@github/copilot-sdk");
+  const client = new CopilotClient();
+  await client.start();
+  try {
+    return await client.listModels();
+  } finally {
+    await client.stop();
+  }
+}
+
+/**
+ * `--check-models`: lists the hosted-profile catalog (via `deps.listModels`, or a live SDK call
+ * when none is injected) and checks it against every model id this repo currently configures for
+ * the hosted profile. Exits before any workflow is selected — this never touches `workflows/`.
+ */
+async function runCheckModels(
+  root: string,
+  config: OrchestratorConfig,
+  profile: Profile,
+  listModels: (() => Promise<CatalogModel[]>) | undefined,
+): Promise<number> {
+  if (profile !== "hosted") {
+    throw new UsageError("--check-models requires --profile hosted (the local BYOK profile has no catalog to check)");
+  }
+  const cliConfig = await readCliConfigFile(root);
+  const agents = await loadAgents(root, "hosted");
+  const agentModels = Object.fromEntries(
+    agents.filter((agent): agent is typeof agent & { model: string } => Boolean(agent.model)).map((agent) => [agent.name, agent.model]),
+  );
+  const configured = configuredModels(config, profile, agentModels, cliConfig);
+
+  // What each role's session will actually ask for -- exactly runner.ts's createSession resolution.
+  const profileConfig = config.profiles[profile];
+  for (const role of ROLES) {
+    console.log(`effective ${role}: ${profileConfig.roleModels?.[role] ?? profileConfig.model ?? "(none)"}`);
+  }
+
+  let catalog: CatalogModel[];
+  try {
+    catalog = await (listModels ?? liveListModels)();
+  } catch (error) {
+    throw new UsageError(
+      `cannot list the model catalog (sign in first: copilot, then /login — docs/handoff-copilot-models.md §2): ` +
+        `${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+
+  const result = checkModels(configured, catalog);
+  for (const entry of result.missing) console.log(`${entry.where}: ${entry.id} — missing`);
+  for (const entry of result.disabled) console.log(`${entry.where}: ${entry.id} — disabled`);
+  console.log(
+    result.ok
+      ? `orchestrate: every configured model id is enabled (${configured.length} checked)`
+      : `orchestrate: ${result.missing.length} missing, ${result.disabled.length} disabled, of ${configured.length} configured`,
+  );
+  return result.ok ? 0 : 1;
+}
+
+/** The per-role maps of a profile. Each is one decision made as a whole (scripts/dev/set_models.py
+ * writes all three from one command), so a file that defines the profile owns them outright. */
+const ROLE_MAPS = ["roleModels", "roleContextTiers", "roleReasoningEffort"] as const;
+
+/** A profile from the config file over its default. Scalars (`model`, `reasoningEffort`, `provider`)
+ * fall back to the default one by one; the per-role maps are taken from the file whole or not at
+ * all -- never merged key by key, and never inherited from the default when the file omits them --
+ * so removing a map, or a role from a map, in the file removes it (Task P4 fix round 1, B1). A file
+ * that does not define the profile gets the default unchanged. */
+function profileOver(base: ProfileConfig, file: ProfileConfig | undefined): ProfileConfig {
+  if (!file) return base;
+  const merged: ProfileConfig = { ...base, ...file };
+  for (const key of ROLE_MAPS) {
+    if (file[key] === undefined) delete merged[key];
+  }
+  return merged;
+}
+
 export async function loadConfig(root: string): Promise<OrchestratorConfig> {
   const onDisk = await readConfigFile(root);
   return {
@@ -170,11 +295,24 @@ export async function loadConfig(root: string): Promise<OrchestratorConfig> {
     golden: { ...DEFAULT_CONFIG.golden, ...(onDisk.golden ?? {}) },
     budgets: { ...DEFAULT_CONFIG.budgets, ...(onDisk.budgets ?? {}) },
     policy: { ...DEFAULT_CONFIG.policy, ...(onDisk.policy ?? {}) },
+    github: { ...DEFAULT_CONFIG.github, ...(onDisk.github ?? {}) },
     profiles: {
-      local: { ...DEFAULT_CONFIG.profiles.local, ...(onDisk.profiles?.local ?? {}) },
-      hosted: { ...DEFAULT_CONFIG.profiles.hosted, ...(onDisk.profiles?.hosted ?? {}) },
+      local: profileOver(DEFAULT_CONFIG.profiles.local, onDisk.profiles?.local),
+      hosted: profileOver(DEFAULT_CONFIG.profiles.hosted, onDisk.profiles?.hosted),
     },
   };
+}
+
+/** Whether this run may use GitHub, and whether `gh` is there to use. Off unless the config's
+ * `github.enabled` or `--gh` turns it on; when off, `probe` (which runs `gh --version`) is never
+ * called, so the orchestrator never invokes `gh` at all (Task P4 fix round 1, B3). */
+export async function githubAccess(
+  config: OrchestratorConfig,
+  opts: Pick<RunOptions, "gh">,
+  probe: () => Promise<boolean>,
+): Promise<{ enabled: boolean; hasGh: boolean }> {
+  const enabled = opts.gh === true || config.github?.enabled === true;
+  return { enabled, hasGh: enabled ? await probe() : false };
 }
 
 function runProcess(
@@ -189,11 +327,16 @@ function runProcess(
     });
     let out = "";
     let err = "";
-    child.stdout?.on("data", (chunk) => {
-      out += String(chunk);
+    // A stream decoder, not String(chunk): a UTF-8 character split across two pipe chunks would
+    // otherwise become two replacement characters (Task P4 fix round 2, M15). Every script writes
+    // UTF-8 (scripts/lib/console.py).
+    child.stdout?.setEncoding("utf8");
+    child.stderr?.setEncoding("utf8");
+    child.stdout?.on("data", (chunk: string) => {
+      out += chunk;
     });
-    child.stderr?.on("data", (chunk) => {
-      err += String(chunk);
+    child.stderr?.on("data", (chunk: string) => {
+      err += chunk;
     });
     child.on("error", (error) => resolve({ ok: false, code: 127, out, err: String(error) }));
     child.on("close", (code) => resolve({ ok: code === 0, code: code ?? -1, out, err }));
@@ -206,6 +349,7 @@ export function makeEnv(args: {
   runner: AgentRunner;
   interactive: boolean;
   hasGh: boolean;
+  ghEnabled: boolean;
 }): Env {
   const { root, config } = args;
   return {
@@ -214,6 +358,7 @@ export function makeEnv(args: {
     runner: args.runner,
     interactive: args.interactive,
     hasGh: args.hasGh,
+    ghEnabled: args.ghEnabled,
     py: (script, scriptArgs, opts) =>
       runProcess(path.resolve(root, config.python), [script, ...scriptArgs, "--root", root], {
         cwd: root,
@@ -260,7 +405,10 @@ function summarize(m: Manifest): string {
  * Exit codes: 0 every selected workflow reached a terminal or parked state, 1 a workflow
  * ended NEEDS_HUMAN / QUARANTINED / BLOCKED, 2 a usage error or an unexpected failure.
  */
-export async function main(argv: string[], deps: { env?: Env } = {}): Promise<number> {
+export async function main(
+  argv: string[],
+  deps: { env?: Env; listModels?: () => Promise<CatalogModel[]> } = {},
+): Promise<number> {
   let opts: RunOptions;
   try {
     opts = parseArgs(argv);
@@ -273,8 +421,10 @@ export async function main(argv: string[], deps: { env?: Env } = {}): Promise<nu
   try {
     const root = deps.env?.root ?? path.resolve(opts.root ?? process.cwd());
     const config = deps.env?.config ?? (await loadConfig(root));
-    if (!deps.env) await assertPythonExists(root, config);
     const profile: Profile = opts.profile ?? "local";
+    // Checked before assertPythonExists: --check-models runs no script and needs no interpreter.
+    if (opts.checkModels) return await runCheckModels(root, config, profile, deps.listModels);
+    if (!deps.env) await assertPythonExists(root, config);
     const interactive = deps.env?.interactive ?? opts.interactive ?? Boolean(process.stdin.isTTY);
 
     let ids = await workflowIds(root, opts);
@@ -312,11 +462,11 @@ export async function main(argv: string[], deps: { env?: Env } = {}): Promise<nu
         client = copilot;
         runner = new CopilotRunner({ client: copilot, root, config, profile, agents: await loadAgents(root, profile) });
       }
-      const hasGh = (await runProcess("gh", ["--version"], { cwd: root })).ok;
-      env = makeEnv({ root, config, runner, interactive, hasGh });
+      const gh = await githubAccess(config, opts, async () => (await runProcess("gh", ["--version"], { cwd: root })).ok);
+      env = makeEnv({ root, config, runner, interactive, hasGh: gh.hasGh, ghEnabled: gh.enabled });
       runner.attach(env);
       console.log(
-        `orchestrate: root=${root} runner=${kind} profile=${profile} gh=${hasGh ? "yes" : "no"} ` +
+        `orchestrate: root=${root} runner=${kind} profile=${profile} gh=${gh.enabled ? (gh.hasGh ? "yes" : "no") : "disabled"} ` +
           `interactive=${interactive ? "yes" : "no"} workflows=${ids.length}`,
       );
     }

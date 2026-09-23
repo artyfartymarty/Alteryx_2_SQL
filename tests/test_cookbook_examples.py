@@ -64,6 +64,12 @@ COOKBOOK_TOOLS = (
 #: here instead of silently losing its executable example.
 NOT_EXECUTABLE_LOCALLY: dict[str, str] = {}
 
+#: The two output-target pages (`cookbook/snowpark.md`, `cookbook/dbt.md`, Task E) follow their
+#: own template and their own regression harnesses (`tests/test_cookbook_snowpark.py`,
+#: `tests/test_cookbook_dbt.py`) -- they are not per-Alteryx-tool pages, so `COOKBOOK_TOOLS`'
+#: bijection tests must not expect one of them for a "tool" named "snowpark" or "dbt".
+TARGET_PAGES = ("snowpark", "dbt")
+
 TOLERANCES = {"float_abs": 1e-6, "float_rel": 1e-9, "timestamp_precision": "milliseconds",
               "rounding": {"abs": 0.01}}
 
@@ -102,7 +108,7 @@ def test_every_cookbook_tool_is_either_simulated_or_documented_as_not_executable
 # --- page <-> example bijection ------------------------------------------------------------------
 
 def test_every_cookbook_tool_has_a_page():
-    pages = {path.stem for path in COOKBOOK_DIR.glob("*.md") if path.stem != "index"}
+    pages = {path.stem for path in COOKBOOK_DIR.glob("*.md") if path.stem != "index"} - set(TARGET_PAGES)
     assert pages == set(COOKBOOK_TOOLS)
 
 

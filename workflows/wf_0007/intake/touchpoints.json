@@ -1,0 +1,172 @@
+[
+  {
+    "id": "Q1",
+    "kind": "input",
+    "tool_id": "1",
+    "annotation": "Plan targets by region and period",
+    "format": "yxdb",
+    "source": "C:\\data\\plan\\targets.yxdb",
+    "key": "plan/targets.yxdb",
+    "fields": [
+      "REGION",
+      "PERIOD",
+      "TARGET"
+    ],
+    "field_source": "yxdb_header",
+    "record_count": 6,
+    "query": null,
+    "table": null,
+    "write_mode": null,
+    "keys": [],
+    "pre_sql": null,
+    "post_sql": null,
+    "blocking": true,
+    "resolved": null,
+    "candidates": [
+      {
+        "snowflake": "FINANCE.RAW.GL_LEDGER",
+        "matched": 2,
+        "of": 3,
+        "missing": [
+          "TARGET"
+        ],
+        "score": 0.5333,
+        "row_count": 15208763,
+        "basis": "columns"
+      },
+      {
+        "snowflake": "ANALYTICS.RAW.TARGETS",
+        "basis": "naming"
+      }
+    ]
+  },
+  {
+    "id": "Q2",
+    "kind": "input",
+    "tool_id": "2",
+    "annotation": "Booked actuals, one row per sales line",
+    "format": "yxdb",
+    "source": "C:\\data\\sales\\actuals.yxdb",
+    "key": "sales/actuals.yxdb",
+    "fields": [
+      "REGION",
+      "PERIOD",
+      "ACTUAL"
+    ],
+    "field_source": "yxdb_header",
+    "record_count": 6,
+    "query": null,
+    "table": null,
+    "write_mode": null,
+    "keys": [],
+    "pre_sql": null,
+    "post_sql": null,
+    "blocking": true,
+    "resolved": null,
+    "candidates": [
+      {
+        "snowflake": "FINANCE.RAW.GL_LEDGER",
+        "matched": 2,
+        "of": 3,
+        "missing": [
+          "ACTUAL"
+        ],
+        "score": 0.5333,
+        "row_count": 15208763,
+        "basis": "columns"
+      },
+      {
+        "snowflake": "ANALYTICS.RAW.ACTUALS",
+        "basis": "naming"
+      }
+    ]
+  },
+  {
+    "id": "Q3",
+    "kind": "output",
+    "tool_id": "6",
+    "annotation": "region_attainment.yxdb",
+    "format": "yxdb",
+    "source": "C:\\data\\out\\region_attainment.yxdb",
+    "key": "out/region_attainment.yxdb",
+    "fields": [
+      "REGION",
+      "PERIOD",
+      "TARGET_TOTAL",
+      "ACTUAL_TOTAL",
+      "LINES"
+    ],
+    "field_source": "meta",
+    "record_count": null,
+    "query": null,
+    "table": null,
+    "write_mode": "overwrite",
+    "keys": [],
+    "pre_sql": null,
+    "post_sql": null,
+    "blocking": true,
+    "resolved": null,
+    "candidates": [
+      {
+        "snowflake": "ANALYTICS.CURATED.REGION_ATTAINMENT",
+        "basis": "naming"
+      }
+    ]
+  },
+  {
+    "id": "Q4",
+    "kind": "output",
+    "tool_id": "7",
+    "annotation": "dbo.ATTAINMENT_HISTORY",
+    "format": "db",
+    "source": "<scrubbed:prod_plan>",
+    "key": "alias:prod_plan/dbo.attainment_history",
+    "fields": [
+      "REGION",
+      "PERIOD",
+      "TARGET_TOTAL",
+      "ACTUAL_TOTAL",
+      "LINES"
+    ],
+    "field_source": "meta",
+    "record_count": null,
+    "query": null,
+    "table": "dbo.ATTAINMENT_HISTORY",
+    "write_mode": "update_insert",
+    "keys": [
+      "REGION",
+      "PERIOD"
+    ],
+    "pre_sql": null,
+    "post_sql": null,
+    "blocking": true,
+    "resolved": null,
+    "candidates": [
+      {
+        "snowflake": "ANALYTICS.CURATED.ATTAINMENT_HISTORY",
+        "basis": "naming"
+      }
+    ]
+  },
+  {
+    "id": "Q5",
+    "kind": "constant",
+    "tool_id": null,
+    "annotation": null,
+    "format": null,
+    "source": "2026",
+    "key": "User.CurrentYear",
+    "fields": [],
+    "field_source": null,
+    "record_count": null,
+    "query": null,
+    "table": null,
+    "write_mode": null,
+    "keys": [],
+    "pre_sql": null,
+    "post_sql": null,
+    "blocking": false,
+    "resolved": null,
+    "candidates": []
+  }
+]

@@ -1,0 +1,26 @@
+[
+  {
+    "name": "PERIOD",
+    "type": "V_WString",
+    "size": 254,
+    "scale": null
+  },
+  {
+    "name": "TOTAL_RECOGNIZED",
+    "type": "Double",
+    "size": 8,
+    "scale": null
+  },
+  {
+    "name": "TOTAL_DEFERRED",
+    "type": "Double",
+    "size": 8,
+    "scale": null
+  },
+  {
+    "name": "CUSTOMERS",
+    "type": "Int64",
+    "size": 8,
+    "scale": null
+  }
+]

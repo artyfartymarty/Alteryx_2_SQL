@@ -1,0 +1,14 @@
+[
+  {
+    "name": "AMOUNT_TXT",
+    "type": "V_String",
+    "size": 20,
+    "scale": null
+  },
+  {
+    "name": "QTY",
+    "type": "Int32",
+    "size": 4,
+    "scale": null
+  }
+]

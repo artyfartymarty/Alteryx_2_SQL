@@ -1,0 +1,51 @@
+{
+  "id": "wf_0006",
+  "status": {
+    "parse": "PARSED",
+    "intake": "READY",
+    "analyze": "DONE",
+    "golden": "DONE",
+    "translate": "VALIDATED",
+    "document": "DONE"
+  },
+  "metrics": {},
+  "source": {
+    "file": "subscription_revenue.yxmd",
+    "alteryx_version": "2023.1",
+    "engine": "AMP",
+    "server_schedule": "0 6 * * 1-5",
+    "owner": "wf_owner",
+    "consumers": []
+  },
+  "segmentation": {
+    "min_tools": 1,
+    "max_tools": 40
+  },
+  "updated_at": "2026-09-23T11:00:13.415Z",
+  "parse": {
+    "attempts": 1,
+    "extensions": []
+  },
+  "answers": {
+    "Q1": "BILLING.RAW.SUBSCRIPTIONS",
+    "Q2": "ANALYTICS.CURATED.REVENUE_BY_PERIOD"
+  },
+  "segments": [
+    "seg_01",
+    "seg_02",
+    "seg_03"
+  ],
+  "tier": "T2",
+  "output_kind": "procedures",
+  "golden_sets": [
+    "normal",
+    "period_end",
+    "empty",
+    "edge"
+  ],
+  "segment_status": {
+    "seg_01": "PASS",
+    "seg_02": "PASS",
+    "seg_03": "PASS"
+  }
+}

@@ -1,0 +1,18 @@
+[
+  {
+    "segment": "seg_02",
+    "target": "snowpark",
+    "file": "01_cancellation_reset_ignored.py",
+    "golden_set": "normal",
+    "expect": { "class": "LOGIC", "columns": ["RECOGNIZED"], "stream": "3_1" },
+    "note": "The stream is keyed on (CUSTOMER, PERIOD), so the comparison joins on it and names the one row that moved: ACME's cancelled 2026-03 period, which recognizes the balance the reset should have dropped. DEFERRED is NOT in the cluster and that is correct -- ACME's carried balance happens to be fully recognized under either rule, so only RECOGNIZED disagrees. This row is a Snowpark variant: `target` sends tests/test_e2e_parity.py to validate_snowpark.py, which runs the module in the Snowpark Local Testing Framework, and compare.py then judges it exactly as it judges a SQL one."
+  },
+  {
+    "segment": "seg_03",
+    "target": "sql",
+    "file": "01_summarize_drops_period.sql",
+    "golden_set": "normal",
+    "expect": { "class": "LOGIC", "columns": ["CUSTOMERS", "TOTAL_DEFERRED", "TOTAL_RECOGNIZED"], "stream": "4_Output" },
+    "note": "Two clusters, both LOGIC on 4_Output. The recorded one is the keyed value cluster: the one period that survives keeps its key but carries the totals of the whole stream, and t4_summarize is named as the suspect CTE. The other cluster (`columns: []`, `scope: \"rows\"`, count 2) is the two periods that are simply missing from the target. The e2e test reads only `class`, `columns` and `stream`, and the columns cluster is the more specific of the two."
+  }
+]

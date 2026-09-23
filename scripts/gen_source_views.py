@@ -2,10 +2,12 @@
 
     python scripts/gen_source_views.py <wf_id> [--root .] [--out PATH]
 
-A translated procedure reads `IDENTIFIER(:SRC_DB || '.' || :SRC_SCHEMA || '.<LOGICAL>')` and never
-names a production schema. Tests point `SRC_SCHEMA` at the golden view schema `load_golden.py`
-builds; production points it at the schema this script's DDL creates, whose views map the same
-logical names to the real tables confirmed during intake. One procedure body, two worlds.
+A translated procedure builds each source's name as
+`LET <LOGICAL>_SRC VARCHAR := SRC_DB || '.' || SRC_SCHEMA || '.<LOGICAL>';`, reads it as
+`IDENTIFIER(:<LOGICAL>_SRC)` (contract C4's documented form) and never names a production
+schema. Tests point `SRC_SCHEMA` at the golden view schema `load_golden.py` builds; production
+points it at the schema this script's DDL creates, whose views map the same logical names to the
+real tables confirmed during intake. One procedure body, two worlds.
 
 Final targets need no view: procedures write through `TGT_DB`/`TGT_SCHEMA` to the logical name,
 and Snowflake cannot insert through a view anyway.
@@ -98,4 +100,6 @@ def main(argv=None) -> int:
 
 
 if __name__ == "__main__":
+    from lib.console import utf8_console
+    utf8_console()
     sys.exit(main())

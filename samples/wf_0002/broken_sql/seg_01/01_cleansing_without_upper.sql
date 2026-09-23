@@ -18,6 +18,9 @@ BEGIN
 
   ALTER SESSION SET TIMEZONE = 'America/New_York', WEEK_START = 1;
 
+  -- contract C4: each mapped table's name is built once, then referenced as IDENTIFIER(:<name>)
+  LET CUSTOMERS_SRC VARCHAR := SRC_DB || '.' || SRC_SCHEMA || '.CUSTOMERS';
+
   -- Outbound stream 2_Output -> seg_03 (Join, Left anchor).
   CREATE OR REPLACE TRANSIENT TABLE MIG_WORK.WF0002_SEG_01_OUT AS
   WITH
@@ -28,7 +31,7 @@ BEGIN
           NAME,
           CITY,
           TIER
-      FROM IDENTIFIER(:SRC_DB || '.' || :SRC_SCHEMA || '.CUSTOMERS')
+      FROM IDENTIFIER(:CUSTOMERS_SRC)
   ),
   -- tool 2: Data Cleansing (Cleanse.yxmc) on NAME and CITY only, with the options applied in the
   -- macro's own order: replace NULL strings with blank, then trim whitespace, then modify case.

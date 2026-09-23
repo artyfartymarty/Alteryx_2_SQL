@@ -1,0 +1,19 @@
+{
+  "budget_chars": 60000,
+  "estimate_note": "characters of the rendered context; tokens are roughly characters / 4",
+  "batches": [
+    {
+      "id": "batch_01",
+      "waves": [
+        0,
+        1
+      ],
+      "segments": [
+        "seg_01",
+        "seg_02"
+      ],
+      "estimate_chars": 2639
+    }
+  ],
+  "warnings": []
+}

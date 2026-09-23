@@ -1,0 +1,11 @@
+{
+  "preference": "procedures",
+  "output_kind": "procedures",
+  "reason": "preference procedures",
+  "dbt_blockers": [],
+  "segments": {
+    "seg_01": "sql",
+    "seg_02": "sql"
+  },
+  "nodes": {}
+}

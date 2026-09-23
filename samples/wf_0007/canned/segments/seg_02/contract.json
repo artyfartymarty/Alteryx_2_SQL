@@ -1,0 +1,121 @@
+{
+  "workflow": "wf_0007",
+  "segment": "seg_02",
+  "target": "sql",
+  "inputs": [
+    {
+      "from": "seg_01",
+      "stream": "3_J",
+      "table": "MIG_WORK.WF0007_SEG_01_OUT",
+      "columns": [
+        { "name": "REGION", "type": "VARCHAR", "nullable": false },
+        { "name": "PERIOD", "type": "VARCHAR", "nullable": false },
+        { "name": "TARGET", "type": "NUMBER(19,2)", "nullable": true },
+        { "name": "ACTUAL", "type": "NUMBER(19,2)", "nullable": true }
+      ],
+      "keys": [],
+      "expected_rows": { "min": 0, "max": 5000000 },
+      "large": false
+    }
+  ],
+  "outputs": [
+    {
+      "stream": "5_Output",
+      "kind": "target",
+      "tool_id": "6",
+      "logical": "REGION_ATTAINMENT",
+      "table": null,
+      "write_mode": "overwrite",
+      "columns": [
+        { "name": "REGION", "type": "VARCHAR", "nullable": false },
+        { "name": "PERIOD", "type": "VARCHAR", "nullable": false },
+        { "name": "TARGET_TOTAL", "type": "NUMBER(19,2)", "nullable": true },
+        { "name": "ACTUAL_TOTAL", "type": "NUMBER(19,2)", "nullable": true },
+        { "name": "LINES", "type": "NUMBER(38,0)", "nullable": false }
+      ],
+      "keys": ["REGION", "PERIOD"]
+    },
+    {
+      "stream": "5_Output",
+      "kind": "target",
+      "tool_id": "7",
+      "logical": "ATTAINMENT_HISTORY",
+      "table": null,
+      "write_mode": "update_insert",
+      "columns": [
+        { "name": "REGION", "type": "VARCHAR", "nullable": true },
+        { "name": "PERIOD", "type": "VARCHAR", "nullable": true },
+        { "name": "TARGET_TOTAL", "type": "NUMBER(19,2)", "nullable": true },
+        { "name": "ACTUAL_TOTAL", "type": "NUMBER(19,2)", "nullable": true },
+        { "name": "LINES", "type": "NUMBER(38,0)", "nullable": true }
+      ],
+      "keys": ["REGION", "PERIOD"]
+    }
+  ],
+  "output": {
+    "stream": "5_Output",
+    "kind": "target",
+    "tool_id": "6",
+    "logical": "REGION_ATTAINMENT",
+    "table": null,
+    "write_mode": "overwrite",
+    "columns": [
+      { "name": "REGION", "type": "VARCHAR", "nullable": false },
+      { "name": "PERIOD", "type": "VARCHAR", "nullable": false },
+      { "name": "TARGET_TOTAL", "type": "NUMBER(19,2)", "nullable": true },
+      { "name": "ACTUAL_TOTAL", "type": "NUMBER(19,2)", "nullable": true },
+      { "name": "LINES", "type": "NUMBER(38,0)", "nullable": false }
+    ],
+    "keys": ["REGION", "PERIOD"]
+  },
+  "row_relation": "aggregate",
+  "ordering": {
+    "keys": [],
+    "alteryx_deterministic": true,
+    "order_dependent_columns": []
+  },
+  "tolerances": {},
+  "normalizations": [],
+  "parity_risks": [
+    {
+      "tool_id": "4",
+      "class": "NULL_SEMANTICS",
+      "note": "Only rows the expression makes really true leave on the True anchor. Left of a NULL PERIOD is NULL, NULL = '2026' is NULL, and the row is dropped with the False anchor, which is wired to nothing. SQL's WHERE drops a NULL condition the same way. (Upstream, the join already refuses a NULL PERIOD, so none reaches this tool.)"
+    },
+    {
+      "tool_id": "4",
+      "class": "LOGIC",
+      "note": "User.CurrentYear is a text constant (IsNumeric False), so the comparison is string against string and is inlined as the literal '2026' -- never a number, which would make Snowflake cast PERIOD's prefix. Left takes the first four characters whatever follows them, so a malformed PERIOD such as '2026-1' is kept (the edge set carries one), in the model exactly as in Alteryx."
+    },
+    {
+      "tool_id": "5",
+      "class": "LOGIC",
+      "note": "Alteryx's Count counts ROWS, not values, so LINES is COUNT(*). Because the join fans a target out over its actual lines, LINES is the number of actual lines matched, and TARGET_TOTAL adds the same target once per line -- the sum the golden data records."
+    },
+    {
+      "tool_id": "5",
+      "class": "NULL_SEMANTICS",
+      "note": "Sum skips NULLs and a group whose values are all NULL sums to NULL, not 0: WEST 2026-01 in the normal set has one NULL actual line, so its ACTUAL_TOTAL is NULL. SQL's SUM agrees; a COALESCE(SUM(...), 0) would not."
+    },
+    {
+      "tool_id": "5",
+      "class": "ROUNDING",
+      "note": "TARGET_TOTAL and ACTUAL_TOTAL are FixedDecimal(19,2) sums of FixedDecimal(19,2) values, so the addition is exact on both sides and the result is cast back to NUMBER(19,2). No golden sum comes near 17 integer digits."
+    },
+    {
+      "tool_id": "6",
+      "class": "LOGIC",
+      "note": "Overwrite replaces the file wholesale, so REGION_ATTAINMENT holds exactly this run's summary rows and no prior state; the model is a `table`, rebuilt on every run."
+    },
+    {
+      "tool_id": "7",
+      "class": "LOGIC",
+      "note": "Update; Insert if new on (REGION, PERIOD) maps columns to the target by name: a matched row is overwritten, a new key is inserted and every row the run does not produce stays exactly as it was -- including prior-year rows the filter keeps out of the stream. The golden output is the table's state AFTER the write. The merge key must be both columns: a key of REGION alone would match a region's other periods and lose or overwrite rows."
+    },
+    {
+      "tool_id": "7",
+      "class": "NULL_SEMANTICS",
+      "note": "A NULL update key matches nothing and would be inserted rather than merged. The stream never carries one (the inner join refuses NULL keys), so this is recorded rather than exercised."
+    }
+  ]
+}

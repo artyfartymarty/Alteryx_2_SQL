@@ -3,9 +3,20 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { makeEnv, seedWorkflow } from "./fakes.ts";
-import { parseArgs, main, loadConfig, assertPythonExists, DEFAULT_CONFIG, UsageError } from "../cli.ts";
+import {
+  parseArgs, main, loadConfig, assertPythonExists, DEFAULT_CONFIG, UsageError, githubAccess,
+  makeEnv as makeRealEnv,
+} from "../cli.ts";
 import { writeJson } from "../manifest.ts";
+import { ROLES } from "../types.ts";
+
+// Two directories up from orchestrator/test/ is this tree's own root (may be a git worktree),
+// which carries the REAL, currently-checked-out orchestrator.config.json -- same pattern as
+// integration.test.ts's REPO_ROOT.
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = path.resolve(HERE, "..", "..");
 
 /** main() prints a summary; the tests below only care about the exit code and the fake env. */
 function quiet(t: any): string[] {
@@ -91,6 +102,34 @@ test("loadConfig treats a PRESENT but unparsable config file as a usage error, n
   // An absent file is still perfectly fine and falls back to defaults, unchanged from before.
   await rm(configPath, { force: true });
   assert.deepEqual(await loadConfig(root), DEFAULT_CONFIG);
+});
+
+// Fix round 1 (I1): the owner's policy item 4 ("low for documenter and reviewer, medium for
+// everything else") must hold for the REAL committed orchestrator.config.json, not just a
+// hand-built fixture -- a missing baseline `profiles.hosted.reasoningEffort` would silently
+// resolve to `undefined` for every role without its own roleReasoningEffort entry.
+test("the real committed orchestrator.config.json resolves the owner's reasoningEffort/contextTier policy for every hosted role", async () => {
+  const config = await loadConfig(REPO_ROOT);
+  const profile = config.profiles.hosted;
+  const LOW_EFFORT_ROLES = new Set(["documenter", "reviewer"]);
+  const LONG_CONTEXT_ROLES = new Set(["intake", "analyzer", "fixer", "parser-recovery", "validator"]);
+
+  for (const role of ROLES) {
+    // Exactly what orchestrator/runner.ts's createSession call computes.
+    const effort = profile.roleReasoningEffort?.[role] ?? profile.reasoningEffort;
+    const contextTier = profile.roleContextTiers?.[role];
+
+    assert.equal(
+      effort,
+      LOW_EFFORT_ROLES.has(role) ? "low" : "medium",
+      `${role}: reasoningEffort must resolve per the owner's policy item 4, got ${effort}`,
+    );
+    assert.equal(
+      contextTier,
+      LONG_CONTEXT_ROLES.has(role) ? "long_context" : undefined,
+      `${role}: contextTier must be long_context only for the five policy-2 roles, got ${contextTier}`,
+    );
+  }
 });
 
 test("a configured python that does not exist is a usage error, not five misleading escalations", async () => {
@@ -214,6 +253,106 @@ test("F12: a corrupt manifest.json for one workflow exits non-zero, names the fi
   assert.equal(stillBad, "{ not valid json");
 });
 
+// ---------- --check-models (docs/handoff-copilot-models.md §2) ----------------------------------
+// Never a real listModels call here (or anywhere an agent runs): deps.listModels is always
+// injected. SPLIT is a hosted profile with the program spec's per-role split: "gpt-5.6-luna"
+// (profiles.hosted.model) and "gpt-6-astra" (roleModels.{intake,analyzer,translator,fixer,
+// parser-recovery}). DEFAULT_CONFIG itself carries no roleModels (Task P4 fix round 1, B1).
+const SPLIT = {
+  profiles: {
+    ...DEFAULT_CONFIG.profiles,
+    hosted: {
+      ...DEFAULT_CONFIG.profiles.hosted,
+      roleModels: {
+        intake: "gpt-6-astra", analyzer: "gpt-6-astra", translator: "gpt-6-astra", fixer: "gpt-6-astra",
+        "parser-recovery": "gpt-6-astra",
+      },
+    },
+  },
+};
+
+test("--check-models lists the catalog through the injected listModels and exits 1 on a missing id", async (t) => {
+  const { env } = await makeEnv({ wf: "wf_0001", config: SPLIT });
+  const lines = quiet(t);
+  const code = await main(["--check-models", "--profile", "hosted"], {
+    env,
+    listModels: async () => [{ id: "a", policy: { state: "enabled" } }],
+  });
+  assert.equal(code, 1);
+  assert.ok(lines.some((line) => line.includes("gpt-5.6-luna") && line.includes("missing")), lines.join("\n"));
+  assert.ok(lines.some((line) => line.includes("gpt-6-astra") && line.includes("missing")), lines.join("\n"));
+});
+
+test("--check-models exits 0 when every configured id is enabled", async (t) => {
+  const { env } = await makeEnv({ wf: "wf_0001", config: SPLIT });
+  quiet(t);
+  const code = await main(["--check-models", "--profile", "hosted"], {
+    env,
+    listModels: async () => [
+      { id: "gpt-5.6-luna", policy: { state: "enabled" } },
+      { id: "gpt-6-astra", policy: { state: "enabled" } },
+    ],
+  });
+  assert.equal(code, 0);
+});
+
+test("--check-models reports a disabled id distinctly from a missing one", async (t) => {
+  const { env } = await makeEnv({ wf: "wf_0001", config: SPLIT });
+  const lines = quiet(t);
+  const code = await main(["--check-models", "--profile", "hosted"], {
+    env,
+    listModels: async () => [
+      { id: "gpt-5.6-luna", policy: { state: "disabled" } },
+      { id: "gpt-6-astra", policy: { state: "enabled" } },
+    ],
+  });
+  assert.equal(code, 1);
+  assert.ok(lines.some((line) => line.includes("gpt-5.6-luna") && line.includes("disabled")), lines.join("\n"));
+  assert.ok(!lines.some((line) => line.includes("gpt-6-astra") && (line.includes("missing") || line.includes("disabled"))));
+});
+
+test("--check-models with --profile local is a usage error (exit 2)", async (t) => {
+  const { env } = await makeEnv({ wf: "wf_0001" });
+  const lines = quiet(t);
+  const code = await main(["--check-models", "--profile", "local"], { env, listModels: async () => [] });
+  assert.equal(code, 2);
+  assert.ok(lines.some((line) => line.includes("--check-models") && line.includes("hosted")), lines.join("\n"));
+});
+
+test("--check-models with no --profile also defaults to local and is a usage error (exit 2)", async (t) => {
+  const { env } = await makeEnv({ wf: "wf_0001" });
+  quiet(t);
+  assert.equal(await main(["--check-models"], { env, listModels: async () => [] }), 2);
+});
+
+test("a listModels failure exits 2 and names the login step", async (t) => {
+  const { env } = await makeEnv({ wf: "wf_0001" });
+  const lines = quiet(t);
+  const code = await main(["--check-models", "--profile", "hosted"], {
+    env,
+    listModels: async () => {
+      throw new Error("not signed in");
+    },
+  });
+  assert.equal(code, 2);
+  assert.ok(lines.some((line) => line.includes("/login")), lines.join("\n"));
+  assert.ok(lines.some((line) => line.includes("not signed in")), lines.join("\n"));
+});
+
+test("--check-models never starts a workflow run", async (t) => {
+  const { env, calls } = await makeEnv({ wf: "wf_0001" });
+  quiet(t);
+  await main(["--check-models", "--profile", "hosted"], {
+    env,
+    listModels: async () => [
+      { id: "gpt-5.6-luna", policy: { state: "enabled" } },
+      { id: "gpt-6-astra", policy: { state: "enabled" } },
+    ],
+  });
+  assert.equal(calls.py.length, 0);
+  assert.equal(calls.roles.length, 0);
+});
+
 test("--tier selects only workflows already classified as that tier", async (t) => {
   const { env, calls } = await makeEnv({ wf: "wf_0005", manifest: { tier: "T3" } });
   quiet(t);
@@ -221,4 +360,98 @@ test("--tier selects only workflows already classified as that tier", async (t) 
   assert.equal(calls.py.length, 0, "the T3 workflow is not selected");
   assert.equal(await main(["--tier", "T3"], { env }), 0);
   assert.ok(calls.py.length > 0);
+});
+
+// ---------- Task P4 fix round 1 ------------------------------------------------------------------
+
+// B1: the owner's policy is one default model for every role, so the built-in hosted profile has no
+// per-role model map at all -- a config file that removes roleModels must not get it back.
+test("DEFAULT_CONFIG's hosted profile routes every role to its one model: no roleModels", () => {
+  assert.equal(DEFAULT_CONFIG.profiles.hosted.roleModels, undefined);
+});
+
+test("a file's hosted role maps are whole maps: one the file omits is not inherited from the defaults", async () => {
+  const { root } = await makeEnv({ wf: "wf_0001" });
+  await writeJson(`${root}/orchestrator.config.json`, {
+    profiles: { hosted: { model: "one-model", roleContextTiers: { intake: "long_context" } } },
+  });
+  const hosted = (await loadConfig(root)).profiles.hosted;
+  assert.equal(hosted.model, "one-model");
+  assert.equal(hosted.reasoningEffort, DEFAULT_CONFIG.profiles.hosted.reasoningEffort, "scalars keep their default");
+  assert.equal(hosted.roleModels, undefined, "roleModels omitted by the file stays omitted");
+  assert.equal(hosted.roleReasoningEffort, undefined, "roleReasoningEffort omitted by the file stays omitted");
+  assert.deepEqual(hosted.roleContextTiers, { intake: "long_context" }, "the file's map, not merged key by key");
+  for (const role of ROLES) assert.equal(hosted.roleModels?.[role] ?? hosted.model, "one-model", role);
+});
+
+test("--check-models lists the effective model of every role", async (t) => {
+  const { env } = await makeEnv({ wf: "wf_0001", config: SPLIT });
+  const lines = quiet(t);
+  await main(["--check-models", "--profile", "hosted"], {
+    env,
+    listModels: async () => [
+      { id: "gpt-5.6-luna", policy: { state: "enabled" } },
+      { id: "gpt-6-astra", policy: { state: "enabled" } },
+    ],
+  });
+  const astra = new Set(["intake", "analyzer", "translator", "fixer", "parser-recovery"]);
+  for (const role of ROLES) {
+    const expected = astra.has(role) ? "gpt-6-astra" : "gpt-5.6-luna";
+    assert.ok(lines.includes(`effective ${role}: ${expected}`), `${role}\n${lines.join("\n")}`);
+  }
+});
+
+// B3: GitHub is opt-in -- `github.enabled` (default false) or `--gh` for one run.
+test("--gh parses, and GitHub integration is off unless the config or the flag turns it on", async () => {
+  assert.equal(parseArgs(["--gh"]).gh, true);
+  assert.equal(parseArgs([]).gh, undefined);
+  assert.equal(DEFAULT_CONFIG.github?.enabled, false);
+
+  const { root } = await makeEnv({ wf: "wf_0001" });
+  assert.equal((await loadConfig(root)).github?.enabled, false);
+  await writeJson(`${root}/orchestrator.config.json`, { github: { enabled: true } });
+  assert.equal((await loadConfig(root)).github?.enabled, true);
+
+  const committed = await loadConfig(REPO_ROOT);
+  assert.equal(committed.github?.enabled, false, "the committed orchestrator.config.json keeps GitHub off");
+});
+
+test("with GitHub off, gh is never invoked -- not even to see whether it is installed", async () => {
+  let probes = 0;
+  const probe = async () => {
+    probes += 1;
+    return true;
+  };
+  assert.deepEqual(await githubAccess(DEFAULT_CONFIG, {}, probe), { enabled: false, hasGh: false });
+  assert.equal(probes, 0);
+
+  assert.deepEqual(await githubAccess(DEFAULT_CONFIG, { gh: true }, probe), { enabled: true, hasGh: true });
+  assert.deepEqual(await githubAccess({ ...DEFAULT_CONFIG, github: { enabled: true } }, {}, probe),
+    { enabled: true, hasGh: true });
+  assert.equal(probes, 2);
+  assert.deepEqual(await githubAccess(DEFAULT_CONFIG, { gh: true }, async () => false), { enabled: true, hasGh: false });
+});
+
+// ---------- Task P4 fix round 2, M15 ---------------------------------------------------------------
+// A child's output arrives in chunks; a multi-byte UTF-8 character split across two chunks must not
+// turn into two replacement characters. Every script now writes UTF-8 (fix round 1, B4), so a Python
+// child printing a path or a message with a non-ASCII character hits this in practice.
+test("a multi-byte character split across two pipe chunks reaches the orchestrator intact", async () => {
+  const { root } = await makeEnv({ wf: "wf_0001" });
+  const env = makeRealEnv({
+    root,
+    config: DEFAULT_CONFIG,
+    runner: { run: async () => ({ ok: true, toolCalls: 0, ms: 0 }) } as never,
+    interactive: false,
+    hasGh: false,
+    ghEnabled: false,
+  });
+  // "→" is E2 86 92: the first byte, a pause long enough for a separate chunk, then the other two.
+  const script =
+    "const w = (s, b) => s.write(Buffer.from(b)); w(process.stdout, [0xe2]); w(process.stderr, [0xe2]);" +
+    "setTimeout(() => { w(process.stdout, [0x86, 0x92]); w(process.stderr, [0x86, 0x92]); }, 200);";
+  const result = await env.sh(process.execPath, ["-e", script]);
+  assert.equal(result.ok, true);
+  assert.equal(result.out, "\u2192");
+  assert.equal(result.err, "\u2192");
 });

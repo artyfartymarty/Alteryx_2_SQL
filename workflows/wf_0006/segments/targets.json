@@ -1,0 +1,19 @@
+{
+  "preference": "procedures",
+  "output_kind": "procedures",
+  "reason": "preference procedures",
+  "dbt_blockers": [
+    {
+      "segment": "seg_02",
+      "kind": "snowpark_segment"
+    }
+  ],
+  "segments": {
+    "seg_01": "sql",
+    "seg_02": "snowpark",
+    "seg_03": "sql"
+  },
+  "nodes": {
+    "3": "snowpark"
+  }
+}

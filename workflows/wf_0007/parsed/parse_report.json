@@ -1,0 +1,13 @@
+{
+  "status": "PARSED",
+  "errors": [],
+  "node_count": 9,
+  "unknown_share": 0.0,
+  "scrubbed_aliases": [
+    "prod_plan"
+  ],
+  "attempt": 1,
+  "extension": null,
+  "reason": null,
+  "diagnosis": null
+}

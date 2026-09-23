@@ -34,6 +34,16 @@ below have been exercised against a live warehouse.
    `cookbook/`, `scripts/` outside `scripts/parsers/ext/`, `.github/`, `.git/`, `node_modules/`,
    `.venv/`, `orchestrator/`, `orchestrate.ts`, `orchestrator.config.json`, `config.json`,
    `docs/spec/`, `samples/`) are denied to every role.
+   **A dbt workflow's project lanes** (translate stage, no segment in context): the translator and
+   the fixer may write `dbt/dbt_project.yml`, `dbt/profiles.yml`, `dbt/README.md`,
+   `dbt/translation_notes.md`, `dbt/fix_log.md`, a `.sql` model at any depth under `dbt/models/`, and
+   exactly `dbt/models/sources.yml` and `dbt/models/schema.yml` — never a Python model
+   (`dbt/models/x.py`), a macro (`dbt/macros/…`), a `packages.yml`, any other YAML dbt would read
+   (`dbt/models/extra.yml`), `dbt/review.json` (the reviewer's) or `dbt/compile_check.json` (the
+   script's). These lanes are the second line: `compile_check.py --target dbt` and
+   `lib.dbt_project.run_dbt` enforce the same closed file set (`dbt:surface`), plus what every file
+   in it may say (`dbt:project_yml`, `dbt:yaml`, `dbt:model_jinja`, `dbt:hook_sql`, `dbt:model_sql`),
+   before any dbt process starts, whoever runs them (final fix wave C1).
 3. **SQL.** Only the validator (sandbox schemas) and intake (`INFORMATION_SCHEMA`) may execute it.
    Comments and string literals are stripped first; a second top-level statement is refused. A name
    in *object position* (after `FROM`, `JOIN`, `INTO`, `USING`, `TABLE`, `UPDATE`, `CALL`,
@@ -46,8 +56,46 @@ below have been exercised against a live warehouse.
    function are denied. A **three-part** name must also name a sandbox database
    (`policy.sandboxDatabases` in `orchestrator.config.json`, default `MIGDB`), so
    `FINANCE.MIG_WORK.GL_LEDGER` is refused. A `CREATE PROCEDURE … $$ … $$` body is **not** opaque:
-   the header and every body statement are checked, and only the two contract-C4
-   `IDENTIFIER(:SRC_DB || '.' || …)` forms are allowed there. A `CALL` must match the C4
+   the header and every body statement are checked, and contract C4's table reference is the one
+   `IDENTIFIER(` form allowed there (Task C4V): `LET <LOGICAL>_SRC VARCHAR := SRC_DB || '.' ||
+   SRC_SCHEMA || '.<LOGICAL>'` (or the `TGT` twin, `<LOGICAL>_TGT`) declares a variable, and
+   `IDENTIFIER(:<LOGICAL>_SRC)` is accepted after that LET in the same body, nowhere else. Snowflake
+   documents `IDENTIFIER(` with one value -- a string literal, session variable, bind variable or
+   Snowflake Scripting variable -- not an expression, so an expression inside `IDENTIFIER(…)` (the
+   concatenation these procedures used before) is denied like any other dynamic name. Inside the
+   LET the arguments are named without a colon (Snowflake's expression syntax; the colon binds a
+   variable inside a SQL statement) and a colon there is denied by name. Any other LET
+   is denied. The variable is trusted only because nothing else in the body can give it -- or a
+   parameter its LET reads -- another value, so a judged body must be **flat** (fix round 2): every
+   statement other than a rule-conforming top-level LET is denied if it starts with a Snowflake
+   Scripting block or control keyword (`BEGIN` other than the body's own, `END` other than its own,
+   `IF`, `ELSEIF`, `ELSE`, `CASE`, `FOR`, `WHILE`, `REPEAT`, `LOOP`, `BREAK`, `CONTINUE`, `EXCEPTION`,
+   `DECLARE`, `OPEN`, `FETCH`, `CLOSE`, `RAISE`, `AWAIT`, `CANCEL`, `NULL`); if its code, comments
+   removed and strings blanked, contains `:=` or the word `LET` anywhere; if it is a `CALL` (a segment
+   procedure never calls another; `procs/master.sql` is the orchestrator's, not an agent's); if it is
+   a `RETURN` of anything but one string literal; if it writes `INTO :<var>`; or if it is not one of
+   the SQL statements `SELECT`/`WITH`/`INSERT`/`UPDATE`/`DELETE`/`MERGE`/`CREATE`/`ALTER`/`TRUNCATE`/
+   `DROP`/`COPY`, each then judged by B1-B3 as anywhere else (so `DROP` and `TRUNCATE` are denied).
+   `ALTER SESSION SET …` is skipped. The header's parameters must be exactly `(SRC_DB STRING,
+   SRC_SCHEMA STRING, TGT_DB STRING, TGT_SCHEMA STRING, RUN_ID STRING)` (types case-insensitive; no
+   other type, no `DEFAULT` -- `compile_check.py` requires the same), so the five arguments of a `CALL`
+   mean what B5 below checks. The tokenizer reads a backslash-escaped quote inside a string and a
+   `"quoted identifier"` the way Snowflake does, so neither can make the code after it look like
+   string text. A `<LOGICAL>_SRC` name is only ever read (after `FROM`, `JOIN`, `USING`) and a
+   `<LOGICAL>_TGT` name only ever written (after `CREATE … TABLE`, `INSERT`/`MERGE INTO`, `UPDATE`,
+   `DELETE FROM`, `TRUNCATE`), as `compile_check.py`'s `c4:identifier_role` holds them (fix round 3).
+   This is the documented form; nothing here has run on Snowflake, and the first
+   real-account run confirms it. **External locations** (fix round 3), for every role, in and out of
+   procedure bodies: a statement is denied with `external-location: … may not move data outside the
+   sandbox` if it names credentials (`CREDENTIALS=`, `AWS_KEY_ID`, `AWS_SECRET_KEY`, `AWS_TOKEN`,
+   `AZURE_SAS_TOKEN`, `PRIVATE_KEY`, `MASTER_KEY`); names a storage, API, notification, security or
+   external-access integration, an external function or a network rule; is a `COPY INTO` a string
+   literal (an external URL) or a `COPY … FROM` one; creates or alters a stage with `URL`,
+   `STORAGE_INTEGRATION`, `CREDENTIALS` or `ENCRYPTION`; is a `GET` or `PUT` (a local file); or
+   `LIST`s or `REMOVE`s anything but a stage. The object scanner never reads a string literal as an
+   object, so before this rule `COPY INTO 's3://…' FROM MIG_WORK.T` passed every sandbox check. An
+   internal named stage under a sandbox schema (`COPY INTO @MIG_WORK.x`, `LIST @MIG_WORK.x`) is
+   allowed as before. A `CALL` must match the C4
    five-argument signature, with a sandbox database in arguments 1 and 3 and a `MIG_` schema in
    arguments 2 and 4. Intake reads `INFORMATION_SCHEMA` in a sandbox database, or the pipeline's
    own sanitized `MIG_WORK.CATALOG_COLUMNS`.
@@ -99,6 +147,11 @@ These are the ones we know about. They are the reason this file is not the prima
   `--textconv`, `--no-index`, `--git-dir`, `--work-tree`, `--exec-path`, `--upload-pack`,
   `--open-files-in-pager` are denied for exactly that reason). Flag names are compared
   case-insensitively, so `ls -R` and `ls -r` are both accepted.
+- **A stage's definition is not visible.** `COPY INTO @MIG_WORK.x` is allowed because `@MIG_WORK.x`
+  is a sandbox-qualified name; the policy denies creating or altering a stage with an external `URL`,
+  but it cannot see a stage a human created outside it. The `MIGRATION_AGENT` role must hold no usage
+  on any external stage and no integration — that grant, not this file, is what keeps sandbox data
+  inside the sandbox.
 - **No SQL parser.** Object position is decided from tokens and a finite keyword list. A construct
   the tokenizer does not model (unusual DDL, `PIVOT`/`UNPIVOT` variants, `AT`/`BEFORE` time travel
   with a qualified argument, table functions other than the `TABLE(` form) may be classified wrongly

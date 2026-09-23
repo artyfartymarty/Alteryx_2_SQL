@@ -128,14 +128,24 @@ export async function saveManifest(root: string, manifest: Manifest): Promise<vo
   await writeJson(manifestPath(root, manifest.id), manifest);
 }
 
-/** Disk wins per role for every field EXCEPT `toolCalls` (F12): `toolCalls` is monotonically
- * additive (hooks.ts's `recordMetrics` only ever adds to it, never replaces it), so between an
- * in-memory count and a disk count for the SAME role, the higher one is always the more complete
- * record -- taking disk unconditionally could silently erase a session's spend that was recorded
- * only in memory (CopilotRunner.run's crash-path `finally` block records metrics without itself
- * saving, relying on a LATER saveManifest -- see hooks.ts's `recordMetrics` doc comment) if a
- * reload raced ahead of that save. `lastMs` and everything else about a role still simply take
- * disk's value, same as before. */
+/** The per-role metrics fields that are monotonic counters (or a running maximum) rather than a
+ * plain "latest wins" snapshot, and so must be MAX'd across disk and memory rather than let disk
+ * win unconditionally (F12 for `toolCalls`; Task W4 fix round 1 for the other two). */
+const MAX_MERGED_METRICS = ["toolCalls", "compactions", "peakInputTokens"] as const;
+
+/** Disk wins per role for every field EXCEPT the ones in `MAX_MERGED_METRICS` (F12, Task W4 fix
+ * round 1): `toolCalls` and `compactions` are monotonically additive (hooks.ts's `recordMetrics`
+ * only ever adds to either, never replaces them) and `peakInputTokens` is already a running
+ * maximum, so between an in-memory value and a disk value for the SAME role and field, the higher
+ * one is always the more complete record -- taking disk unconditionally could silently erase a
+ * session's spend, compaction count or usage peak that was recorded only in memory
+ * (CopilotRunner.run's crash-path `finally` block records metrics without itself saving, relying
+ * on a LATER saveManifest -- see hooks.ts's `recordMetrics` doc comment) if a reload raced ahead
+ * of that save. A batched analyze's own mid-stage `reloadManifest` calls between batches
+ * (`orchestrator/stages.ts`'s `analyzeInBatches`) are exactly this shape: an earlier batch's
+ * session may have already saved a lower count than a later batch's session has recorded but not
+ * yet saved. `lastMs` and everything else about a role still simply take disk's value, same as
+ * before. */
 function mergeMetrics(
   inMemory: Record<string, unknown> | undefined,
   onDisk: Record<string, unknown> | undefined,
@@ -143,13 +153,17 @@ function mergeMetrics(
   const merged: Record<string, unknown> = { ...(inMemory ?? {}), ...(onDisk ?? {}) };
   const roles = new Set([...Object.keys(inMemory ?? {}), ...Object.keys(onDisk ?? {})]);
   for (const role of roles) {
-    const a = (inMemory?.[role] as { toolCalls?: unknown } | undefined)?.toolCalls;
-    const b = (onDisk?.[role] as { toolCalls?: unknown } | undefined)?.toolCalls;
-    if (typeof a !== "number" && typeof b !== "number") continue;
-    merged[role] = {
-      ...(merged[role] as object),
-      toolCalls: Math.max(typeof a === "number" ? a : 0, typeof b === "number" ? b : 0),
-    };
+    const a = inMemory?.[role] as Record<string, unknown> | undefined;
+    const b = onDisk?.[role] as Record<string, unknown> | undefined;
+    const maxed: Record<string, number> = {};
+    for (const field of MAX_MERGED_METRICS) {
+      const fromMemory = a?.[field];
+      const fromDisk = b?.[field];
+      if (typeof fromMemory !== "number" && typeof fromDisk !== "number") continue;
+      maxed[field] = Math.max(typeof fromMemory === "number" ? fromMemory : 0, typeof fromDisk === "number" ? fromDisk : 0);
+    }
+    if (Object.keys(maxed).length === 0) continue;
+    merged[role] = { ...(merged[role] as object), ...maxed };
   }
   return merged;
 }

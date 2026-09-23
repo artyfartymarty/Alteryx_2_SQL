@@ -1,0 +1,102 @@
+{
+  "workflow": "wf_0007",
+  "segment": null,
+  "golden_set": "normal",
+  "verdict": "PASS",
+  "checks": {
+    "seg_01:3_J:work:MIG_WORK.WF0007_SEG_01_OUT": {
+      "schema": "PASS",
+      "nullability": "PASS",
+      "counts": {
+        "expected": 5,
+        "actual": 5,
+        "verdict": "PASS"
+      },
+      "aggregates": "PASS",
+      "aggregates_rows": {
+        "rows": 5,
+        "verdict": "PASS"
+      },
+      "set_diff": {
+        "only_expected": 0,
+        "only_actual": 0
+      },
+      "column_mismatches": {},
+      "column_counts": {},
+      "aggregate_mismatches": {}
+    },
+    "seg_02:5_Output:target:REGION_ATTAINMENT": {
+      "schema": "PASS",
+      "nullability": "PASS",
+      "counts": {
+        "expected": 3,
+        "actual": 3,
+        "verdict": "PASS"
+      },
+      "aggregates": "PASS",
+      "aggregates_rows": {
+        "rows": 3,
+        "verdict": "PASS"
+      },
+      "set_diff": {
+        "only_expected": 0,
+        "only_actual": 0
+      },
+      "column_mismatches": {},
+      "column_counts": {},
+      "aggregate_mismatches": {}
+    },
+    "seg_02:5_Output:target:ATTAINMENT_HISTORY": {
+      "schema": "PASS",
+      "nullability": "PASS",
+      "counts": {
+        "expected": 5,
+        "actual": 5,
+        "verdict": "PASS"
+      },
+      "aggregates": "PASS",
+      "aggregates_rows": {
+        "rows": 5,
+        "verdict": "PASS"
+      },
+      "set_diff": {
+        "only_expected": 0,
+        "only_actual": 0
+      },
+      "column_mismatches": {},
+      "column_counts": {},
+      "aggregate_mismatches": {}
+    }
+  },
+  "diff_clusters": [],
+  "normalizations_applied": [],
+  "boundaries": [
+    {
+      "segment": "seg_01",
+      "stream": "3_J",
+      "verdict": "PASS"
+    }
+  ],
+  "finals": [
+    {
+      "segment": "seg_02",
+      "stream": "5_Output",
+      "output": "REGION_ATTAINMENT",
+      "verdict": "PASS"
+    },
+    {
+      "segment": "seg_02",
+      "stream": "5_Output",
+      "output": "ATTAINMENT_HISTORY",
+      "verdict": "PASS"
+    }
+  ],
+  "divergence_kind": null,
+  "first_divergence": null,
+  "idempotent": true,
+  "idempotency_diff": [],
+  "runtime_ms": 7156,
+  "credits": null,
+  "needs_human": false,
+  "truncated": false
+}

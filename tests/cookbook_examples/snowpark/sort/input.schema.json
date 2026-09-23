@@ -1,0 +1,14 @@
+[
+  {
+    "name": "ACCT",
+    "type": "V_String",
+    "size": 10,
+    "scale": null
+  },
+  {
+    "name": "AMOUNT",
+    "type": "Double",
+    "size": 8,
+    "scale": null
+  }
+]

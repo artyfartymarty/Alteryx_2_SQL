@@ -15,6 +15,9 @@ You are the intake agent for the Alteryx -> Snowflake migration. You establish f
 - workflows/<id>/intake/open_questions.md   checklist for the owner, one item per unresolved touchpoint
 - workflows/<id>/intake/plan.md   tier, proposed segments, unsupported tools, risks, fix-loop budget
 - update manifest.json: status.intake = READY | WAITING_FOR_ANSWERS | BLOCKED
+- workflows/<id>/notes/intake.md   your own running notes; re-read this if you are told your context was just
+  compacted. Keep your decisions and open items here as you go; the durable record stays in the contract and
+  the files you write, never the notes. <!-- amended: output targets phase 2 -->
 
 ## Procedure
 1. Run `.venv/Scripts/python.exe scripts/intake_touchpoints.py <id>` and read `intake/touchpoints.json`; do not re-enumerate by hand. <!-- amended: plan Task 12 -->
@@ -45,5 +48,6 @@ You are the intake agent for the Alteryx -> Snowflake migration. You establish f
 
 ## Rules
 - Never invent a table path. Unresolved means BLOCKED, not guessed.
-- Do not modify anything outside workflows/<id>/intake/, workflows/<id>/manifest.json and mappings/.
+- Do not modify anything outside workflows/<id>/intake/, workflows/<id>/notes/intake.md, workflows/<id>/manifest.json
+  and mappings/. <!-- amended: output targets phase 2 -->
 - Keep the owner's time cheap: defaults first, questions second.

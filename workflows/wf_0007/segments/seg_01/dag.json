@@ -1,0 +1,236 @@
+{
+  "workflow": "wf_0007",
+  "segment": "seg_01",
+  "nodes": [
+    {
+      "tool_id": "1",
+      "type": "input",
+      "plugin": "AlteryxBasePluginsGui.DbFileInput.DbFileInput",
+      "container_id": "10",
+      "config": {
+        "source": "C:\\data\\plan\\targets.yxdb",
+        "format": "yxdb",
+        "query": null,
+        "alias": null,
+        "csv": null,
+        "record_limit": null
+      },
+      "raw_config": "<Configuration>\n              <Passwords />\n              <File OutputFileName=\"\" RecordLimit=\"\" SearchSubDirs=\"False\" FileFormat=\"19\">C:\\data\\plan\\targets.yxdb</File>\n              <FormatSpecificOptions />\n            </Configuration>",
+      "annotation": "Plan targets by region and period",
+      "in_anchors": [],
+      "out_anchors": [
+        "Output"
+      ],
+      "meta": {
+        "Output": [
+          {
+            "name": "REGION",
+            "type": "V_String",
+            "size": 10,
+            "scale": null
+          },
+          {
+            "name": "PERIOD",
+            "type": "V_String",
+            "size": 7,
+            "scale": null
+          },
+          {
+            "name": "TARGET",
+            "type": "FixedDecimal",
+            "size": 19,
+            "scale": 2
+          }
+        ]
+      }
+    },
+    {
+      "tool_id": "2",
+      "type": "input",
+      "plugin": "AlteryxBasePluginsGui.DbFileInput.DbFileInput",
+      "container_id": "10",
+      "config": {
+        "source": "C:\\data\\sales\\actuals.yxdb",
+        "format": "yxdb",
+        "query": null,
+        "alias": null,
+        "csv": null,
+        "record_limit": null
+      },
+      "raw_config": "<Configuration>\n              <Passwords />\n              <File OutputFileName=\"\" RecordLimit=\"\" SearchSubDirs=\"False\" FileFormat=\"19\">C:\\data\\sales\\actuals.yxdb</File>\n              <FormatSpecificOptions />\n            </Configuration>",
+      "annotation": "Booked actuals, one row per sales line",
+      "in_anchors": [],
+      "out_anchors": [
+        "Output"
+      ],
+      "meta": {
+        "Output": [
+          {
+            "name": "REGION",
+            "type": "V_String",
+            "size": 10,
+            "scale": null
+          },
+          {
+            "name": "PERIOD",
+            "type": "V_String",
+            "size": 7,
+            "scale": null
+          },
+          {
+            "name": "ACTUAL",
+            "type": "FixedDecimal",
+            "size": 19,
+            "scale": 2
+          }
+        ]
+      }
+    },
+    {
+      "tool_id": "3",
+      "type": "join",
+      "plugin": "AlteryxBasePluginsGui.Join.Join",
+      "container_id": "10",
+      "config": {
+        "keys": [
+          {
+            "left": "REGION",
+            "right": "REGION"
+          },
+          {
+            "left": "PERIOD",
+            "right": "PERIOD"
+          }
+        ],
+        "select": {
+          "fields": [
+            {
+              "name": "Right_REGION",
+              "selected": false,
+              "rename": null,
+              "type": null,
+              "size": null
+            },
+            {
+              "name": "Right_PERIOD",
+              "selected": false,
+              "rename": null,
+              "type": null,
+              "size": null
+            }
+          ],
+          "unknown_selected": true
+        }
+      },
+      "raw_config": "<Configuration>\n              <JoinInfo connection=\"Left\">\n                <Field field=\"REGION\" />\n                <Field field=\"PERIOD\" />\n              </JoinInfo>\n              <JoinInfo connection=\"Right\">\n                <Field field=\"REGION\" />\n                <Field field=\"PERIOD\" />\n              </JoinInfo>\n              <JoinByRecordPos value=\"False\" />\n              <SelectConfiguration>\n                <Configuration outputConnection=\"Join\">\n                  <OrderChanged value=\"False\" />\n                  <CommaDecimal value=\"False\" />\n                  <SelectFields>\n                    <SelectField field=\"Right_REGION\" selected=\"False\" />\n                    <SelectField field=\"Right_PERIOD\" selected=\"False\" />\n                    <SelectField field=\"*Unknown\" selected=\"True\" />\n                  </SelectFields>\n                </Configuration>\n              </SelectConfiguration>\n            </Configuration>",
+      "annotation": "Targets to actuals on REGION, PERIOD",
+      "in_anchors": [
+        "Left",
+        "Right"
+      ],
+      "out_anchors": [
+        "L",
+        "J",
+        "R"
+      ],
+      "meta": {
+        "L": [
+          {
+            "name": "REGION",
+            "type": "V_String",
+            "size": 10,
+            "scale": null
+          },
+          {
+            "name": "PERIOD",
+            "type": "V_String",
+            "size": 7,
+            "scale": null
+          },
+          {
+            "name": "TARGET",
+            "type": "FixedDecimal",
+            "size": 19,
+            "scale": 2
+          }
+        ],
+        "J": [
+          {
+            "name": "REGION",
+            "type": "V_String",
+            "size": 10,
+            "scale": null
+          },
+          {
+            "name": "PERIOD",
+            "type": "V_String",
+            "size": 7,
+            "scale": null
+          },
+          {
+            "name": "TARGET",
+            "type": "FixedDecimal",
+            "size": 19,
+            "scale": 2
+          },
+          {
+            "name": "ACTUAL",
+            "type": "FixedDecimal",
+            "size": 19,
+            "scale": 2
+          }
+        ],
+        "R": [
+          {
+            "name": "REGION",
+            "type": "V_String",
+            "size": 10,
+            "scale": null
+          },
+          {
+            "name": "PERIOD",
+            "type": "V_String",
+            "size": 7,
+            "scale": null
+          },
+          {
+            "name": "ACTUAL",
+            "type": "FixedDecimal",
+            "size": 19,
+            "scale": 2
+          }
+        ]
+      }
+    }
+  ],
+  "edges": [
+    {
+      "src": "1",
+      "src_anchor": "Output",
+      "dst": "3",
+      "dst_anchor": "Left",
+      "dst_order": 1,
+      "wireless": false
+    },
+    {
+      "src": "2",
+      "src_anchor": "Output",
+      "dst": "3",
+      "dst_anchor": "Right",
+      "dst_order": 1,
+      "wireless": false
+    }
+  ],
+  "inbound": [],
+  "outbound": [
+    {
+      "src": "3",
+      "src_anchor": "J",
+      "dst": "4",
+      "dst_anchor": "Input",
+      "dst_order": 1,
+      "wireless": false,
+      "to_segment": "seg_02"
+    }
+  ]
+}

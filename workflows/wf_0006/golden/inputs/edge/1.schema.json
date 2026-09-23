@@ -1,0 +1,32 @@
+[
+  {
+    "name": "CUSTOMER",
+    "type": "V_String",
+    "size": 20,
+    "scale": null
+  },
+  {
+    "name": "PERIOD",
+    "type": "V_String",
+    "size": 7,
+    "scale": null
+  },
+  {
+    "name": "BILLED",
+    "type": "Double",
+    "size": 8,
+    "scale": null
+  },
+  {
+    "name": "CAP",
+    "type": "Double",
+    "size": 8,
+    "scale": null
+  },
+  {
+    "name": "CANCELLED",
+    "type": "Bool",
+    "size": 1,
+    "scale": null
+  }
+]

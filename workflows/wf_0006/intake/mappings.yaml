@@ -1,0 +1,19 @@
+sources:
+  billing/subscriptions.yxdb:
+    snowflake: BILLING.RAW.SUBSCRIPTIONS
+    logical: SUBSCRIPTIONS
+    tool_ids:
+    - '1'
+    confirmed_by: automation
+outputs:
+  out/revenue_by_period.yxdb:
+    snowflake: ANALYTICS.CURATED.REVENUE_BY_PERIOD
+    logical: REVENUE_BY_PERIOD
+    tool_ids:
+    - '5'
+    confirmed_by: automation
+    mode: overwrite
+    keys: []
+constants: {}
+parameters: {}
+macros: {}

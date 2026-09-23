@@ -18,9 +18,11 @@ the connection (dag contract §4); nothing here is guessed.
 ## Snowflake pattern  (SQL, with placeholders)
 
 The mapped source is read by its **logical** name (plan contract C6), never by the Snowflake table
-the translator resolved it to — `IDENTIFIER(:SRC_DB || '.' || :SRC_SCHEMA || '.<LOGICAL>')` (contract
-C4). In this page's own example there is no procedure around the fragment, so it reads the cookbook
-harness's own input table directly; a real procedure's CTE differs only in the `FROM`:
+the translator resolved it to: the procedure body builds the name once,
+`LET <LOGICAL>_SRC VARCHAR := SRC_DB || '.' || SRC_SCHEMA || '.<LOGICAL>';`, and reads it as
+`IDENTIFIER(:<LOGICAL>_SRC)` (contract C4). In this page's own example there is no procedure around
+the fragment, so it reads the cookbook harness's own input table directly; a real procedure's CTE
+differs only in the `FROM`:
 
 ```sql
 -- tool 1: Input Data -- the orders extract, read by its logical name (mappings.yaml, contract C6).
@@ -40,10 +42,11 @@ SELECT
 FROM t1_input
 ```
 
-In a real segment procedure, `FROM MIG_COOKBOOK.IN_1` becomes
-`FROM IDENTIFIER(:SRC_DB || '.' || :SRC_SCHEMA || '.ORDERS')` — see
-`samples/wf_0001/canned/segments/seg_01/proc.sql`'s `t1_input` CTE for the pattern actually used in a
-hand migration, checked the same way this page's own example is.
+In a real segment procedure, `FROM MIG_COOKBOOK.IN_1` becomes `FROM IDENTIFIER(:ORDERS_SRC)`,
+after `LET ORDERS_SRC VARCHAR := SRC_DB || '.' || SRC_SCHEMA || '.ORDERS';` at the top of the body
+— see `samples/wf_0001/canned/segments/seg_01/proc.sql`'s `LET` block and `t1_input` CTE for the
+pattern actually used in a hand migration, checked the same way this page's own example is.
+Snowflake documents `IDENTIFIER(` with one value -- a string literal, session variable, bind variable or Snowflake Scripting variable -- not an expression, which is why the name is built first. Inside the `LET` the procedure's arguments are named without a colon (Snowflake's expression syntax); the colon binds a variable inside a SQL statement, which is why `IDENTIFIER(:ORDERS_SRC)` keeps it. This is the documented form; nothing here has run on Snowflake, and the first real-account run confirms it.
 
 ## Parity risks  (numbered; each references an example under tests/cookbook_examples)
 
@@ -74,8 +77,12 @@ hand migration, checked the same way this page's own example is.
 ## Do not  (known wrong translations)
 
 - Do not read the mapped Snowflake table by its literal name. Every source is read through
-  `IDENTIFIER(:SRC_DB || '.' || :SRC_SCHEMA || '.<LOGICAL>')` (contract C4); a literal reference is
-  a blocking reviewer finding (`.github/agents/reviewer.agent.md`).
+  `IDENTIFIER(:<LOGICAL>_SRC)` after `LET <LOGICAL>_SRC VARCHAR := SRC_DB || '.' || SRC_SCHEMA ||
+  '.<LOGICAL>';` (contract C4); a literal reference is a blocking reviewer finding
+  (`.github/agents/reviewer.agent.md`).
+- Do not write an expression -- a `||` concatenation, a function call -- inside `IDENTIFIER(…)`.
+  Snowflake's documented grammar takes one value there, and `scripts/compile_check.py` refuses the
+  procedure (`c4:identifier_expression`); build the name with the `LET` above instead.
 - Do not add an `ORDER BY` that was not in the original query just to make output "look" stable —
   that changes behavior a downstream Sample/Unique/Record ID tool depends on, silently.
 - Do not treat an empty CSV cell as NULL without checking the target column's coercion rule; the

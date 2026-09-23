@@ -398,8 +398,9 @@ def logical_name(fqn: str, taken: set[str]) -> str:
 
 # --- persistence: intake/mappings.yaml + promotion to mappings/global.yaml -----------------------
 
-# `logical` is used inside `IDENTIFIER(...)` in a generated procedure (plan contract, program spec
-# §5.6), which is why its shape is stricter than an ordinary Snowflake identifier's.
+# `logical` names a table in a generated procedure -- `LET <LOGICAL>_SRC VARCHAR := … || '.<LOGICAL>'`,
+# then `IDENTIFIER(:<LOGICAL>_SRC)` (plan contract C4, program spec §5.6) -- which is why its shape is
+# stricter than an ordinary Snowflake identifier's.
 _LOGICAL_RE = re.compile(r"^[A-Z_][A-Z0-9_$]*$")
 
 
@@ -437,9 +438,9 @@ def _mapping_problems(touchpoints: list[dict], mappings: dict) -> list[str]:
     source is exempt from the tool-id rule below, but not from any other):
 
     - `snowflake` is a string matching `FQN_RE`;
-    - `logical` is a string matching `^[A-Z_][A-Z0-9_$]*$` (procedures use it inside
-      `IDENTIFIER(...)`), and no two entries in the whole file (source or output) share one --
-      they would collide in the sandbox view schema;
+    - `logical` is a string matching `^[A-Z_][A-Z0-9_$]*$` (procedures build a table name from it
+      and reference it through `IDENTIFIER(:<LOGICAL>_SRC)`), and no two entries in the whole file
+      (source or output) share one -- they would collide in the sandbox view schema;
     - `tool_ids` is a non-empty list containing the tied touchpoint's own `tool_id` (skipped
       entirely for a `note: "user-declared"` entry, which has no touchpoint and legitimately
       carries `tool_ids: []`);
@@ -928,6 +929,28 @@ def _write_text(path: Path, text: str) -> None:
         f.write(text)
 
 
+OUTPUT_TARGETS = ("procedures", "dbt")
+
+
+def ask_output_target(ask: Callable[[str], str], out: Callable[[str], None]) -> str | None:
+    """Design §3.3: one program-level question, asked only when mappings/global.yaml has no
+    program.output_target. Enter takes `procedures`; an answer outside the vocabulary is asked once
+    more; a second bad answer or a closed stdin is no answer at all (target_check.py --prefer auto
+    then falls back to procedures)."""
+    for _ in range(2):
+        try:
+            text = (ask("Output target for this workflow? procedures | dbt [procedures]: ") or "").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            return None
+        if not text:
+            return "procedures"
+        if text in OUTPUT_TARGETS:
+            return text
+        out(f"  {text!r} is not one of: {', '.join(OUTPUT_TARGETS)}")
+    out("  no output target recorded; target_check.py will use the program default")
+    return None
+
+
 # --- run ---------------------------------------------------------------------------------------
 
 def run(repo: Repo, wf_id: str, *, interactive: bool, ask: Callable[[str], str] = input,
@@ -972,6 +995,15 @@ def run(repo: Repo, wf_id: str, *, interactive: bool, ask: Callable[[str], str] 
         source_file = (manifest.get("source") or {}).get("file")
         out(f"{wf_id} - {source_file}" if source_file else wf_id)
         catalog = tpx.load_catalog(repo)
+
+        # Design §3.3: the one program-level question, asked before any touchpoint -- and only
+        # when neither mappings/global.yaml nor an earlier run (sample.json's own override, or a
+        # prior answer) already settled it. `manifest` is the same dict `save_manifest` writes at
+        # the end of `run`, so recording the answer here is enough to persist it.
+        if not program.get("output_target") and not manifest.get("output_target"):
+            choice = ask_output_target(ask, out)
+            if choice:
+                manifest["output_target"] = choice
 
         def _rescore(t: dict, exclude=()) -> None:
             t["candidates"] = tpx.propose_candidates(t, catalog, program, exclude=exclude)
@@ -1134,4 +1166,6 @@ def main(argv=None) -> int:
 
 
 if __name__ == "__main__":
+    from lib.console import utf8_console
+    utf8_console()
     sys.exit(main())

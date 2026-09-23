@@ -1,0 +1,20 @@
+[
+  {
+    "name": "ID",
+    "type": "Int32",
+    "size": 4,
+    "scale": null
+  },
+  {
+    "name": "REGION",
+    "type": "V_String",
+    "size": 10,
+    "scale": null
+  },
+  {
+    "name": "AMOUNT",
+    "type": "Double",
+    "size": 8,
+    "scale": null
+  }
+]

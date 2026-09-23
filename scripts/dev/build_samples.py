@@ -371,6 +371,8 @@ def seed(repo: Repo, samples_dir: Path, wf_id: str, *, force: bool = False) -> d
         "consumers": [],
     }
     manifest["segmentation"] = sample.get("segmentation") or {}
+    if sample.get("output_target"):
+        manifest["output_target"] = sample["output_target"]
     manifest.setdefault("status", {})
     manifest.setdefault("metrics", {})
     save_manifest(repo, manifest)
@@ -477,4 +479,6 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    from lib.console import utf8_console
+    utf8_console()
     sys.exit(main())

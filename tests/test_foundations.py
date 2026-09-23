@@ -148,6 +148,7 @@ def test_global_yaml_matches_program_spec_plus_task_additions():
     obj = io.read_yaml(root / "mappings" / "global.yaml")
     assert obj["program"]["raw_schema"] == "RAW"
     assert obj["tolerances"]["rounding"] == {"abs": 0.01}
+    assert obj["segmentation"] == {"max_prompt_chars": 60000}
     assert obj["sources"] == {}
     assert obj["outputs"] == {}
 
@@ -297,3 +298,15 @@ def test_repo_wf_and_seg_accept_relative_parts_with_no_dot_component(tmp_path, g
     # A dot *inside* a component (a filename, or a multi-component literal) is not a traversal.
     repo.wf("wf_0001", good_part)
     repo.seg("wf_0001", "seg_01", good_part)
+
+
+def test_vocab_owns_the_data_less_node_types_that_target_check_and_compile_check_share():
+    """Final fix wave M2: three copies of "node types that carry no data" had drifted into one
+    shared set plus two hand-maintained supersets. `DATA_LESS_TYPES` is the superset, derived
+    from `NON_DATA_TYPES` rather than retyped, so a type added to one reaches both call sites."""
+    import compile_check
+    import target_check
+
+    assert vocab.DATA_LESS_TYPES == vocab.NON_DATA_TYPES | {"browse"}
+    assert target_check.DATA_LESS_TYPES is vocab.DATA_LESS_TYPES
+    assert compile_check.DATA_LESS_TYPES is vocab.DATA_LESS_TYPES

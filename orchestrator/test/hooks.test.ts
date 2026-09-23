@@ -313,6 +313,8 @@ test("recordMetrics adds to (not replaces) a role's prior toolCalls, and is idem
     contextOverflow: false,
     errors: [],
     metricsRecorded: false,
+    compactions: 0,
+    peakInputTokens: 0,
   };
   recordMetrics(wf, "intake", state, 2000);
   assert.equal(wf.metrics.intake.toolCalls, 66, "37 (already recorded) + 29 (this session) = 66, the real combined spend");

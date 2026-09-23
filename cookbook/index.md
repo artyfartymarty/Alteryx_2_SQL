@@ -13,6 +13,15 @@ Pages: [Input Data](input.md) · [Output Data](output.md) · [Select](select.md)
 Proposed pages awaiting a runnable example live under `proposals/` (see its `.gitkeep`); nothing
 there is wired into a translation until it has one.
 
+## Target pages
+
+The pages above are one per Alteryx tool, keyed to the SQL target. Two more pages cover the other
+two output targets (`output_kind`, design spec §3.1) instead of a single tool each: [Snowpark
+(DataFrame idioms)](snowpark.md) and [dbt (materialisations, hooks, sources/refs,
+naming, tests)](dbt.md). Each follows its own template and its own regression harness
+(`tests/test_cookbook_snowpark.py`, `tests/test_cookbook_dbt.py`), not the per-tool template these
+tests check (`test_every_cookbook_tool_has_a_page`'s `TARGET_PAGES` exclusion).
+
 ## Local verification
 
 Every pattern on these pages is checked by `tests/test_cookbook_examples.py`: the same SQL shown

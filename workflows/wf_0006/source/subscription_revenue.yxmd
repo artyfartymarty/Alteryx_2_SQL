@@ -1,0 +1,204 @@
+<?xml version="1.0"?>
+<AlteryxDocument yxmdVer="2023.1">
+  <Nodes>
+    <Node ToolID="1">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.DbFileInput.DbFileInput">
+        <Position x="54" y="66" />
+      </GuiSettings>
+      <Properties>
+        <Configuration>
+          <Passwords />
+          <File OutputFileName="" RecordLimit="" SearchSubDirs="False" FileFormat="19">C:\data\billing\subscriptions.yxdb</File>
+          <FormatSpecificOptions />
+        </Configuration>
+        <Annotation DisplayMode="0">
+          <Name />
+          <DefaultAnnotationText>Subscription billing extract</DefaultAnnotationText>
+        </Annotation>
+        <MetaInfo connection="Output">
+          <RecordInfo>
+            <Field name="CUSTOMER" type="V_String" size="20" source="File: C:\data\billing\subscriptions.yxdb" />
+            <Field name="PERIOD" type="V_String" size="7" source="File: C:\data\billing\subscriptions.yxdb" />
+            <Field name="BILLED" type="Double" size="8" source="File: C:\data\billing\subscriptions.yxdb" />
+            <Field name="CAP" type="Double" size="8" source="File: C:\data\billing\subscriptions.yxdb" />
+            <Field name="CANCELLED" type="Bool" size="1" source="File: C:\data\billing\subscriptions.yxdb" />
+          </RecordInfo>
+        </MetaInfo>
+      </Properties>
+      <EngineSettings EngineDll="AlteryxBasePluginsEngine.dll" EngineDllEntryPoint="AlteryxDbFileInput" />
+    </Node>
+    <Node ToolID="2">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.Filter.Filter">
+        <Position x="162" y="66" />
+      </GuiSettings>
+      <Properties>
+        <Configuration>
+          <Expression>[BILLED] &gt; 0</Expression>
+          <Mode>Custom</Mode>
+        </Configuration>
+        <Annotation DisplayMode="0">
+          <Name />
+          <DefaultAnnotationText>Only billed periods</DefaultAnnotationText>
+        </Annotation>
+        <MetaInfo connection="True">
+          <RecordInfo>
+            <Field name="CUSTOMER" type="V_String" size="20" source="File: C:\data\billing\subscriptions.yxdb" />
+            <Field name="PERIOD" type="V_String" size="7" source="File: C:\data\billing\subscriptions.yxdb" />
+            <Field name="BILLED" type="Double" size="8" source="File: C:\data\billing\subscriptions.yxdb" />
+            <Field name="CAP" type="Double" size="8" source="File: C:\data\billing\subscriptions.yxdb" />
+            <Field name="CANCELLED" type="Bool" size="1" source="File: C:\data\billing\subscriptions.yxdb" />
+          </RecordInfo>
+        </MetaInfo>
+        <MetaInfo connection="False">
+          <RecordInfo>
+            <Field name="CUSTOMER" type="V_String" size="20" source="File: C:\data\billing\subscriptions.yxdb" />
+            <Field name="PERIOD" type="V_String" size="7" source="File: C:\data\billing\subscriptions.yxdb" />
+            <Field name="BILLED" type="Double" size="8" source="File: C:\data\billing\subscriptions.yxdb" />
+            <Field name="CAP" type="Double" size="8" source="File: C:\data\billing\subscriptions.yxdb" />
+            <Field name="CANCELLED" type="Bool" size="1" source="File: C:\data\billing\subscriptions.yxdb" />
+          </RecordInfo>
+        </MetaInfo>
+      </Properties>
+      <EngineSettings EngineDll="AlteryxBasePluginsEngine.dll" EngineDllEntryPoint="AlteryxFilter" />
+    </Node>
+    <Node ToolID="3">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.PythonTool.PythonTool">
+        <Position x="270" y="66" />
+      </GuiSettings>
+      <Properties>
+        <Configuration>
+          <Script>import pandas as pd
+df = Alteryx.read("#1")
+df = df.sort_values(["CUSTOMER", "PERIOD"]).reset_index(drop=True)
+out = []
+for customer, group in df.groupby("CUSTOMER", sort=False):
+    deferred = 0.0
+    for _, row in group.iterrows():
+        if bool(row["CANCELLED"]):
+            deferred = 0.0
+        billed = 0.0 if pd.isna(row["BILLED"]) else float(row["BILLED"])
+        recognized = min(billed + deferred, float(row["CAP"]))
+        deferred = billed + deferred - recognized
+        out.append({"CUSTOMER": customer, "PERIOD": row["PERIOD"],
+                    "RECOGNIZED": round(recognized, 2), "DEFERRED": round(deferred, 2)})
+schedule = pd.DataFrame(out, columns=["CUSTOMER", "PERIOD", "RECOGNIZED", "DEFERRED"])
+schedule["RECOGNIZED"] = schedule["RECOGNIZED"].astype("float64")
+schedule["DEFERRED"] = schedule["DEFERRED"].astype("float64")
+Alteryx.write(schedule, 1)</Script>
+        </Configuration>
+        <Annotation DisplayMode="0">
+          <Name />
+          <DefaultAnnotationText>Revenue schedule with carry-over</DefaultAnnotationText>
+        </Annotation>
+        <MetaInfo connection="Output1">
+          <RecordInfo>
+            <Field name="CUSTOMER" type="V_WString" size="254" source="Python: Alteryx.write(df, 1)" />
+            <Field name="PERIOD" type="V_WString" size="254" source="Python: Alteryx.write(df, 1)" />
+            <Field name="RECOGNIZED" type="Double" size="8" source="Python: Alteryx.write(df, 1)" />
+            <Field name="DEFERRED" type="Double" size="8" source="Python: Alteryx.write(df, 1)" />
+          </RecordInfo>
+        </MetaInfo>
+      </Properties>
+      <EngineSettings EngineDll="AlteryxPythonEngine.dll" EngineDllEntryPoint="AlteryxPythonTool" />
+    </Node>
+    <Node ToolID="4">
+      <GuiSettings Plugin="AlteryxSpatialPluginsGui.Summarize.Summarize">
+        <Position x="378" y="66" />
+      </GuiSettings>
+      <Properties>
+        <Configuration>
+          <SummarizeFields>
+            <SummarizeField field="PERIOD" action="GroupBy" rename="PERIOD" />
+            <SummarizeField field="RECOGNIZED" action="Sum" rename="TOTAL_RECOGNIZED" />
+            <SummarizeField field="DEFERRED" action="Sum" rename="TOTAL_DEFERRED" />
+            <SummarizeField field="CUSTOMER" action="Count" rename="CUSTOMERS" />
+          </SummarizeFields>
+        </Configuration>
+        <Annotation DisplayMode="0">
+          <Name />
+          <DefaultAnnotationText>Totals by period</DefaultAnnotationText>
+        </Annotation>
+        <MetaInfo connection="Output">
+          <RecordInfo>
+            <Field name="PERIOD" type="V_WString" size="254" source="Summarize: GroupBy_PERIOD" />
+            <Field name="TOTAL_RECOGNIZED" type="Double" size="8" source="Summarize: Sum_RECOGNIZED" />
+            <Field name="TOTAL_DEFERRED" type="Double" size="8" source="Summarize: Sum_DEFERRED" />
+            <Field name="CUSTOMERS" type="Int64" size="8" source="Summarize: Count_CUSTOMER" />
+          </RecordInfo>
+        </MetaInfo>
+      </Properties>
+      <EngineSettings EngineDll="AlteryxSpatialPluginsEngine.dll" EngineDllEntryPoint="AlteryxSummarize" />
+    </Node>
+    <Node ToolID="5">
+      <GuiSettings Plugin="AlteryxBasePluginsGui.DbFileOutput.DbFileOutput">
+        <Position x="486" y="66" />
+      </GuiSettings>
+      <Properties>
+        <Configuration>
+          <Passwords />
+          <File MaxRecords="" FileFormat="19">C:\data\out\revenue_by_period.yxdb</File>
+          <FormatSpecificOptions>
+            <OutputOption>Overwrite</OutputOption>
+          </FormatSpecificOptions>
+          <MultiFile value="False" />
+        </Configuration>
+        <Annotation DisplayMode="0">
+          <Name />
+          <DefaultAnnotationText>revenue_by_period.yxdb</DefaultAnnotationText>
+        </Annotation>
+        <MetaInfo connection="Output">
+          <RecordInfo>
+            <Field name="PERIOD" type="V_WString" size="254" source="Summarize: GroupBy_PERIOD" />
+            <Field name="TOTAL_RECOGNIZED" type="Double" size="8" source="Summarize: Sum_RECOGNIZED" />
+            <Field name="TOTAL_DEFERRED" type="Double" size="8" source="Summarize: Sum_DEFERRED" />
+            <Field name="CUSTOMERS" type="Int64" size="8" source="Summarize: Count_CUSTOMER" />
+          </RecordInfo>
+        </MetaInfo>
+      </Properties>
+      <EngineSettings EngineDll="AlteryxBasePluginsEngine.dll" EngineDllEntryPoint="AlteryxDbFileOutput" />
+    </Node>
+  </Nodes>
+  <Connections>
+    <Connection>
+      <Origin ToolID="1" Connection="Output" />
+      <Destination ToolID="2" Connection="Input" />
+    </Connection>
+    <Connection>
+      <Origin ToolID="2" Connection="True" />
+      <Destination ToolID="3" Connection="Input" name="#1" />
+    </Connection>
+    <Connection>
+      <Origin ToolID="3" Connection="Output1" />
+      <Destination ToolID="4" Connection="Input" />
+    </Connection>
+    <Connection>
+      <Origin ToolID="4" Connection="Output" />
+      <Destination ToolID="5" Connection="Input" />
+    </Connection>
+  </Connections>
+  <Properties>
+    <Memory default="True" />
+    <GlobalRecordLimit value="0" />
+    <TempFiles default="True" />
+    <Annotation on="True" includeToolName="False" />
+    <ConvErrorLimit value="10" />
+    <ConvErrorLimit_Stopped value="False" />
+    <CancelOnError value="False" />
+    <DisableBrowse value="False" />
+    <EnablePerformanceProfiling value="False" />
+    <DisableAllOutput value="False" />
+    <ShowAllMacroMessages value="False" />
+    <ShowConnectionStatusIsOn value="True" />
+    <ShowConnectionStatusOnlyWhenRunning value="True" />
+    <ZoomLevel value="0" />
+    <LayoutType>Horizontal</LayoutType>
+    <Constants />
+    <RuntimeProperties>
+      <Actions />
+      <Questions />
+      <ModuleType>Wizard</ModuleType>
+      <MacroCustomHelp value="False" />
+      <RunE2 value="True" />
+    </RuntimeProperties>
+  </Properties>
+</AlteryxDocument>

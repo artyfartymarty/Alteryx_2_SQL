@@ -45,6 +45,7 @@ field list for outputs whose target does not exist yet. A field's `source` attri
 | `AlteryxBasePluginsGui.BlockUntilDone.BlockUntilDone` | `block_until_done` | Input | Output1, Output2, Output3 |
 | `AlteryxBasePluginsGui.BrowseV2.BrowseV2` | `browse` | Input | — |
 | `AlteryxBasePluginsGui.RunCommand.RunCommand` | `run_command` | Input | Output |
+| `AlteryxBasePluginsGui.PythonTool.PythonTool` | `python` | Input (connections #1..#n, ordered) | 1..5 (Output1..Output5) — verify the plugin id against your Alteryx version |
 | `AlteryxBasePluginsGui.MacroInput.MacroInput` | `macro_input` | — | Output |
 | `AlteryxBasePluginsGui.MacroOutput.MacroOutput` | `macro_output` | Input | — |
 | `AlteryxBasePluginsGui.Action.Action` | `action` | — | — |
@@ -201,6 +202,19 @@ simulator substitutes textually before evaluating.
 
 **run_command** — `<Command>C:\scripts\post.bat</Command><CommandArguments>--x</CommandArguments>` →
 `{ "command": "C:\\scripts\\post.bat", "args": "--x" }`.
+
+**python** — `<Script>import pandas as pd\ndf = Alteryx.read("#1")\nAlteryx.write(df, 1)</Script>` →
+`{ "script": "<the tool's code>" }` — this repo's samples keep the code in
+`<Configuration><Script>`; a real Alteryx workflow stores a Jupyter notebook JSON, to be extracted
+into the same `"script"` key. `Input` connections are ordered by `dst_order` from the connection's
+`#1`, `#2`, … name, the same rule `union` uses (§3); a Python tool is always its own segment (§2, and
+`scripts/segment.py`'s `is_hard`), so it becomes one Snowpark Python procedure rather than being
+merged with neighbouring tools. The simulator runs this script in a sandbox
+([simulator-semantics.md §7.1](simulator-semantics.md#71-the-python-tool)). **This is an accident
+guard, not a security boundary: an allowed library can still reach the filesystem and load native
+code (for example `DataFrame.to_csv`, or a submodule the allow-list admits by its top-level package
+alone, such as `numpy.ctypeslib` or `pandas.io.common`); the simulator runs only this repository's
+own committed sample scripts and must never be pointed at an untrusted workflow's Python tool.**
 
 **unknown** — `config` is `{}`; `raw_config` is kept; an extension or the parser-recovery agent may add
 `behavior` and `confidence`.

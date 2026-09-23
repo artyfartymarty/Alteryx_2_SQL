@@ -1,0 +1,10 @@
+version: 2
+sources:
+  - name: src
+    schema: "{{ var('src_schema') }}"
+    tables:
+      - name: IN_1
+        columns:
+          - name: ID
+          - name: REGION
+          - name: AMOUNT

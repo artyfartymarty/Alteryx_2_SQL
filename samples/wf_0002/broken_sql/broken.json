@@ -1,6 +1,7 @@
 [
   {
     "segment": "seg_01",
+    "target": "sql",
     "file": "01_cleansing_without_upper.sql",
     "golden_set": "normal",
     "expect": { "class": "LOGIC", "columns": ["CITY", "NAME"], "stream": "2_Output", "hint": "case_only" },
@@ -8,6 +9,7 @@
   },
   {
     "segment": "seg_01",
+    "target": "sql",
     "file": "02_cleansing_keeps_null_names.sql",
     "golden_set": "normal",
     "expect": { "class": "NULL_SEMANTICS", "columns": ["NAME"], "stream": "2_Output" },
@@ -15,6 +17,7 @@
   },
   {
     "segment": "seg_03",
+    "target": "sql",
     "file": "01_union_drops_the_join_left_branch.sql",
     "golden_set": "normal",
     "expect": { "class": "NULL_SEMANTICS", "columns": ["AMOUNT", "ORDER_DATE", "ORDER_ID"], "stream": "9_Output" },

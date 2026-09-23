@@ -1,6 +1,7 @@
 {
   "workflow": "wf_0003",
   "segment": "seg_02",
+  "target": "sql",
   "inputs": [
     {
       "from": "seg_01",

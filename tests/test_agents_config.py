@@ -5,12 +5,17 @@ amendments listed in the phase-04 brief applied on top (each marked `<!-- amende
 so a reader can diff the file against the spec). These tests check the frontmatter contract every
 file must satisfy and the specific amendments the brief and the controller called out by name.
 """
+import getpass
 import json
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 AGENTS_DIR = ROOT / ".github" / "agents"
 SUFFIX = ".agent.md"
+
+#: An absolute path of *this* PC -- never legitimate in a hand-off artifact.
+_ABS_PATH_RE = re.compile(r"[a-zA-Z]:[\\/]Users[\\/]", re.IGNORECASE)
 
 # The nine custom agents (plan Task 12 file list) plus the five built-ins config.json must keep
 # untouched (program spec 01-copilot-setup.md Part A §1).
@@ -153,9 +158,28 @@ def test_translator_states_contract_c4_in_full():
     for token in (
         "MIG_WORK.<WF>_<SEG>", "SRC_DB STRING", "SRC_SCHEMA STRING", "TGT_DB STRING",
         "TGT_SCHEMA STRING", "RUN_ID STRING", "RETURNS STRING", "LANGUAGE SQL",
-        "EXECUTE AS CALLER", "IDENTIFIER(:SRC_DB", "IDENTIFIER(:TGT_DB", "RETURN 'OK';",
+        "EXECUTE AS CALLER", "IDENTIFIER(:<LOGICAL>_SRC)", "IDENTIFIER(:<LOGICAL>_TGT)", "RETURN 'OK';",
     ):
         assert token in body, token
+
+
+def test_translator_states_the_documented_identifier_form():
+    """Task C4V: Snowflake documents `IDENTIFIER(` with one value, not an expression, so the
+    translator builds each name with a LET first -- and says the form has not run on Snowflake."""
+    _, body = _read("translator")
+    assert "IDENTIFIER(:SRC_DB" not in body and "IDENTIFIER(:TGT_DB" not in body  # the old form
+    assert "LET <LOGICAL>_SRC VARCHAR := SRC_DB || '.' || SRC_SCHEMA || '.<LOGICAL>';" in body
+    assert "LET <LOGICAL>_TGT VARCHAR := TGT_DB || '.' || TGT_SCHEMA || '.<LOGICAL>';" in body
+    assert "c4:let_form" in body and "c4:identifier_expression" in body
+    assert ":= :SRC_DB" not in body and ":= :TGT_DB" not in body  # fix round 1: no colon inside a LET
+    assert "without a colon" in body
+    assert "documented" in body and "first real-account run" in body
+    assert "with no `LET`" not in body  # the old C4 sentence that forbade every LET
+
+
+def test_reviewer_checks_the_documented_identifier_form():
+    _, body = _read("reviewer")
+    assert "IDENTIFIER(:<LOGICAL>_SRC)" in body and "never an expression inside" in body
 
 
 def test_translator_documents_compile_check_signature_rejection():
@@ -235,6 +259,103 @@ def test_amended_paragraphs_are_marked():
             assert marker not in body, name
 
 
+# --- output targets, phase 1: the Snowpark parts of each agent (design §8) -------------------
+# The orchestrator now dispatches per segment on `contract.json.target`, so every agent that
+# touches a segment has to know which artefact it is looking at. These check the specific
+# statements the task brief named, not the prose around them.
+
+def test_analyzer_documents_target_check_and_the_lower_only_rule():
+    _, body = _read("analyzer")
+    assert "scripts/target_check.py" in body
+    assert "segments/targets.json" in body
+    assert '"target"' in body
+    # the direction of the rule, both halves, and what the orchestrator does about a violation
+    assert "only LOWER" in body or "only lower" in body
+    assert "never back towards `sql`" in body
+    assert "target-mismatch: <seg> raised <proposal> to <contract>" in body
+    assert "target-missing: <seg>" in body
+
+
+def test_translator_carries_the_snowpark_rules_of_design_4_2():
+    _, body = _read("translator")
+    for token in (
+        "def run(session, src_db, src_schema, tgt_db, tgt_schema, run_id) -> str",
+        "snowflake.snowpark.functions", "snowflake.snowpark.types",
+        "session.sql", "__import__", "subprocess",
+        'session.table(f"{src_db}.{src_schema}.<LOGICAL>")',
+        '.write.mode("overwrite" | "append").save_as_table',
+        "# tool <id>:", "to_pandas()",
+        "scripts/render_snowpark.py", "--target snowpark",
+    ):
+        assert token in body, token
+
+
+def test_translator_snowpark_rules_bullet_is_verbatim_from_the_design():
+    """Design §4.2's `- Rules (…): …` bullet is copied into the translator VERBATIM (task brief:
+    "copy them verbatim into the translator agent"), so the agent and the spec can never drift.
+    Compared with newlines normalized only -- the agent files are CRLF here, the spec is LF."""
+    spec = (ROOT / "docs" / "superpowers" / "specs"
+            / "2026-09-22-output-targets-design.md").read_text(encoding="utf-8")
+    start = spec.index("- Rules (checked by `compile_check.py --target snowpark`, §5.1)")
+    end = spec.index("\n- Rendered artefact:", start)
+    bullet = spec[start:end].replace("\r\n", "\n")
+    _, body = _read("translator")
+    assert bullet in body.replace("\r\n", "\n"), (
+        "the translator's Snowpark rules bullet is not byte-identical to design §4.2's:\n"
+        f"--- spec ---\n{bullet}")
+
+
+def test_translator_forbids_hand_writing_the_rendered_proc_sql():
+    _, body = _read("translator")
+    assert "RENDERED artefact" in body
+    assert "Never write or edit `proc.sql`" in body
+
+
+def test_reviewer_blocks_on_the_snowpark_rules_and_the_proc_sql_proc_py_pair():
+    _, body = _read("reviewer")
+    assert "proc.py" in body
+    assert "scripts/render_snowpark.py" in body
+    assert "session.sql" in body
+    assert "# tool <id>:" in body
+    # row-sequential pandas has to be justified in the notes, per design §4.2
+    assert "to_pandas()" in body and "translation_notes.md" in body
+
+
+def test_validator_picks_its_script_from_the_contract_target():
+    _, body = _read("validator")
+    assert "scripts/validate_snowpark.py" in body
+    assert "scripts/validate_segment.py" in body
+    assert '"target"' in body
+    # the honesty statement design §9 requires wherever the local double is named
+    assert "Local Testing Framework" in body
+    assert "subset" in body
+
+
+def test_fixer_repairs_proc_py_and_never_proc_sql():
+    _, body = _read("fixer")
+    assert "proc.py" in body
+    assert "Never edit `proc.sql` by hand" in body
+    assert "scripts/render_snowpark.py" in body
+
+
+def test_copilot_instructions_carry_one_targets_paragraph():
+    text = (ROOT / ".github" / "copilot-instructions.md").read_text(encoding="utf-8")
+    assert "docs/reference/output-targets.md" in text
+    assert "scripts/target_check.py" in text
+    assert "scripts/render_snowpark.py" in text
+    assert "lower" in text.lower()
+
+
+def test_no_machine_path_or_user_name_in_any_agent_or_instruction_file():
+    """Hand-off rule: no absolute path of this PC, no OS login name, anywhere in .github/."""
+    login = getpass.getuser().lower()
+    files = sorted(AGENTS_DIR.glob(f"*{SUFFIX}")) + [ROOT / ".github" / "copilot-instructions.md"]
+    for path in files:
+        text = path.read_text(encoding="utf-8")
+        assert not _ABS_PATH_RE.search(text), f"{path.name} carries an absolute machine path"
+        assert login not in text.lower(), f"{path.name} carries the OS login name"
+
+
 # --- fixer / parser-recovery / documenter / cookbook-curator: verbatim, no amendments -------
 
 def test_unamended_agents_keep_their_spec_bodies():
@@ -276,3 +397,374 @@ def test_config_json_agent_models_match_the_agent_frontmatter():
     for name in CUSTOM_AGENTS:
         front, _ = _read(name)
         assert agents[name]["model"] == front["model"], name
+
+
+# --- final fix wave F5 (review I5): column order is a documented rule, not folklore -------------
+# A Snowpark procedure hand-builds its output `StructType`, so getting the column ORDER wrong is
+# an easy slip -- and `compare.py` reports it as a `TYPE` difference naming every column, which
+# points the fixer at types rather than at order. Nothing on the branch told the translator the
+# rule; the review reproduced the FAIL (probe A3). The sentence now lives in all four places a
+# translator, a reviewer or a reader would look.
+
+COLUMN_ORDER_SENTENCE = (
+    "`StructType` must list the columns in the contract's declared `outputs[].columns` order: a "
+    "different order is a schema FAIL, reported as a `TYPE` difference rather than as an ordering "
+    "one"
+)
+
+COLUMN_ORDER_HOMES = (
+    "docs/reference/output-targets.md",
+    ".github/agents/translator.agent.md",
+    ".github/agents/reviewer.agent.md",
+    "samples/wf_0006/canned/segments/seg_02/translation_notes.md",
+)
+
+
+def _squeezed(rel: str) -> str:
+    return " ".join((ROOT / rel).read_text(encoding="utf-8").split())
+
+
+def test_the_column_order_rule_is_stated_wherever_a_snowpark_translation_is_described():
+    wanted = " ".join(COLUMN_ORDER_SENTENCE.split())
+    for rel in COLUMN_ORDER_HOMES:
+        assert wanted in _squeezed(rel), f"{rel} does not state the column-order rule"
+
+
+# --- round 2, R4: the spec, the translator and the reference page name what the code refuses ----
+# The translator's §4.2 bullet is pinned byte-identical to the spec's above. This pins the other
+# direction: every name `snowpark_rules` actually refuses must be written down in the spec bullet
+# AND in docs/reference/output-targets.md, so a deny-list that grows in code cannot quietly stop
+# being the contract the translator was handed.
+
+def _spec_rules_bullet() -> str:
+    spec = (ROOT / "docs" / "superpowers" / "specs"
+            / "2026-09-22-output-targets-design.md").read_text(encoding="utf-8")
+    start = spec.index("- Rules (checked by `compile_check.py --target snowpark`, §5.1)")
+    return spec[start:spec.index("\n- Rendered artefact:", start)].replace("\r\n", "\n")
+
+
+def _refused_names() -> list[str]:
+    from lib import snowpark_rules as rules
+    return sorted(rules.FORBIDDEN_NAMES | rules.FORBIDDEN_MODULES | rules.RAW_SQL_NAMES
+                  | rules.FORBIDDEN_SINKS | rules.PANDAS_WRITERS | rules.CALL_ONLY_ATTRS
+                  | rules.FORBIDDEN_SESSION_NAMES | rules.NO_SESSION_SQL_ATTRS
+                  | rules.FORBIDDEN_SESSION_ATTRS | rules.NUMPY_WRITERS)
+
+
+def _names_missing_from(text: str) -> list[str]:
+    """A name counts as written down only when it appears in code ticks -- `save`, not the `save`
+    inside `save_as_table`. `sql` and `call` are written as `session.sql` / `session.call`, which
+    is how a reader meets them."""
+    squeezed = " ".join(text.split())
+    return [name for name in _refused_names()
+            if f"`{name}`" not in squeezed and f"`session.{name}`" not in squeezed]
+
+
+def test_the_spec_rules_bullet_names_every_refusal_the_rules_implement():
+    missing = _names_missing_from(_spec_rules_bullet())
+    assert not missing, f"design §4.2's rules bullet does not mention: {missing}"
+
+
+def test_the_reference_page_names_every_refusal_the_rules_implement():
+    text = (ROOT / "docs" / "reference" / "output-targets.md").read_text(encoding="utf-8")
+    missing = _names_missing_from(text)
+    assert not missing, f"docs/reference/output-targets.md does not mention: {missing}"
+
+
+def test_the_translator_carries_the_spec_bullet_and_therefore_every_refusal():
+    _, body = _read("translator")
+    assert _spec_rules_bullet() in body.replace("\r\n", "\n")
+    assert not _names_missing_from(body)
+
+
+# --- output targets, phase 2: the dbt parts of each agent (design §4.3, §6, §8; Task D) -----------
+# A dbt workflow is translated ONCE as one project, checked by `compile_check.py <id> --target dbt`
+# (sixteen named checks since the final fix wave's closed surface) and validated by `validate_dbt.py`. The translator must be taught the rules
+# exactly as compile_check enforces them, so the pins below run compile_check's own code against
+# the constructs the agent file names, the way phase 1 pinned every name `snowpark_rules` refuses.
+
+PHASE_2_MARKER = "<!-- amended: output targets phase 2 -->"
+PHASE_2_AGENTS = ("translator", "reviewer", "validator", "fixer", "documenter")
+
+#: Jinja a migration model may use -- each must be ACCEPTED by compile_check and written down.
+DBT_JINJA_ALLOWED = (
+    "{{ config(materialized='table') }}",
+    "{{ source('src', '<LOGICAL>') }}",
+    "{{ ref('<model>') }}",
+    "{{ this }}",
+    "{% if is_incremental() %}",
+    "{% else %}",
+    "{% endif %}",
+    "{# … #}",
+)
+
+#: What the agent file names as refused (in code ticks), and a construct compile_check refuses for
+#: that name -- `test_model_jinja_is_a_closed_allow_list`'s cases, one per name.
+DBT_JINJA_REFUSED = {
+    "env_var": "{{ env_var('X') }}",
+    "var": "{{ var('src_schema') }}",
+    "run_query": "{{ run_query('select 1') }}",
+    "statement": "{% call statement('x') %}",
+    "adapter": "{{ adapter.execute('select 1') }}",
+    "{% for %}": "{% for x in y %}",
+    "{{ source('src', env_var('X')) }}": "{{ source('src', env_var('X')) }}",
+}
+
+
+def _section(name: str, heading: str) -> str:
+    """The section of `name`'s agent file that starts at `heading`, up to the next `## ` heading."""
+    _, body = _read(name)
+    start = body.index(heading)
+    end = body.find("\n## ", start + 1)
+    return body[start:] if end < 0 else body[start:end]
+
+
+def _bullet(text: str, start: str) -> str:
+    """One top-level `- ` bullet of `text` (with its indented continuation lines)."""
+    at = text.index(start)
+    end = text.find("\n- ", at + 1)
+    return text[at:] if end < 0 else text[at:end]
+
+
+def _jinja_refusals(tmp_path: Path, construct: str) -> list[str]:
+    """compile_check's own `dbt:model_jinja` check over one model holding `construct` -- the exact
+    code path `compile_check_dbt` runs, without `dbt parse`."""
+    import compile_check
+    models = tmp_path / "models"
+    models.mkdir(parents=True, exist_ok=True)
+    (models / "x.sql").write_text(f"{construct}\nselect 1 as ID\n", encoding="utf-8")
+    return compile_check._dbt_jinja_errors(tmp_path)
+
+
+def _dbt_check_names() -> list[str]:
+    """Every `dbt:<check>` name `compile_check.py --target dbt` can report: its own, and the closed
+    surface's (`scripts/lib/dbt_surface.py`, final fix wave C1), which it reports too."""
+    source = "\n".join((ROOT / "scripts" / name).read_text(encoding="utf-8")
+                       for name in ("compile_check.py", "lib/dbt_surface.py"))
+    return sorted(set(re.findall(r"""['"]dbt:([a-z_]+)(?::|['"])""", source)))
+
+
+def test_phase_2_amendments_are_marked():
+    for name in PHASE_2_AGENTS:
+        _, body = _read(name)
+        assert PHASE_2_MARKER in body, name
+
+
+def test_translator_carries_the_dbt_rules():
+    section = _section("translator", "## dbt projects")
+    for token in (
+        "alias='<LOGICAL>'", "Never run `dbt` yourself", "compile_check.py <id> --target dbt",
+        "one model per final target", "ONCE", "no segment", "workflows/<id>/dbt/",
+        "materialized='table'", "incremental_strategy='append'", "incremental_strategy='merge'",
+        "unique_key=[", "pre_hook", "post_hook", "{{ this }}", "models/sources.yml",
+        "models/schema.yml", "not_null", "unique", "-- tool <id>:", "translation_notes.md",
+        "README.md", "cookbook/dbt.md", "dbt/review.json", "dbt/compile_check.json",
+    ):
+        assert token in section, token
+    assert "is_incremental()" in section
+
+
+def test_translator_points_at_both_new_cookbook_pages():
+    _, body = _read("translator")
+    assert "cookbook/snowpark.md" in body and "cookbook/dbt.md" in body
+
+
+def test_translator_carries_the_profile_template_byte_for_byte():
+    """`dbt:profiles` compares profiles.yml byte for byte with `PROFILES_TEMPLATE`, so the agent
+    is handed the template itself, not a description of it."""
+    from lib import dbt_project
+    section = _section("translator", "## dbt projects")
+    assert dbt_project.PROFILES_TEMPLATE in section.replace("\r\n", "\n")
+    assert "byte for byte" in section
+
+
+def test_translator_names_every_dbt_check_compile_check_runs():
+    names = _dbt_check_names()
+    # design §5.1's eleven, plus the closed surface's five (final fix wave C1)
+    assert names == ["columns", "hook_sql", "hooks", "layout", "model_config", "model_jinja", "model_missing",
+                     "model_orphan", "model_sql", "parse", "profiles", "project_yml", "sources", "surface",
+                     "tool_comments", "yaml"], names
+    section = _section("translator", "## dbt projects")
+    missing = [name for name in names if f"dbt:{name}" not in section]
+    assert not missing, f"the translator's dbt section does not name: {missing}"
+
+
+def test_translator_teaches_the_closed_jinja_allow_list_exactly_as_compile_check_enforces_it(tmp_path):
+    jinja = _bullet(_section("translator", "## dbt projects"), "- **Model Jinja")
+    squeezed = " ".join(jinja.split())
+    for construct in DBT_JINJA_ALLOWED:
+        assert f"`{construct}`" in squeezed, f"the allow-list bullet does not name {construct}"
+        concrete = construct.replace("<LOGICAL>", "ORDERS").replace("<model>", "orders_out").replace("…", "note")
+        refusals = _jinja_refusals(tmp_path / "ok" / str(DBT_JINJA_ALLOWED.index(construct)), concrete)
+        assert not refusals, (construct, refusals)
+    for name, construct in DBT_JINJA_REFUSED.items():
+        assert f"`{name}`" in squeezed, f"the allow-list bullet does not name the refused {name}"
+        refusals = _jinja_refusals(tmp_path / "refused" / str(list(DBT_JINJA_REFUSED).index(name)), construct)
+        assert refusals and refusals[0].startswith("dbt:model_jinja"), (name, refusals)
+
+
+def test_translator_states_the_orphan_and_alias_rules():
+    squeezed = " ".join(_section("translator", "## dbt projects").split())
+    # dbt:model_orphan -- a model that is no contract output's would deploy an untracked table
+    assert "dbt:model_orphan" in squeezed
+    assert "every `models/*.sql` is some contract output's model" in squeezed
+    # the alias is not optional: dbt refuses a lower-case model over an upper-case table (S3)
+    assert "upper case" in squeezed and "approximate match" in squeezed
+
+
+def test_reviewer_blocks_on_the_dbt_project_shape():
+    section = _section("reviewer", "## Blocking checks for a dbt project")
+    squeezed = " ".join(section.split())
+    for token in (
+        "one model per contract output", "unique_key", "the mapping's keys", "alias='<LOGICAL>'",
+        "upper case", "profiles.yml", "PROFILES_TEMPLATE", "models/schema.yml", "in order",
+        "{{ source('src', '<LOGICAL>') }}", "-- tool <id>:", "workflows/<id>/dbt/review.json",
+    ):
+        assert token in squeezed, token
+
+
+def test_validator_picks_validate_dbt_for_a_dbt_workflow():
+    _, body = _read("validator")
+    squeezed = " ".join(body.split())
+    assert ".venv/Scripts/python.exe scripts/validate_dbt.py <id>" in squeezed
+    assert "once for the whole workflow" in squeezed
+    assert '"target": "dbt"' in squeezed
+    assert "stop and report" in squeezed
+    # the dbt-duckdb caveats of design §9, where the local double is named
+    for token in ("dbt-duckdb", "case folding", "merge", "hooks run on DuckDB"):
+        assert token in squeezed, token
+
+
+def test_fixer_repairs_dbt_models_and_never_the_profile():
+    section = _section("fixer", "## dbt projects")
+    squeezed = " ".join(section.split())
+    for token in ("Never edit `profiles.yml`", "Never run `dbt`", "dbt/fix_log.md", "smallest change",
+                  "Failing models"):
+        assert token in squeezed, token
+
+
+def test_documenter_requires_a_deployment_section_per_output_kind():
+    section = _section("documenter", "## Deployment")
+    squeezed = " ".join(section.split())
+    for token in (
+        "procs/master.sql", "segments/<seg>/proc.sql", "LANGUAGE PYTHON", "RUNTIME_VERSION", "PACKAGES",
+        "procs/README.md", "SNOWFLAKE_", "dbt-snowflake", "dbt/translation_notes.md",
+        "never deployed from this session",
+    ):
+        assert token in squeezed, token
+
+
+def test_copilot_instructions_describe_dbt_as_built():
+    text = " ".join((ROOT / ".github" / "copilot-instructions.md").read_text(encoding="utf-8").split())
+    assert "scripts/validate_dbt.py" in text
+    assert "does not yet build" not in text
+    assert "workflows/<id>/dbt/" in text
+    assert "compile_check.py <id> --target dbt" in text
+    assert "never run `dbt`" in text.lower()
+
+
+def test_the_reference_page_describes_the_dbt_target_as_compile_check_enforces_it():
+    from lib import dbt_project
+    text = (ROOT / "docs" / "reference" / "output-targets.md").read_text(encoding="utf-8")
+    assert dbt_project.PROFILES_TEMPLATE in text.replace("\r\n", "\n"), "§3.3 carries PROFILES_TEMPLATE verbatim"
+    missing = [name for name in _dbt_check_names() if f"dbt:{name}" not in text]
+    assert not missing, f"docs/reference/output-targets.md does not name: {missing}"
+    squeezed = " ".join(text.split())
+    for token in ("scripts/validate_dbt.py", "dbt_sandbox_<set>.duckdb", "MIGDB__MIG_WORK",
+                  "approximate match", "dbt: <reason>", "procs/README.md", "dbt-snowflake"):
+        assert token in squeezed, token
+    assert "not exercised by anything in phase 1" not in squeezed
+
+
+def _takes_the_workflow_id_first(script: str) -> bool:
+    """Whether `scripts/<script>.py`'s argparse declares `wf_id` as its first argument -- the
+    scripts `orchestrator/policy.ts`'s WORKFLOW_ID_SCRIPTS holds to the session's workflow."""
+    path = ROOT / "scripts" / f"{script}.py"
+    if not path.is_file():
+        return False
+    first = re.search(r'add_argument\(\s*"([^"]+)"', path.read_text(encoding="utf-8"))
+    return bool(first) and first.group(1) == "wf_id"
+
+
+def test_every_agent_command_example_puts_the_workflow_id_first():
+    """Task D fix round 2: the policy judges a workflow script's FIRST bare token as its workflow
+    (fix round 1, G2), so a command an agent file shows must put the `<id>` placeholder first --
+    never a flag first, whose value would then be read as the workflow. Every code span naming a
+    workflow script is checked; a span naming the script with no argument is only a reference."""
+    files = sorted(AGENTS_DIR.glob(f"*{SUFFIX}")) + [ROOT / ".github" / "copilot-instructions.md"]
+    offenders, examples = [], 0
+    for path in files:
+        for span in re.findall(r"`([^`\n]+)`", path.read_text(encoding="utf-8")):
+            for match in re.finditer(r"scripts/([a-z_]+)\.py((?:\s+\S+)*)", span):
+                if not _takes_the_workflow_id_first(match.group(1)):
+                    continue
+                args = match.group(2).split()
+                if not args:
+                    continue
+                examples += 1
+                if args[0] not in ("<id>", "<wf_id>", "<wf>"):
+                    offenders.append(f"{path.name}: `{span}`")
+    assert examples >= 10, f"only {examples} command examples found -- the scan is not seeing them"
+    assert not offenders, "a command example does not put the workflow id first:\n" + "\n".join(offenders)
+
+
+def test_no_agent_file_shows_a_script_call_with_root():
+    """Task D fix round 2: `--root` is denied in every agent's script call, so no agent file may
+    show one."""
+    for path in sorted(AGENTS_DIR.glob(f"*{SUFFIX}")) + [ROOT / ".github" / "copilot-instructions.md"]:
+        assert "--root" not in path.read_text(encoding="utf-8"), path.name
+
+
+def test_the_readme_describes_the_dbt_target_as_built():
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    start = readme.index("### Three output targets")
+    section = " ".join(readme[start:readme.index("\n## ", start)].split())
+    assert "decided and recorded only" not in section
+    assert "in phase 1 that is as far as it goes" not in section
+    for token in ("workflows/wf_0007/", "compile_check.py <wf> --target dbt", "validate_dbt.py",
+                  "dbt-duckdb", "dbt-snowflake"):
+        assert token in section, token
+
+
+def test_fixer_reads_the_chain_report_when_the_stitched_workflow_diverges():
+    """Task W1 fix round 3: the chain check's one fixer round points at
+    `workflows/<id>/validation_workflow.json`; the fixer's inputs name it."""
+    _, body = _read("fixer")
+    inputs = body[body.index("## Inputs"):body.index("## Procedure")]
+    assert "workflows/<id>/validation_workflow.json" in inputs
+    assert PHASE_2_MARKER in inputs
+
+
+def test_analyzer_documents_batches_and_seams():
+    """Task W2: above a character budget the analyzer runs batch by batch; each call writes its
+    batch's contracts plus `analysis/<batch>.md` (the script stitches analysis.md), and every seam
+    is checked by `scripts/check_seams.py`, parking `seam-mismatch: …` after one retry."""
+    _, body = _read("analyzer")
+    squeezed = " ".join(body.split())
+    for token in ("analysis/<batch>.md", "analysis/<batch>.unsupported.json", "scripts/check_seams.py",
+                  "scripts/stitch_analysis.py", "seam-mismatch: <producer>-><consumer> <stream>",
+                  "same columns in order, same type family, same nullability, same keys"):
+        assert token in squeezed, token
+    assert PHASE_2_MARKER in body
+
+
+def test_no_agent_file_shows_a_script_call_with_a_backend_flag():
+    """Follow-up to Task W2: `--backend`, `--connection` and `--sandbox-database` are denied in
+    every agent's script call (orchestrator/policy.ts), so no agent file may show one."""
+    for path in sorted(AGENTS_DIR.glob(f"*{SUFFIX}")) + [ROOT / ".github" / "copilot-instructions.md"]:
+        text = path.read_text(encoding="utf-8")
+        for flag in ("--backend", "--connection", "--sandbox-database"):
+            assert flag not in text, f"{path.name} shows {flag}"
+
+
+# --- output targets, phase 2, Task W4: a compaction memory aid -------------------------------
+# intake, analyzer and fixer each keep a notes file that survives a context compaction; the durable
+# record still lives in the contract and the files they write, never in the notes.
+
+def test_intake_analyzer_and_fixer_keep_notes():
+    for name in ("intake", "analyzer", "fixer"):
+        _, body = _read(name)
+        squeezed = " ".join(body.split())
+        assert f"notes/{name}.md" in squeezed, name
+        assert "the durable record stays in the contract and the files" in squeezed, name
+        assert PHASE_2_MARKER in body, name

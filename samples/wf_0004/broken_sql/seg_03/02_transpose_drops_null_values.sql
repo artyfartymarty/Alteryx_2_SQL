@@ -20,10 +20,14 @@ BEGIN
 
   ALTER SESSION SET TIMEZONE = 'America/New_York', WEEK_START = 1;
 
+  -- contract C4: each mapped table's name is built once, then referenced as IDENTIFIER(:<name>)
+  LET INVENTORY_BY_WH_TGT VARCHAR := TGT_DB || '.' || TGT_SCHEMA || '.INVENTORY_BY_WH';
+  LET INVENTORY_LONG_TGT VARCHAR := TGT_DB || '.' || TGT_SCHEMA || '.INVENTORY_LONG';
+
   -- ===========================================================================================
   -- Output tool 6 (write mode Overwrite, logical INVENTORY_BY_WH): the Cross Tab's wide table.
   -- ===========================================================================================
-  CREATE OR REPLACE TABLE IDENTIFIER(:TGT_DB || '.' || :TGT_SCHEMA || '.INVENTORY_BY_WH') AS
+  CREATE OR REPLACE TABLE IDENTIFIER(:INVENTORY_BY_WH_TGT) AS
   WITH
   -- tool 3: RegEx, method Parse, case-SENSITIVE -- appends FAMILY and ITEM_NO from the two
   -- capture groups and never drops a row: a SKU that does not match leaves both fields NULL.
@@ -71,7 +75,7 @@ BEGIN
   -- ===========================================================================================
   -- Output tool 7 (write mode Overwrite, logical INVENTORY_LONG): the Transpose's long table.
   -- ===========================================================================================
-  CREATE OR REPLACE TABLE IDENTIFIER(:TGT_DB || '.' || :TGT_SCHEMA || '.INVENTORY_LONG') AS
+  CREATE OR REPLACE TABLE IDENTIFIER(:INVENTORY_LONG_TGT) AS
   WITH
   -- tool 3: RegEx -- the same parse (see the first statement).
   t3_regex AS (

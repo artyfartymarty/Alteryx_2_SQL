@@ -520,3 +520,125 @@ Same as the first live test: nothing here required login or any credential — t
 exactly as configured, no `copilot /login` or `gh auth login` was attempted or needed. Deciding
 whether to shrink intake's context footprint, try an even larger window, or evaluate a different
 local model for this role is a product decision this task's scope does not cover.
+
+## Third live test — 262k context, three samples, 2026-09-23
+
+The phase-2 bounded live test (plan `docs/superpowers/plans/2026-09-22-output-targets-phase2.md`, Task H):
+`CopilotRunner` against the same local BYOK model, one attempt per stage for `wf_0001` (SQL), `wf_0006` (a
+Snowpark segment) and `wf_0007` (a dbt project), with the phase-2 inline prompt context (Task F), the notes
+files and compaction metrics (Task W4), and the hardened policy (Tasks D, W2, C4V). Nothing in this test touched
+Snowflake, Alteryx or a GitHub-hosted model.
+
+### Setup
+
+- Code: integration branch `feat/output-targets-phase2` at `59e217d`. The hand-off fixes that landed later
+  (hosted-model routing, golden-set recording, GitHub opt-in, console encoding) do not change a local-profile run.
+- Server: `pwsh -File scripts/dev/serve_model.ps1 -Context 262144 -CacheTypeK q4_0 -CacheTypeV q4_0`, which ran
+  `C:\Users\<you>\tools\llama-prism\llama-server.exe -m <model> --host 127.0.0.1 --port 8080 -ngl 99 -fa on -c 262144 --jinja --alias ternary-bonsai-2-27b -ctk q4_0 -ctv q4_0`
+  (model `Ternary-Bonsai-2-27B-PQ2_0.gguf`, the model's native context). The log reported
+  `n_slots = 4, n_ctx_slot = 262144, kv_unified = 'true'`; `/health` answered `{"status":"ok"}`; total GPU memory in
+  use was 15377 of 16303 MiB (about 1.8 to 2.3 GB of that belongs to other applications at idle).
+- Run root: a scratch directory outside the repository, holding copies of `scripts mappings catalog .github cookbook
+  docs/reference` (no `samples/`, so no canned answer key sits under the root) and an `orchestrator.config.json` with
+  the absolute venv interpreter and `samplesDir`. All three workflows were seeded into the SAME run root, one after
+  another.
+- Per sample: `build_samples.py seed --only <wf>`, then
+  `orchestrate.ts --root <run root> --only <wf> --runner copilot --profile local --no-interactive --stop-after intake`
+  under a 25-minute cap (ruling R-H1). Analyze and translate were to follow only if intake reached READY or
+  WAITING_FOR_ANSWERS; none did. No `--from-stage` retries: a parked stage is the result.
+- The server was stopped at the end; no `llama-server` process remained, port 8080 was free, and GPU memory fell to
+  1849 MiB.
+
+### Results
+
+| sample | intake wall time | tool calls | peak input tokens | compactions | intake files written by the model | intake status | reason |
+|---|---|---|---|---|---|---|---|
+| wf_0001 | 1056 s | 76 | 105470 | 0 | `plan.md`, `mappings.yaml` | NEEDS_HUMAN | `denied` |
+| wf_0006 | 766 s | 61 | 80569 | 0 | `plan.md`, `mappings.yaml` | NEEDS_HUMAN | `denied` |
+| wf_0007 | 788 s | 48 | 81073 | 0 | `plan.md`, `mappings.yaml` | NEEDS_HUMAN | `denied` |
+
+Numbers are copied from each workflow's `manifest.json` (`metrics.intake`) and the run logs. `open_questions.md`
+and `touchpoints.json` are written by scripts, not by the model.
+
+What changed against the first two live tests: the context never overflowed. The largest input the model
+received was 105470 tokens, which is why the 32768- and 65536-token windows of the earlier tests overflowed during
+intake. For the first time in any live test the intake agent wrote `intake/plan.md` (and `mappings.yaml`) for every
+sample.
+
+### Why each run parked
+
+Every park came from a policy denial that was correct:
+
+- **A mangled run-root path (wf_0001, wf_0007).** The run root's absolute path is about 150 characters long and
+  repeats the project name. When the model built absolute paths for `view`, it several times rewrote it as
+  `C:\Users\<you>\Desktop\Alteryx-to-Snowflake\<session>\…`, a directory that is not the run root. The policy
+  denied each read as "path outside the repository", and a denial parks the stage. The same model built the correct
+  path for its `create` calls, so this is intermittent path copying, not a missing capability.
+- **A sibling workflow (wf_0006).** The model read files under `workflows/wf_0001/`, which was present in the shared
+  run root. The policy denied it ("no access to other workflows") and the stage parked.
+- **The notes directory (all three).** Each intake agent tried to create `workflows/<wf>/notes/` before writing its
+  notes file: with PowerShell `New-Item` or `md`, with `.venv\Scripts\python.exe -c "…makedirs…"`, and once by
+  writing a small Python script with `create` that would make it. The policy denied every one (PowerShell
+  exploration and arbitrary interpreter calls are outside the intake role's allow-list). These denials did not name
+  the park reason, but they cost tool calls in every run.
+- Other denied calls were PowerShell exploration (`Get-ChildItem`, `Get-Content`, `Select-String`), which the policy
+  routes to the `view`, `grep` and `glob` tools instead.
+
+### The SDK's real tool names and argument shapes (settles the long-open question)
+
+Observed in the three `audit.jsonl` files (the `@github/copilot-sdk` session, BYOK provider):
+
+| tool | argument keys seen |
+|---|---|
+| `view` | `path`, `view_range` |
+| `create` | `path`, `file_text` |
+| `powershell` | `command`, `description` |
+| `grep` | `pattern`, `paths`, `output_mode`, `-n`, `-A`, `-C` |
+| `glob` | `pattern`, `paths` |
+| `ask_user` | `question`, `choices` |
+| `task` | a sub-agent spawn (allowed once in wf_0006) |
+
+The write tool is `create` with `path` and `file_text`. Task D's fix that stopped the policy from reading
+`file_text` as a path is what let `plan.md` through; before it, every write would have been denied. The shell tool
+on Windows is `powershell`. The hosted run (the hand-off guide's rung 2) re-confirms these names with a different
+model; the SDK is the same.
+
+### Calibration of the prompt-size estimates
+
+| sample | inline intake context (characters) | estimate (characters ÷ 4) | peak input tokens | ratio |
+|---|---|---|---|---|
+| wf_0001 | 2443 | 610 | 105470 | 172.7 |
+| wf_0006 | 1609 | 402 | 80569 | 200.3 |
+| wf_0007 | 2382 | 595 | 81073 | 136.1 |
+
+The inline block (`scripts/prompt_context.py --role intake`) is a small part of what the model sees: the peak input
+is dominated by the agent's instructions, the tool definitions and the files the model reads during the session. The
+character budgets (`segmentation.max_prompt_chars`, the analyzer's batch budget) bound only the rendered block and the
+segment slice; they are not a bound on a session's total input. At a 262144-token window this session shape fits with
+room to spare; at 65536 it does not.
+
+### Tokens per second
+
+From `llama-server`'s own timing lines late in the run (deep context): generation 46.6 to 49.2 tokens per second;
+prompt evaluation 230 to 835 tokens per second. At 32768 tokens in the first live test, generation was about 73
+tokens per second.
+
+### Honest verdict
+
+- **Intake:** reached a written plan and mapping file on all three samples, a first, but parked every time on a
+  correct policy denial, so no sample reached WAITING_FOR_ANSWERS and none was answered.
+- **Analyzer, translator, reviewer, validator, fixer, documenter:** not reached. The SQL, Snowpark and dbt output
+  paths remain exercised only by the mock runner and the local doubles.
+- **Nothing here touched Snowflake or Alteryx.**
+
+### Follow-ups this test suggests
+
+1. Keep run roots short (for example `C:\mig\runs\<name>`): the long path invited the model's copying errors. The
+   hand-off guide recommends this.
+2. The orchestrator should create `workflows/<wf>/notes/` before a session of a role that keeps notes, so the agent
+   never tries to make the directory itself.
+3. One run root per workflow (or no sibling workflows in the root) keeps a model from wandering into another
+   workflow's files.
+4. A design decision for the owner, not taken here: a path or cross-workflow denial currently parks the stage at once.
+   Returning the first such denial to the model so it can correct the path (and parking only on a repeat) would let a
+   run recover from a copying slip without loosening any deny.

@@ -1,6 +1,7 @@
 [
   {
     "segment": "seg_01",
+    "target": "sql",
     "file": "01_filter_false_drops_null_region.sql",
     "golden_set": "normal",
     "expect": { "class": "NULL_SEMANTICS", "columns": ["REGION"], "stream": "3_F" },
@@ -8,6 +9,7 @@
   },
   {
     "segment": "seg_01",
+    "target": "sql",
     "file": "02_select_customer_not_truncated.sql",
     "golden_set": "normal",
     "expect": { "class": "TRUNCATION", "columns": ["CUSTOMER"], "stream": "3_F" },
@@ -15,12 +17,14 @@
   },
   {
     "segment": "seg_01",
+    "target": "sql",
     "file": "03_net_rounds_the_raw_float.sql",
     "golden_set": "normal",
     "expect": { "class": "ROUNDING", "columns": ["TOTAL_NET"], "stream": "6_Output" }
   },
   {
     "segment": "seg_01",
+    "target": "sql",
     "file": "04_filter_true_keeps_null_region.sql",
     "golden_set": "normal",
     "expect": { "class": "NULL_SEMANTICS", "columns": ["REGION"], "stream": "6_Output" },

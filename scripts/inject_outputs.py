@@ -11,7 +11,9 @@ boundary stream and per stream feeding a final Output tool, writes the clone as
 `source/<name>.instrumented.yxmd` plus `golden/capture_map.json`, and prints the
 `AlteryxEngineCmd.exe` command line a person would run against the clone. The second form is run
 after that person has actually done so: it reads the `.yxdb` files the run produced out of
-`--capture-dir` and writes them as typed CSV under `golden/` (contract C1/C2).
+`--capture-dir`, writes them as typed CSV under `golden/` (contract C1/C2) and, once every CSV is
+written, records the set in `manifest.json`'s `golden_sets` (appended once, order kept) -- the list
+the orchestrator's golden stage reads. A failed import records nothing.
 """
 from __future__ import annotations
 
@@ -24,7 +26,7 @@ from xml.sax.saxutils import escape
 
 import parse
 from lib import typed_csv, yxdb
-from lib.io import read_json, write_json
+from lib.io import load_manifest, read_json, save_manifest, write_json
 from lib.paths import Repo, add_root_arg
 from parsers import plugin_map
 
@@ -246,6 +248,20 @@ def import_captures(repo: Repo, wf_id: str, golden_set: str, capture_dir: Path) 
     return written
 
 
+def record_golden_set(repo: Repo, wf_id: str, golden_set: str) -> list[str]:
+    """Appends `golden_set` to `manifest.json`'s `golden_sets` unless it is already there (order kept)
+    and returns the list. The orchestrator's golden stage (`stageGolden`, orchestrator/stages.ts)
+    moves on only when that list is non-empty; its idempotency re-runs use the FIRST set, so import
+    `normal` first (Task P4 fix round 1, B2)."""
+    manifest = load_manifest(repo, wf_id)
+    sets = list(manifest.get("golden_sets") or [])
+    if golden_set not in sets:
+        sets.append(golden_set)
+        manifest["golden_sets"] = sets
+        save_manifest(repo, manifest)
+    return sets
+
+
 def _run_instrument(repo: Repo, wf_id: str, capture_dir: str) -> tuple[Path, list[dict]]:
     """The instrument path's core logic: every prerequisite is checked (and named in the
     exception if absent) before `inject()` runs, and nothing is written unless all of them are
@@ -310,6 +326,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         except Exception:  # exit 2: a crash outside the checks above, which leaves nothing written
             traceback.print_exc()
             return 2
+        try:
+            record_golden_set(repo, args.wf_id, args.import_set)   # only after every CSV is written
+        except Exception:  # exit 2: the CSVs are written, but the set is not recorded -- say so
+            traceback.print_exc()
+            print(f"golden set {args.import_set!r} was imported but NOT recorded in manifest.json's "
+                  f"golden_sets", file=sys.stderr)
+            return 2
         for path in written:
             print(path)
         return 0
@@ -328,4 +351,6 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    from lib.console import utf8_console
+    utf8_console()
     sys.exit(main())

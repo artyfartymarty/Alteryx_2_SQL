@@ -31,6 +31,7 @@
   "params": {
     "min_tools": 2,
     "max_tools": 40,
-    "formula_heavy_cap": 20
+    "formula_heavy_cap": 20,
+    "max_prompt_chars": 60000
   }
 }

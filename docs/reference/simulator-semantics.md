@@ -140,6 +140,77 @@ the one that is not Alteryx**. This is the single largest known parity risk in t
 - `data_cleansing` `title` case capitalizes each whitespace-delimited word, and its punctuation set is ASCII punctuation. *(assumption — verify per Alteryx version)*
 - `macro` substitutes its question values, feeds each `Input<id>` stream to the matching `macro_input`, and returns each `macro_output` as `Output<id>`; an Output tool inside a macro writes no golden file and is warned about. *(assumption — verify per Alteryx version)*
 
+## 7.1 The Python tool
+
+**This is an accident guard, not a security boundary: an allowed library can still reach the
+filesystem and load native code (for example `DataFrame.to_csv`, or a submodule the
+allow-list admits by its top-level package alone, such as `numpy.ctypeslib` or
+`pandas.io.common`); the simulator runs only this repository's own committed sample
+scripts and must never be pointed at an untrusted workflow's Python tool.**
+
+- The tool's `<Script>` runs through two layers, neither of which is a real sandbox against a
+  script that is actually trying to escape (see the disclaimer above — this is fix round 1's
+  finding, closed for the specific gadgets below but not for every possible one): (1) a **static
+  pre-check** (`_check_python_tool_script`) walks the parsed script before a single statement runs
+  and refuses any dunder name or attribute access (`ast.Name`/`ast.Attribute` starting with `__`)
+  and any `import`/`from … import` outside the allow-list; (2) `exec()` then runs the script with
+  `__builtins__` replaced by a small allow-list (`abs all any bool dict enumerate float int
+  isinstance len list max min range round set sorted str sum tuple zip reversed`, and the exception
+  types `ValueError KeyError TypeError Exception`) and a guarded `__import__` that re-checks the
+  allow-list at run time, so `open`, `eval` and `exec` are simply undefined names inside the
+  script. *(deliberate simplification, modelling this repo's sandbox rather than Alteryx's own
+  Python tool — verify against real Alteryx)*
+- The static pre-check exists because dunder attribute access is not a builtin name or an import,
+  so nothing in layer (2) touches it: `pd.__builtins__['__import__']` and
+  `().__class__.__base__.__subclasses__()` (an imported module's own `__builtins__` is bound to the
+  *real*, unrestricted interpreter builtins, not the `exec()` namespace's substituted dict) fully
+  recovered the real `__import__`/`open` and let a script write arbitrary files before this fix;
+  both are refused, naming the offending attribute or name, before the script runs at all.
+  *(measured fact, not an assumption — `tests/test_alteryx_sim_python.py`'s dunder/gadget tests
+  rerun the reviewer's exact probe scripts)*
+- Only `pandas`, `numpy`, `re`, `math`, `datetime` and `decimal` (`PYTHON_TOOL_ALLOWED_MODULES`) may
+  be imported. The test is on the **top-level package** (`name.split(".")[0]`), so a submodule of an
+  allowed root — `numpy.ctypeslib`, `pandas.io.common` — is admitted along with it; a relative
+  import is refused outright. Anything else is refused at parse time (and, redundantly, at run time
+  by the guarded `__import__`), which also follows CPython's contract of binding the top-level
+  package for a plain dotted `import a.b` and the submodule only for `from a.b import c`. A module that
+  is allowed in but reaches the filesystem or network through its own, legitimate API — `DataFrame.
+  to_csv`, `pandas.read_csv` on a path that exists, and any other real I/O an allowed library
+  offers — is **not** refused: the guards restrict what the *script* can name, not what an imported
+  library can do once it is running. This is exactly the disclaimer at the top of this section, not
+  a gap the static check is meant to close. *(assumption — verify per Alteryx version)*
+- The tool exposes one shim object, `Alteryx`, with `Alteryx.read("#N")` returning the Nth input
+  connection as a `pandas.DataFrame` and `Alteryx.write(df, anchor)` recording `df` as the table for
+  output anchor `anchor` (1..5); a script may write to any subset of the five anchors, and only the
+  anchors it actually wrote produce a stream. *(assumption — models the real Python tool's
+  `AlteryxEngine`-backed shim — verify against real Alteryx)*
+- `Alteryx.read` builds its `DataFrame` from the incoming Table's already-`coerce`d Python values,
+  then forces `Float`/`Double` fields to `float64` and `Bool` fields to pandas' nullable `boolean`
+  dtype; every other field's dtype is whatever `pandas.DataFrame` itself infers from those values
+  (e.g. a clean `Int32`/`Int64` column with no NULLs infers as `int64`; a string or mixed column
+  infers as `object`) — the simulator does not force it. *(assumption — verify per Alteryx version)*
+- `Alteryx.write` types the outgoing Table from the `DataFrame`'s own dtype, using pandas' own type
+  predicates (`pandas.api.types.is_bool_dtype`/`is_integer_dtype`/`is_float_dtype`/
+  `is_datetime64_any_dtype`, bool checked first) rather than a `str(dtype)` prefix match, so
+  pandas' **nullable** dtypes are recognized alongside the plain numpy ones: `bool` or nullable
+  `boolean` becomes `Bool`, `int*` or nullable `Int64`/`Int32`/… becomes `Int64`, `float*` becomes
+  `Double`, `datetime64` becomes `DateTime` (`YYYY-MM-DD HH:MM:SS`), and everything else becomes
+  `V_WString` — never by any Alteryx annotation the script might have intended. *(assumption —
+  verify per Alteryx version; fix round 1 replaced an earlier `str(dtype)`-prefix version that
+  missed the nullable dtypes entirely and stringified their NULLs to the literal `"<NA>"`)*
+- `pd.isna(v)` decides NULL uniformly in **every** branch above, including the `V_WString` one: a
+  `NaN`, `NaT`, `None` or `pd.NA` of any dtype becomes `NULL` on the way out, not just a float
+  `NaN`. *(assumption — verify per Alteryx version)*
+- A later `Alteryx.write` to the same anchor replaces an earlier one; only the anchors the script
+  actually wrote appear in the result. *(assumption — verify per Alteryx version)*
+- A script that raises — a syntax error, a runtime exception, or the sandbox itself refusing an
+  import or a missing builtin — is reported as `UnsupportedTool` naming the tool id, exactly like
+  any other tool this simulator cannot reproduce (§9); the workflow's golden data generation stops
+  there, it is never guessed at. *(assumption — verify per Alteryx version)*
+- This whole section is a model of what the real Alteryx Python tool (a Jupyter-notebook-backed
+  `AlteryxEngine.PythonSDK` shim) does, built without ever running one. *(assumption — verify per
+  Alteryx version)*
+
 ## 8. Output tools and the database
 
 - A file target, and any target the run has no prior state for, produces exactly the incoming table. *(assumption — verify per Alteryx version)*
@@ -156,10 +227,18 @@ the one that is not Alteryx**. This is the single largest known parity risk in t
 - An `unknown` tool, a `run_command` tool, a macro whose file could not be resolved, and any tool type the simulator has no rule for raise `UnsupportedTool` naming the tool id. *(assumption — verify per Alteryx version)*
 - A workflow with any such tool produces no golden data at all — not even for the tools upstream of it — and `manifest.golden_sets` becomes `[]`. *(assumption — verify per Alteryx version)*
 - `append_fields`, `Summarize` percentiles, Sample's random mode and every other tool outside [the dag contract](dag-contract.md) §4 are simply not implemented, and say so rather than approximating. *(assumption — verify per Alteryx version)*
+- A `python` tool is not on this list — it has a rule (§7.1) — but its script can still raise `UnsupportedTool` itself: a dunder name/attribute access or a disallowed import refused by the static pre-check, a sandbox `NameError` (`open`, `eval`, …), or any other exception the script's own code throws. *(assumption — verify per Alteryx version)* **This is an accident guard, not a security boundary: an allowed library can still reach the filesystem and load native code (for example `DataFrame.to_csv`, or a submodule the allow-list admits by its top-level package alone, such as `numpy.ctypeslib` or `pandas.io.common`); the simulator runs only this repository's own committed sample scripts and must never be pointed at an untrusted workflow's Python tool.**
 
 ## 10. Where these rules are checked
 
 `tests/test_formula.py` and `tests/test_alteryx_sim.py` assert the values in this file against
-hand computation. The five workflows under `samples/` are written to exercise them; each
-`samples/wf_000N/README.md` says, row by row, which behaviour its data is there to prove. Neither
-those samples nor these rules have been run past a real Alteryx engine.
+hand computation; `tests/test_alteryx_sim_python.py` does the same for §7.1, including the fix
+round 1 tests that rerun a reviewer's sandbox-escape probe scripts and assert they are refused
+before any of the script runs. The five workflows under `samples/` are written to exercise them;
+each `samples/wf_000N/README.md` says, row by row, which behaviour its data is there to prove.
+Neither those samples nor these rules have been run past a real Alteryx engine. On §7.1's sandbox:
+**this is an accident guard, not a security boundary: an allowed library can still reach the
+filesystem and load native code (for example `DataFrame.to_csv`, or a submodule the
+allow-list admits by its top-level package alone, such as `numpy.ctypeslib` or
+`pandas.io.common`); the simulator runs only this repository's own committed sample
+scripts and must never be pointed at an untrusted workflow's Python tool.**

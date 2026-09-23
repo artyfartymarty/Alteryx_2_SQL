@@ -152,3 +152,58 @@ test("reloadManifest still lets disk introduce a role the in-memory manifest nev
   await reloadManifest(root, manifest);
   assert.equal(manifest.metrics.analyzer.toolCalls, 3);
 });
+
+// --- Task W4 fix round 1: the reviewer reproduced the same disk-wins hazard for `compactions` and
+// `peakInputTokens` -- both were added to `recordMetrics` alongside `toolCalls` (cumulative,
+// respectively a running maximum) but `mergeMetrics` only ever protected `toolCalls`, so a mid-stage
+// reload could LOWER either field back to a stale disk snapshot. Numbers below match the reviewer's
+// own repro (compactions 3->1, peakInputTokens 9000->2000) exactly. -----------------------------
+
+test("reloadManifest never erases a higher in-memory compactions count with a stale disk copy for the same role", async (t) => {
+  const root = await tmp(t);
+  // Disk has an EARLIER snapshot: one compaction, saved before a later session recorded more.
+  await writeJson(manifestPath(root, "wf_0001"), {
+    id: "wf_0001",
+    status: {},
+    metrics: { analyzer: { toolCalls: 5, compactions: 1, peakInputTokens: 2000 } },
+  });
+  // In memory, a later (unsaved) session has already seen two MORE compactions on top.
+  const manifest: Manifest = {
+    id: "wf_0001",
+    status: {},
+    metrics: { analyzer: { toolCalls: 5, compactions: 3, peakInputTokens: 2000 } },
+  };
+  await reloadManifest(root, manifest);
+  assert.equal(manifest.metrics.analyzer.compactions, 3, "the higher, in-memory compactions count survives the reload");
+});
+
+test("reloadManifest never erases a higher in-memory peakInputTokens with a stale disk copy for the same role", async (t) => {
+  const root = await tmp(t);
+  // Disk has an EARLIER snapshot: a 2000-token peak, saved before a later session saw more.
+  await writeJson(manifestPath(root, "wf_0001"), {
+    id: "wf_0001",
+    status: {},
+    metrics: { analyzer: { toolCalls: 5, compactions: 1, peakInputTokens: 2000 } },
+  });
+  // In memory, a later (unsaved) session has already recorded a 9000-token peak.
+  const manifest: Manifest = {
+    id: "wf_0001",
+    status: {},
+    metrics: { analyzer: { toolCalls: 5, compactions: 1, peakInputTokens: 9000 } },
+  };
+  await reloadManifest(root, manifest);
+  assert.equal(manifest.metrics.analyzer.peakInputTokens, 9000, "the higher, in-memory peak survives the reload");
+});
+
+test("reloadManifest still takes disk's compactions/peakInputTokens when disk is AHEAD (a concurrent writer recorded more)", async (t) => {
+  const root = await tmp(t);
+  await writeJson(manifestPath(root, "wf_0001"), {
+    id: "wf_0001",
+    status: {},
+    metrics: { analyzer: { compactions: 4, peakInputTokens: 12000 } },
+  });
+  const manifest: Manifest = { id: "wf_0001", status: {}, metrics: { analyzer: { compactions: 1, peakInputTokens: 500 } } };
+  await reloadManifest(root, manifest);
+  assert.equal(manifest.metrics.analyzer.compactions, 4, "the higher count wins whichever side it's on");
+  assert.equal(manifest.metrics.analyzer.peakInputTokens, 12000);
+});

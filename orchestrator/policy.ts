@@ -22,7 +22,7 @@
 // The first live run logs every `toolName` (hooks.ts audits an `unrecognized-tool` event for each
 // default-deny) and these constants get tightened from that log. Change them here, nowhere else.
 import path from "node:path";
-import type { Role } from "./types.ts";
+import type { AnalyzerBatch, Role } from "./types.ts";
 
 export type Decision =
   | { permissionDecision: "allow" }
@@ -61,6 +61,15 @@ export const UNRECOGNIZED_TOOL = "unrecognized tool";
 
 /** Argument names that carry a path. Every match is judged, not just `path`. */
 export const PATH_ARG_KEYS = /path|file|target|destination|dest|filename|dir(ectory)?$/i;
+/**
+ * Argument names that carry a write call's CONTENT, never a path (task-D fix round 1, G1): a
+ * string under one of these is never path-scanned, even when the name matches `PATH_ARG_KEYS`
+ * (`file_text` does — so the text of every `create` was judged as a path and denied). Compared
+ * lower-cased; only a STRING is skipped — an object or array under one of them is still walked, so
+ * a `path` nested inside it is judged as usual. Rule 1a (another workflow's folder mentioned
+ * anywhere) still reads the content.
+ */
+export const CONTENT_ARG_KEYS = new Set(["file_text", "content", "new_str", "old_str", "text", "insert_line", "old_string", "new_string"]);
 
 const COMPONENT = "[a-z0-9][a-z0-9_-]*";
 const FILE_COMPONENT = "[a-z0-9][a-z0-9._-]*";
@@ -119,7 +128,7 @@ function collectPathValues(value: unknown, key: string, scan: PathScan, depth: n
     return;
   }
   if (typeof value === "string") {
-    if (PATH_ARG_KEYS.test(key)) scan.paths.push(value);
+    if (PATH_ARG_KEYS.test(key) && !CONTENT_ARG_KEYS.has(key.toLowerCase())) scan.paths.push(value);
     return;
   }
   if (Array.isArray(value)) {
@@ -173,9 +182,72 @@ export const FORBIDDEN_WRITES: [RegExp, string][] = [
   [/^samples\//, "samples/ is read-only for every role"],
 ];
 
-/** Fully anchored lanes; `null` means the role cannot be judged without a segment. */
-function writeLanes(role: Role, id: string, segment?: string): RegExp[] | null {
+/**
+ * Fully anchored lanes; `null` means the role cannot be judged without a segment.
+ *
+ * `dbtProject` (a dbt workflow's translate-stage roles, which act on the whole project with no
+ * segment — output-targets design §6, DV5) replaces the four segment lanes with the project's: the
+ * translator/fixer get a NARROWED subset of `dbt/**` — the project files, every `.sql` model at any depth under `dbt/models/` and
+ * exactly `dbt/models/sources.yml` and `dbt/models/schema.yml` (final fix wave C1.8: never a Python
+ * model, a macro, a `packages.yml` or any other YAML dbt would read; `compile_check.py --target dbt`
+ * and `lib.dbt_project.run_dbt` enforce the same closed file set, `dbt:surface`), never
+ * `dbt/review.json` (the reviewer's verdict on them) nor `dbt/compile_check.json` (the script's) —
+ * the reviewer gets `dbt/review.json` alone, and the validator every segment's reports, because
+ * `validate_dbt.py` writes one per segment. Every other role keeps its own lanes.
+ *
+ * `analyzerBatch` (one call of a batched analyzer, Task W2) narrows the analyzer's lanes to that
+ * batch's own segments' `contract.json` files and its two fragments, `analysis/<id>.md` and
+ * `analysis/<id>.unsupported.json` — never another batch's contracts, never the stitched
+ * `analysis.md` / `unsupported.json` (`scripts/stitch_analysis.py` writes those), never the manifest.
+ *
+ * Task W4: intake, analyzer and fixer each gain one more lane, `workflows/<wf>/notes/<role>.md` —
+ * their own compaction memory aid, re-read on the orchestrator's say-so after a context
+ * compaction (`CopilotRunner.run`, `hooks.ts`'s `notesPath`). The analyzer's notes lane is added
+ * to BOTH its ordinary lanes and `analyzerBatchLanes` (a batched call must still be able to write
+ * it), and the fixer's to both the segmented lane below and the dbt-project lane above.
+ */
+/** The dbt models lanes (final fix wave C1.8): SQL models at any depth under `dbt/models/`, plus exactly
+ * the two YAML files — the closed file set `lib.dbt_project.check_surface` enforces (`dbt:surface`). */
+function dbtModelLanes(wf: string): RegExp[] {
+  return [
+    new RegExp(`${wf}/dbt/models/(?:${COMPONENT}/)*${COMPONENT}\\.sql$`),
+    new RegExp(`${wf}/dbt/models/(sources|schema)\\.yml$`),
+  ];
+}
+
+function writeLanes(
+  role: Role,
+  id: string,
+  segment?: string,
+  dbtProject = false,
+  analyzerBatch?: AnalyzerBatch,
+): RegExp[] | null {
   const wf = `^workflows/${escapeRe(id)}`;
+  if (dbtProject) {
+    switch (role) {
+      case "translator":
+        // Lower case throughout: normalizeToolPath lower-cases every path before a lane sees it,
+        // so `README.md` is matched as `readme.md`.
+        return [
+          new RegExp(`${wf}/dbt/(dbt_project\\.yml|profiles\\.yml|readme\\.md|translation_notes\\.md|fix_log\\.md)$`),
+          ...dbtModelLanes(wf),
+        ];
+      case "fixer":
+        // Same lanes as the translator's, plus the fixer's own notes file (Task W4) — the notes
+        // path carries no segment or dbt scope, so it is the same lane in every mode the fixer runs.
+        return [
+          new RegExp(`${wf}/dbt/(dbt_project\\.yml|profiles\\.yml|readme\\.md|translation_notes\\.md|fix_log\\.md)$`),
+          ...dbtModelLanes(wf),
+          new RegExp(`${wf}/notes/fixer\\.md$`),
+        ];
+      case "reviewer":
+        return [new RegExp(`${wf}/dbt/review\\.json$`)];
+      case "validator":
+        return [new RegExp(`${wf}/segments/${COMPONENT}/validation[a-z0-9._-]*\\.json$`)];
+      default:
+        break; // every other role keeps its own lanes
+    }
+  }
   const seg = segment?.toLowerCase();
   const segmented = seg !== undefined && ID_PATTERN.test(seg) ? escapeRe(seg) : null;
   switch (role) {
@@ -184,17 +256,26 @@ function writeLanes(role: Role, id: string, segment?: string): RegExp[] | null {
         new RegExp(`${wf}/intake/${UNDER}$`),
         new RegExp(`${wf}/manifest\\.json$`),
         new RegExp(`^mappings/${UNDER}$`),
+        new RegExp(`${wf}/notes/intake\\.md$`),
       ];
     case "analyzer":
+      if (analyzerBatch) return analyzerBatchLanes(wf, analyzerBatch);
       return [
         new RegExp(`${wf}/segments/${COMPONENT}/contract\\.json$`),
         new RegExp(`${wf}/(analysis\\.md|unsupported\\.json|manifest\\.json)$`),
+        new RegExp(`${wf}/notes/analyzer\\.md$`),
       ];
     case "translator":
-    case "fixer":
       return segmented === null
         ? null
         : [new RegExp(`${wf}/segments/${segmented}/(proc\\.sql|proc\\.py|translation_notes\\.md|fix_log\\.md)$`)];
+    case "fixer":
+      return segmented === null
+        ? null
+        : [
+            new RegExp(`${wf}/segments/${segmented}/(proc\\.sql|proc\\.py|translation_notes\\.md|fix_log\\.md)$`),
+            new RegExp(`${wf}/notes/fixer\\.md$`),
+          ];
     case "reviewer":
       return segmented === null ? null : [new RegExp(`${wf}/segments/${segmented}/review\\.json$`)];
     case "validator":
@@ -212,6 +293,26 @@ function writeLanes(role: Role, id: string, segment?: string): RegExp[] | null {
     default:
       return null;
   }
+}
+
+/**
+ * The batched analyzer's lanes (Task W2). Each id is judged in the same lower-cased form every path
+ * is, and one that is not a plain id (`ID_PATTERN`: no separator, no dot, no regex metacharacter)
+ * opens nothing — fail-closed, so a malformed batch can only deny more.
+ */
+function analyzerBatchLanes(wf: string, batch: AnalyzerBatch): RegExp[] {
+  const lanes: RegExp[] = [];
+  const segments = (batch.segments ?? [])
+    .map((seg) => String(seg).toLowerCase())
+    .filter((seg) => ID_PATTERN.test(seg))
+    .map(escapeRe);
+  if (segments.length > 0) lanes.push(new RegExp(`${wf}/segments/(${segments.join("|")})/contract\\.json$`));
+  const batchId = String(batch.id ?? "").toLowerCase();
+  if (ID_PATTERN.test(batchId)) lanes.push(new RegExp(`${wf}/analysis/${escapeRe(batchId)}\\.(md|unsupported\\.json)$`));
+  // Task W4: the analyzer's notes file is not batch-scoped -- every batch of the same workflow
+  // may write the same one lane.
+  lanes.push(new RegExp(`${wf}/notes/analyzer\\.md$`));
+  return lanes;
 }
 
 // ---------- SQL ----------
@@ -266,12 +367,41 @@ const IDENT = '(?:"[^"]*"|[A-Za-z_][A-Za-z0-9_$]*)';
 const QUALIFIED_NAME = new RegExp(`${IDENT}(?:\\.${IDENT})*`);
 const SQL_TOKEN = new RegExp(`${IDENT}(?:\\.${IDENT})*|@[^\\s,;()]+|[(),;]|\\S`, "g");
 /**
- * The two contract-C4 dynamic names (see the plan's C4): the only `IDENTIFIER(` forms a procedure
- * body may use, because their schema comes from the procedure's own SRC/TGT parameters, which a
- * CALL is checked against separately (B5).
+ * Contract C4's table reference (Task C4V; see the plan's C4). Snowflake documents
+ * `IDENTIFIER( { string_literal | session_variable | bind_variable | snowflake_scripting_variable } )`
+ * -- one value, not an expression -- so a procedure body builds each mapped table's name with
+ * `LET <LOGICAL>_SRC VARCHAR := SRC_DB || '.' || SRC_SCHEMA || '.<LOGICAL>'` (or the `TGT` twin,
+ * `<LOGICAL>_TGT`) and references it as `IDENTIFIER(:<LOGICAL>_SRC)`. Inside the LET the arguments
+ * are named WITHOUT a colon -- Snowflake's Scripting documentation uses the colon to bind a variable
+ * inside a SQL statement, not in an expression -- and `IDENTIFIER(:<LOGICAL>_SRC)`, inside a SQL
+ * statement, keeps it (fix round 1). That is the only `IDENTIFIER(` form a body may use, and only
+ * after its LET: the name's schema comes from the procedure's own SRC/TGT parameters, which a CALL is
+ * checked against separately (B5). The keywords are read case-insensitively; the rest must be exactly
+ * the rule, as `compile_check.py`'s `c4:let_form` reads it. Nothing here has run on Snowflake; the
+ * first real-account run confirms the documented form.
  */
-const CONTRACT_IDENTIFIER =
-  /IDENTIFIER\s*\(\s*:\s*(SRC|TGT)_DB\s*\|\|\s*'\.'\s*\|\|\s*:\s*(SRC|TGT)_SCHEMA\s*\|\|\s*'\.([A-Za-z_][A-Za-z0-9_$]*)'\s*\)/gi;
+const CONTRACT_LET =
+  /^[Ll][Ee][Tt]\s+([A-Z_][A-Z0-9_$]*)\s+[Vv][Aa][Rr][Cc][Hh][Aa][Rr]\s*:=\s*(SRC|TGT)_DB\s*\|\|\s*'\.'\s*\|\|\s*(SRC|TGT)_SCHEMA\s*\|\|\s*'\.([A-Z_][A-Z0-9_$]*)'$/;
+const CONTRACT_LET_RULE =
+  "LET <LOGICAL>_SRC VARCHAR := SRC_DB || '.' || SRC_SCHEMA || '.<LOGICAL>' (or the TGT twin, <LOGICAL>_TGT), the arguments named without a colon";
+/**
+ * Fix round 2 (C1). Contract C4 bodies are FLAT -- rule-conforming LETs, SQL statements and one
+ * `RETURN '<literal>'` -- so no statement of a judged body may start with a Snowflake Scripting block or
+ * control keyword (the same refusal as `proc_runner`'s `_SCRIPTING_KEYWORDS`): each of them opens a
+ * scope or a branch in which a LET variable, or a parameter a LET reads, could be given another value.
+ */
+const SCRIPTING_KEYWORDS = new Set([
+  "BEGIN", "END", "IF", "ELSEIF", "ELSE", "CASE", "FOR", "WHILE", "REPEAT", "LOOP", "BREAK", "CONTINUE",
+  "EXCEPTION", "DECLARE", "OPEN", "FETCH", "CLOSE", "RAISE", "AWAIT", "CANCEL", "NULL",
+]);
+/** The SQL statements a judged body may hold besides its LETs and its RETURN (fail-closed allow-list). */
+const BODY_STATEMENT_VERBS = new Set(["SELECT", "WITH", "INSERT", "UPDATE", "DELETE", "MERGE", "CREATE", "ALTER", "TRUNCATE", "DROP", "COPY"]);
+/** Fix round 2 (c): the exact contract-C4 parameter list (types case-insensitive), as compile_check requires it. */
+const C4_PARAMETERS = ["SRC_DB STRING", "SRC_SCHEMA STRING", "TGT_DB STRING", "TGT_SCHEMA STRING", "RUN_ID STRING"];
+/** A colon-prefixed name on a LET's right-hand side (after `:=`): the binding syntax, not an expression's. */
+const LET_COLON_NAME = /:=[\s\S]*:\s*[A-Za-z_]/;
+/** `IDENTIFIER(:<name>)`: the one argument shape a declared contract variable is referenced by. */
+const IDENTIFIER_VARIABLE = /IDENTIFIER\s*\(\s*:([A-Za-z_][A-Za-z0-9_$]*)\s*\)/gi;
 
 /** Removes line and block comments and replaces every string literal with `''`. */
 export function stripSqlNoise(sql: string): string {
@@ -293,6 +423,10 @@ export function stripSqlNoise(sql: string): string {
     if (char === "'") {
       i++;
       while (i < sql.length) {
+        if (sql[i] === "\\") {
+          i += 2; // Snowflake's backslash escape: \' does not close the string (fix round 2)
+          continue;
+        }
         if (sql[i] === "'") {
           if (sql[i + 1] === "'") {
             i += 2;
@@ -303,6 +437,15 @@ export function stripSqlNoise(sql: string): string {
         i++;
       }
       out += "''";
+      continue;
+    }
+    if (char === '"') {
+      // A quoted identifier is kept verbatim, but a quote or comment marker inside it is not one
+      // (fix round 2): `"a'b"` must not open a string that hides the code after it.
+      let end = i + 1;
+      while (end < sql.length && !(sql[end] === '"' && sql[end + 1] !== '"')) end += sql[end] === '"' ? 2 : 1;
+      out += sql.slice(i, end + 1);
+      i = end;
       continue;
     }
     out += char;
@@ -365,6 +508,11 @@ export function splitStatements(sql: string): string[] {
       i++;
       while (i < sql.length) {
         current += sql[i];
+        if (sql[i] === "\\" && i + 1 < sql.length) {
+          current += sql[++i]; // Snowflake's backslash escape (fix round 2)
+          i++;
+          continue;
+        }
         if (sql[i] === "'") {
           if (sql[i + 1] === "'") {
             current += sql[++i];
@@ -375,6 +523,14 @@ export function splitStatements(sql: string): string[] {
         }
         i++;
       }
+      continue;
+    }
+    if (char === '"') {
+      // A quoted identifier: a `;`, quote or comment marker inside it is part of the name (fix round 2).
+      let end = i + 1;
+      while (end < sql.length && !(sql[end] === '"' && sql[end + 1] !== '"')) end += sql[end] === '"' ? 2 : 1;
+      current += sql.slice(i, end + 1);
+      i = end;
       continue;
     }
     if (char === ";") {
@@ -388,12 +544,108 @@ export function splitStatements(sql: string): string[] {
   return out.filter((statement) => statement.trim().length > 0);
 }
 
-function replaceContractIdentifiers(text: string): string {
-  return text.replace(CONTRACT_IDENTIFIER, (whole, src: string, schema: string, name: string) =>
-    src.toUpperCase() === schema.toUpperCase()
-      ? `MIG_WORK.CONTRACT_${src.toUpperCase()}_${name.toUpperCase()}`
-      : whole,
-  );
+/** Every `IDENTIFIER(:<VAR>)` whose VAR a matching LET declared becomes the sandbox name it stands for. */
+/**
+ * Fix round 3 (1): EXTERNAL LOCATIONS. The object scanner below never reads a string literal as an
+ * object, so a statement that names an external location by URL -- `COPY INTO 's3://…' FROM <sandbox
+ * table>`, a stage created with a `URL` -- used to pass every sandbox check. Denied for every role, in
+ * and out of procedure bodies: a statement that names credentials; an integration, an external function
+ * or a network rule; `COPY INTO` a string literal, or `COPY … FROM` one; `CREATE`/`ALTER STAGE` with
+ * `URL`, `STORAGE_INTEGRATION`, `CREDENTIALS` or `ENCRYPTION`; `GET`/`PUT` (a file on the machine that
+ * runs the agent); `LIST`/`REMOVE` of anything but a stage. An internal named stage under a sandbox
+ * schema (`@MIG_WORK.x`) stays as it was: B1 still requires it to be sandbox-qualified. What this cannot
+ * see is a stage a human created outside the policy with an external URL -- the role behind the MCP
+ * server must hold no usage on such a stage or on any integration (POLICY.md, known limitations).
+ */
+const CREDENTIAL_WORDS = /\bCREDENTIALS\s*=|AWS_KEY_ID|AWS_SECRET_KEY|AWS_TOKEN|AZURE_SAS_TOKEN|PRIVATE_KEY|MASTER_KEY/i;
+const EXTERNAL_OBJECTS =
+  /\b(?:STORAGE|API|NOTIFICATION|SECURITY|EXTERNAL\s+ACCESS)\s+INTEGRATION\b|\bEXTERNAL\s+FUNCTION\b|\bNETWORK\s+RULE\b|\b(?:STORAGE_INTEGRATION|API_INTEGRATION|EXTERNAL_ACCESS_INTEGRATIONS)\b/i;
+
+function externalLocationReason(stripped: string): string | undefined {
+  const reach = (what: string) => `external-location: ${what} may not move data outside the sandbox`;
+  if (CREDENTIAL_WORDS.test(stripped)) {
+    return reach("a statement that names credentials (CREDENTIALS=, AWS_KEY_ID, AZURE_SAS_TOKEN, PRIVATE_KEY, …)");
+  }
+  const external = EXTERNAL_OBJECTS.exec(stripped);
+  if (external) return reach(`${external[0].toUpperCase().replace(/\s+/g, " ")} (an integration, external function or network rule)`);
+  if (/^COPY\s+INTO\s+''/i.test(stripped)) return reach("COPY INTO an external URL");
+  if (/^COPY\s+INTO\b[\s\S]*?\bFROM\s+''/i.test(stripped)) return reach("COPY … FROM an external URL (in either direction)");
+  if (/^(?:CREATE(?:\s+OR\s+REPLACE)?(?:\s+(?:TEMPORARY|TEMP))?|ALTER)\s+STAGE\b/i.test(stripped) &&
+      /\b(?:URL|STORAGE_INTEGRATION|CREDENTIALS|ENCRYPTION)\s*=/i.test(stripped)) {
+    return reach("a stage with URL, STORAGE_INTEGRATION, CREDENTIALS or ENCRYPTION (an external or keyed stage)");
+  }
+  if (/^(?:GET|PUT)\b/i.test(stripped)) return reach("GET or PUT (a file on the machine that runs the agent)");
+  if (/^(?:LIST|LS|REMOVE|RM)\s+(?!@)/i.test(stripped)) return reach("LIST or REMOVE of an external location");
+  return undefined;
+}
+
+/** Fix round 3 (2): the words in front of an IDENTIFIER(…) that make it a write target or a source read. */
+const TABLE_MODIFIERS = new Set(["OR", "REPLACE", "TRANSIENT", "TEMPORARY", "TEMP", "VOLATILE", "LOCAL", "GLOBAL", "TABLE", "IF", "NOT", "EXISTS"]);
+function identifierRole(codeBefore: string): "write" | "read" | undefined {
+  const words = (codeBefore.match(/[A-Za-z_][A-Za-z0-9_$]*|[(),;]/g) ?? []).map((word) => word.toUpperCase());
+  const last = words[words.length - 1];
+  const previous = words[words.length - 2];
+  if (last === "INTO" || last === "UPDATE") return "write";
+  if (last === "FROM") return previous === "DELETE" ? "write" : "read";
+  if (last === "JOIN" || last === "USING") return "read";
+  let position = words.length - 1;
+  while (position >= 0 && TABLE_MODIFIERS.has(words[position])) position -= 1;
+  return position >= 0 && (words[position] === "CREATE" || words[position] === "TRUNCATE") ? "write" : undefined;
+}
+
+/** A `<LOGICAL>_SRC` name is only ever read and a `<LOGICAL>_TGT` name only ever written, as compile_check's c4:identifier_role holds them. */
+function contractRoleReason(original: string, declared: Map<string, string>): string | undefined {
+  const code = stripSqlNoise(original);
+  for (const match of code.matchAll(IDENTIFIER_VARIABLE)) {
+    const standsFor = declared.get(match[1].toUpperCase());
+    if (!standsFor) continue;
+    const role = identifierRole(code.slice(0, match.index));
+    if (standsFor.startsWith("MIG_WORK.CONTRACT_SRC_") && role === "write") {
+      return `IDENTIFIER(:${match[1]}) is written to; a <LOGICAL>_SRC name is only ever read (contract C4)`;
+    }
+    if (standsFor.startsWith("MIG_WORK.CONTRACT_TGT_") && role === "read") {
+      return `IDENTIFIER(:${match[1]}) is read as a source; a <LOGICAL>_TGT name is only ever written (contract C4)`;
+    }
+  }
+  return undefined;
+}
+
+function replaceContractIdentifiers(text: string, declared: Map<string, string>): string {
+  return text.replace(IDENTIFIER_VARIABLE, (whole, name: string) => declared.get(name.toUpperCase()) ?? whole);
+}
+
+/** The statement without the comments in front of it (string literals kept). */
+function withoutLeadingComments(statement: string): string {
+  let text = statement.trim();
+  for (;;) {
+    if (text.startsWith("--")) {
+      const end = text.indexOf("\n");
+      text = end < 0 ? "" : text.slice(end + 1).trim();
+    } else if (text.startsWith("/*")) {
+      const end = text.indexOf("*/");
+      text = end < 0 ? "" : text.slice(end + 2).trim();
+    } else {
+      return text;
+    }
+  }
+}
+
+/** A LET in a procedure body: declared on a match with contract C4's rule, a denial reason otherwise. */
+function declareContractVariable(statement: string, declared: Map<string, string>): string | undefined {
+  if (LET_COLON_NAME.test(stripSqlNoise(statement))) {
+    return (
+      "a LET names the procedure's arguments without a colon (Snowflake's documented expression syntax; " +
+      `the colon binds a variable inside a SQL statement, as in IDENTIFIER(:<VAR>)): ${CONTRACT_LET_RULE}`
+    );
+  }
+  const match = CONTRACT_LET.exec(statement);
+  const [, name, side, schemaSide, logical] = match ?? [];
+  if (!match || side !== schemaSide || name !== `${logical}_${side}`) {
+    return `a LET must build a contract-C4 name: ${CONTRACT_LET_RULE}`;
+  }
+  if (declared.has(name)) return `LET ${name} declares ${name} twice`;
+  declared.set(name, `MIG_WORK.CONTRACT_${side}_${logical}`);
+  return undefined;
 }
 
 /** Splits an argument list on top-level commas. */
@@ -442,8 +694,12 @@ interface SqlRules {
   databases: string[];
   /** Fully-named objects allowed on top of the schema rule, as `SCHEMA.OBJECT`. */
   extraObjects?: string[];
-  /** Whether the contract-C4 `IDENTIFIER(...)` forms are accepted (procedure bodies only). */
-  contractIdentifiers: boolean;
+  /**
+   * The contract-C4 variables declared so far in a procedure body (upper-cased name → the sandbox
+   * name it stands for): `IDENTIFIER(:<VAR>)` is accepted for these and nothing else. Undefined
+   * outside a procedure body, where no `IDENTIFIER(` is accepted at all.
+   */
+  contractVariables?: Map<string, string>;
 }
 
 /**
@@ -451,11 +707,17 @@ interface SqlRules {
  * This is a conservative textual check, not a SQL parser — see the file header.
  */
 function checkStatement(original: string, rules: SqlRules): string | undefined {
-  const text = rules.contractIdentifiers ? replaceContractIdentifiers(original) : original;
+  if (rules.contractVariables) {
+    const role = contractRoleReason(original, rules.contractVariables);
+    if (role) return role;
+  }
+  const text = rules.contractVariables ? replaceContractIdentifiers(original, rules.contractVariables) : original;
   const stripped = stripSqlNoise(text).trim();
   if (!stripped) return undefined;
 
   if (/;\s*\S/.test(stripped)) return "multiple statements in one call";
+  const external = externalLocationReason(stripped);
+  if (external) return external;
   if (DESTRUCTIVE_SQL.test(stripped)) return "destructive SQL is denied for every role";
   if (/\bEXECUTE\s+IMMEDIATE\b/i.test(stripped)) return "EXECUTE IMMEDIATE cannot be judged by this policy";
   if (/\bIDENTIFIER\s*\(/i.test(stripped)) return "dynamic object name: IDENTIFIER( cannot be judged by this policy";
@@ -602,7 +864,7 @@ const DOLLAR_QUOTED = /^([\s\S]*?)\$\$([\s\S]*?)\$\$\s*;?\s*$/;
 
 /**
  * B4: a procedure body is not opaque. The header is checked as a statement, then every body
- * statement is checked in turn, with the contract-C4 `IDENTIFIER(...)` forms allowed there.
+ * statement is checked in turn, with contract C4's `LET` + `IDENTIFIER(:<VAR>)` form allowed there.
  */
 function checkProcedure(original: string, rules: SqlRules): string | undefined | null {
   const match = DOLLAR_QUOTED.exec(original.trim());
@@ -616,7 +878,7 @@ function checkProcedure(original: string, rules: SqlRules): string | undefined |
     return `a procedure must be created as MIG_WORK.<name> (${name || "unnamed"})`;
   }
 
-  const headerReason = checkStatement(header, { ...rules, contractIdentifiers: false });
+  const headerReason = checkStatement(header, { ...rules, contractVariables: undefined });
   if (headerReason) return headerReason;
 
   const inner = body
@@ -624,14 +886,51 @@ function checkProcedure(original: string, rules: SqlRules): string | undefined |
     .replace(/^BEGIN\b/i, "")
     .replace(/\bEND\s*;?\s*$/i, "")
     .trim();
+  // Contract C4 (Task C4V, fix round 2): a LET declares a variable, and IDENTIFIER(:<VAR>) is trusted
+  // only because NOTHING else in the body can give that variable -- or a parameter the LET reads --
+  // another value. So the body must be flat: every statement other than a rule-conforming top-level
+  // LET is denied if it starts with a Snowflake Scripting block or control keyword, if its code
+  // (comments removed, strings blanked) contains `:=` or the word LET anywhere, if it is a CALL, if it
+  // is a RETURN of anything but one string literal, if it writes `INTO :<var>`, or if it is not one of
+  // the SQL statements BODY_STATEMENT_VERBS lists; what remains is judged by B1-B3 as before.
+  const declared = new Map<string, string>();
   for (const statement of splitStatements(inner)) {
     const trimmed = statement.trim();
-    if (!trimmed || /^(BEGIN|END)$/i.test(trimmed)) continue;
-    if (/^RETURN\b/i.test(trimmed) || /^ALTER\s+SESSION\s+SET\b/i.test(trimmed)) continue;
-    const reason = checkStatement(trimmed, { ...rules, contractIdentifiers: true });
+    const code = stripSqlNoise(trimmed).trim();
+    if (!code) continue; // nothing but a comment
+    const first = (/^[^\s(;]*/.exec(code)?.[0] ?? "").toUpperCase();
+    if (first === "LET") {
+      const reason = declareContractVariable(withoutLeadingComments(trimmed), declared);
+      if (reason) return reason;
+      continue;
+    }
+    if (SCRIPTING_KEYWORDS.has(first)) {
+      return `${first} cannot be judged by this policy: a contract-C4 procedure body is flat (LETs, SQL statements and one RETURN '<literal>'), with no Snowflake Scripting block or control statement`;
+    }
+    if (code.includes(":=")) return "assigning a variable (:=) in a procedure body cannot be judged by this policy";
+    if (/\bLET\b/i.test(code)) return "LET is accepted only as a whole statement of contract C4's form, never inside another";
+    if (first === "RETURN") {
+      if (!/^RETURN\s*''$/i.test(code)) return "RETURN in a procedure body must return one string literal (RETURN '<literal>')";
+      continue;
+    }
+    if (first === "CALL") return "CALL inside a procedure body cannot be judged by this policy (a contract-C4 segment procedure never calls another)";
+    if (/^ALTER\s+SESSION\s+SET\b/i.test(code)) continue;
+    if (/\bINTO\s*:/i.test(code)) return "INTO :<variable> cannot be judged by this policy";
+    if (!BODY_STATEMENT_VERBS.has(first)) {
+      return `${first || code.slice(0, 20)} is not a SQL statement this policy judges in a procedure body (contract C4: LETs, SQL statements and one RETURN '<literal>')`;
+    }
+    const reason = checkStatement(trimmed, { ...rules, contractVariables: declared });
     if (reason) return reason;
   }
-  return undefined;
+  return headerParametersReason(header);
+}
+
+/** Fix round 2 (c): the parameters are exactly contract C4's, so a CALL's five arguments mean what B5 checks. */
+function headerParametersReason(header: string): string | undefined {
+  const list = new RegExp(`PROCEDURE\\s+${QUALIFIED_NAME.source}\\s*\\(([^)]*)\\)`, "i").exec(stripSqlNoise(header))?.[1] ?? "";
+  const found = list.split(",").map((parameter) => parameter.trim().split(/\s+/).join(" ").toUpperCase()).filter(Boolean);
+  if (found.join(", ") === C4_PARAMETERS.join(", ")) return undefined;
+  return `a procedure's parameters must be exactly (${C4_PARAMETERS.join(", ")}) -- contract C4; found (${found.join(", ")})`;
 }
 
 // ---------- shell ----------
@@ -700,14 +999,73 @@ export const DESTRUCTIVE_SHELL = [
 /** The scripts each role may run, matched literally against the command's second token. */
 export const ROLE_SCRIPTS: Record<Role, string[]> = {
   intake: ["scripts/intake_touchpoints.py", "scripts/intake_prompt.py"],
-  analyzer: ["scripts/segment.py"],
-  translator: ["scripts/compile_check.py"],
-  fixer: ["scripts/compile_check.py"],
+  // target_check.py proposes each segment's output target; the analyzer copies it into the
+  // contracts (output-targets design §3.2), so it must be able to re-run the proposal it reads.
+  analyzer: ["scripts/segment.py", "scripts/target_check.py"],
+  // render_snowpark.py turns a Snowpark segment's proc.py into its proc.sql wrapper — both files
+  // are already in the translator/fixer write lane, so running it writes nothing new.
+  translator: ["scripts/compile_check.py", "scripts/render_snowpark.py"],
+  fixer: ["scripts/compile_check.py", "scripts/render_snowpark.py"],
   reviewer: [],
-  validator: ["scripts/validate_segment.py", "scripts/compare.py"],
+  // validate_dbt.py validates a dbt workflow's whole project and writes every segment's reports —
+  // the validator's own lane in dbt scope. (compile_check.py --target dbt is already the
+  // translator's and fixer's: the same script, one more flag value.)
+  validator: ["scripts/validate_segment.py", "scripts/validate_snowpark.py", "scripts/validate_dbt.py", "scripts/compare.py"],
   "parser-recovery": ["scripts/parse.py"],
   documenter: [],
 };
+
+/**
+ * dbt is run only by scripts/compile_check.py and scripts/validate_dbt.py (through
+ * `scripts/lib/dbt_project.run_dbt`), never by an agent (design §6): the console script however it
+ * is spelled — `dbt`, `dbt.exe`, `dbt.cmd`, `dbt.bat`, a path ending in any of them — matched on the
+ * normalized first token.
+ * `python -m dbt…` is refused by the same rule in `decideShell`'s `-m` branch.
+ */
+export const DBT_EXECUTABLE = /^(?:.*\/)?dbt(?:\.exe|\.cmd|\.bat)?$/;
+
+/**
+ * The allow-listed scripts whose first positional argument is the workflow id (each one's argparse
+ * declares `wf_id` first; `scripts/compare.py` takes only `--flag value` pairs and is not here).
+ * The first bare token after such a script must be the session's own workflow (task-D fix round 1,
+ * G2) — the script writes under `workflows/<that id>/`, which no path check would otherwise see.
+ */
+export const WORKFLOW_ID_SCRIPTS = [
+  "scripts/intake_touchpoints.py",
+  "scripts/intake_prompt.py",
+  "scripts/segment.py",
+  "scripts/target_check.py",
+  "scripts/compile_check.py",
+  "scripts/render_snowpark.py",
+  "scripts/validate_segment.py",
+  "scripts/validate_snowpark.py",
+  "scripts/validate_dbt.py",
+  "scripts/parse.py",
+];
+const DBT_MODULE = /^dbt(\.|$)/;
+const DBT_DENIAL = "dbt is run only by scripts/compile_check.py and scripts/validate_dbt.py, never by an agent";
+
+/**
+ * `--root` in every spelling argparse accepts: `--root X`, `--root=X`, and the prefix abbreviations
+ * `--r`/`--ro`/`--roo` (no allow-listed script sets `allow_abbrev=False` or has another `--r…` flag,
+ * so argparse resolves each of them to `--root`). Case-insensitive, as every token here is judged.
+ */
+export const SCRIPT_ROOT_FLAG = /^--r(?:o(?:ot?)?)?(?:=.*)?$/i;
+
+/**
+ * The flags that point a script at a real Snowflake account (Task P2: `--backend snowflake`,
+ * `--connection NAME`, `--sandbox-database DB`). No agent session may pass one, whichever script it
+ * runs and whether or not that script has the flag yet. Like `--root`, every spelling argparse
+ * accepts is caught: `--flag x`, `--flag=x`, any case, and every prefix abbreviation down to one
+ * letter (argparse resolves an unambiguous prefix; an ambiguous one is refused here all the same).
+ */
+export const SCRIPT_BACKEND_FLAGS = ["backend", "connection", "sandbox-database"];
+
+export function isScriptBackendFlag(token: string): boolean {
+  const name = /^--([A-Za-z0-9][A-Za-z0-9_-]*)(?:=.*)?$/.exec(token)?.[1]?.toLowerCase();
+  return name !== undefined && SCRIPT_BACKEND_FLAGS.some((flag) => flag.startsWith(name));
+}
+
 /** Only parser-recovery runs the corpus regression suite. */
 export const PYTEST_ROLES: Role[] = ["parser-recovery"];
 export const PYTEST_TARGET = /^tests\/parser_corpus(\/[a-z0-9_][a-z0-9_.-]*)*$/;
@@ -732,6 +1090,10 @@ const OTHER_WORKFLOW = /workflows\/([a-z0-9_.-]+)\//g;
 export interface PolicyOptions {
   /** Databases a three-part object reference may live in (`orchestrator.config.json`). */
   sandboxDatabases?: string[];
+  /** The role acts on the workflow's dbt project (output_kind dbt), not on one segment. */
+  dbtProject?: boolean;
+  /** One call of a batched analyzer: its lanes narrow to this batch (see `writeLanes`). */
+  analyzerBatch?: AnalyzerBatch;
 }
 
 /**
@@ -773,14 +1135,23 @@ export function decide(
 
   if (SQL_TOOL.test(toolName)) return decideSql(role, toolArgs, databases);
   if (SHELL_TOOL.test(toolName)) return decideShell(role, id, toolArgs, root);
-  if (WRITE_TOOL.test(toolName)) return decideWrite(role, id, segment, paths);
+  if (WRITE_TOOL.test(toolName)) {
+    return decideWrite(role, id, segment, paths, options?.dbtProject ?? false, options?.analyzerBatch);
+  }
   if (READ_TOOLS.includes(toolName.toLowerCase())) return ALLOW;
   return denied(`${UNRECOGNIZED_TOOL}: ${toolName}`);
 }
 
-function decideWrite(role: Role, id: string, segment: string | undefined, paths: string[]): Decision {
+function decideWrite(
+  role: Role,
+  id: string,
+  segment: string | undefined,
+  paths: string[],
+  dbtProject: boolean,
+  analyzerBatch?: AnalyzerBatch,
+): Decision {
   if (paths.length === 0) return denied(`${role} wrote no path this policy can judge`);
-  const lanes = writeLanes(role, id, segment);
+  const lanes = writeLanes(role, id, segment, dbtProject, analyzerBatch);
   if (lanes === null) {
     return denied(`${role} may only write its own segment's files, and no segment is in context`);
   }
@@ -804,7 +1175,6 @@ function decideSql(role: Role, args: unknown, databases: string[]): Decision {
       label: CATALOG_SCHEMA,
       databases,
       extraObjects: INTAKE_CATALOG_OBJECTS,
-      contractIdentifiers: false,
     };
     const stripped = stripSqlNoise(statement).trim();
     const reason = CATALOG_READ_SQL.test(stripped)
@@ -818,7 +1188,6 @@ function decideSql(role: Role, args: unknown, databases: string[]): Decision {
     allowed: VALIDATOR_SCHEMAS,
     label: `sandbox schemas ${VALIDATOR_SCHEMAS.join(", ")}`,
     databases,
-    contractIdentifiers: false,
   };
   const procedure = checkProcedure(statement, rules);
   if (procedure !== null) return procedure === undefined ? ALLOW : denied(procedure);
@@ -903,11 +1272,13 @@ function decideShell(role: Role, id: string, args: unknown, root?: string): Deci
   if (head[0] === "git") {
     return denied(`git ${head[1] ?? "(no subcommand)"} is not a listing command: ${GIT_SUBCOMMANDS.join(", ")} only`);
   }
+  if (DBT_EXECUTABLE.test(head[0])) return denied(DBT_DENIAL);
 
   if (!PYTHON_EXES.includes(head[0])) return refuse;
 
   // `python -m pytest tests/parser_corpus[/…] [-q]`, parser-recovery only.
   if (head[1] === "-m") {
+    if (DBT_MODULE.test(head[2] ?? "")) return denied(DBT_DENIAL);
     if (!PYTEST_ROLES.includes(role) || head[2] !== "pytest") return refuse;
     if (!PYTEST_TARGET.test(head[3] ?? "")) return refuse;
     for (const token of head.slice(4)) if (!PYTEST_FLAGS.includes(token)) return refuse;
@@ -917,10 +1288,28 @@ function decideShell(role: Role, id: string, args: unknown, root?: string): Deci
   // `<python> scripts/<allowed script>.py <args…>`
   const script = head[1] ?? "";
   if (!(ROLE_SCRIPTS[role] ?? []).includes(script)) return refuse;
+  // Task D fix round 2: an agent never needs --root (its session's working directory IS the
+  // workflow root), and a script given one reads and writes under another tree. Judged before any
+  // other argument rule, so every spelling gets this reason.
+  if (tokens.slice(2).some((token) => SCRIPT_ROOT_FLAG.test(token))) {
+    return denied(`script-root: ${script} may not be given --root from an agent session`);
+  }
+  // Follow-up to Task W2: an agent never points a script at a Snowflake account (Task P2's flags).
+  if (tokens.slice(2).some(isScriptBackendFlag)) {
+    return denied(`script-backend: ${script} may not be pointed at a Snowflake account from an agent session`);
+  }
   for (const token of tokens.slice(2)) {
     if (FLAG_TOKEN.test(token)) continue;
     if (!PLAIN_TOKEN.test(token) || hasDotDot(token)) {
       return denied(`${role} may not pass this argument: ${token.slice(0, 60)}`);
+    }
+  }
+  // G2: the first bare token is the workflow the script will act on. A flag's value placed before
+  // it is not skipped (the documented form is `<script> <wf_id> …`), which can only deny more.
+  if (WORKFLOW_ID_SCRIPTS.includes(script)) {
+    const first = tokens.slice(2).find((token) => !FLAG_TOKEN.test(token));
+    if (first !== undefined && first.toLowerCase() !== id) {
+      return denied(`cross-workflow: ${script} ${first.slice(0, 60)} in a ${id} session`);
     }
   }
   return ALLOW;

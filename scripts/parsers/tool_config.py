@@ -347,13 +347,19 @@ def _run_command(config: ET.Element) -> dict:
     return {"command": _find(config, "Command"), "args": _find(config, "CommandArguments")}
 
 
+def _python(config: ET.Element) -> dict:
+    """This repo's Python tool keeps its code in <Script>; real Alteryx stores a notebook JSON
+    (dag-contract §4 says how to extend this when migrating such workflows)."""
+    return {"script": (_find(config, "Script") or "").strip()}
+
+
 PARSERS: dict[str, Callable[[ET.Element], dict]] = {
     "input": _input, "output": _output, "select": _select, "filter": _filter, "formula": _formula,
     "join": _join, "union": _union, "summarize": _summarize, "sort": _sort, "unique": _unique,
     "sample": _sample, "record_id": _record_id, "multi_row_formula": _multi_row_formula,
     "cross_tab": _cross_tab, "transpose": _transpose, "regex": _regex, "datetime": _datetime,
     "data_cleansing": _data_cleansing, "macro": _macro, "interface": _interface,
-    "run_command": _run_command,
+    "run_command": _run_command, "python": _python,
 }
 
 

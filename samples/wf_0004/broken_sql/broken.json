@@ -1,6 +1,7 @@
 [
   {
     "segment": "seg_02",
+    "target": "sql",
     "file": "01_macro_filter_dropped.sql",
     "golden_set": "normal",
     "expect": { "class": "LOGIC", "columns": [], "stream": "2_Output5" },
@@ -9,6 +10,7 @@
   },
   {
     "segment": "seg_02",
+    "target": "sql",
     "file": "02_macro_uses_the_question_default.sql",
     "golden_set": "normal",
     "expect": { "class": "LOGIC", "columns": [], "stream": "2_Output5" },
@@ -16,6 +18,7 @@
   },
   {
     "segment": "seg_02",
+    "target": "sql",
     "file": "03_macro_regex_nulls_unmatched.sql",
     "golden_set": "normal",
     "expect": { "class": "NULL_SEMANTICS", "columns": ["SKU"], "stream": "2_Output5" },
@@ -23,6 +26,7 @@
   },
   {
     "segment": "seg_03",
+    "target": "sql",
     "file": "01_cross_tab_fills_missing_with_zero.sql",
     "golden_set": "normal",
     "expect": { "class": "NULL_SEMANTICS", "columns": ["EAST", "NORTH", "WEST"], "stream": "4_Output" },
@@ -30,6 +34,7 @@
   },
   {
     "segment": "seg_03",
+    "target": "sql",
     "file": "02_transpose_drops_null_values.sql",
     "golden_set": "normal",
     "expect": { "class": "NULL_SEMANTICS", "columns": ["VALUE"], "stream": "5_Output" },

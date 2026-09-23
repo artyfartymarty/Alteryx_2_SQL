@@ -1,0 +1,555 @@
+{
+  "workflow": "wf_0007",
+  "yxmd_version": "2023.1",
+  "engine": "E1",
+  "constants": {
+    "User.CurrentYear": "2026"
+  },
+  "file_kind": "yxmd",
+  "source_file": "regional_targets.yxmd",
+  "nodes": [
+    {
+      "tool_id": "10",
+      "type": "container",
+      "plugin": "AlteryxGuiToolkit.ToolContainer.ToolContainer",
+      "container_id": null,
+      "config": {},
+      "raw_config": "<Configuration>\n          <Caption>Pair plan targets with actuals</Caption>\n          <Style TextColor=\"#314c4a\" FillColor=\"#ecf2f2\" BorderColor=\"#314c4a\" Transparency=\"25\" Margin=\"25\" />\n          <Disabled value=\"False\" />\n          <Folded value=\"False\" />\n        </Configuration>",
+      "annotation": "Pair plan targets with actuals",
+      "in_anchors": [],
+      "out_anchors": [],
+      "meta": {}
+    },
+    {
+      "tool_id": "1",
+      "type": "input",
+      "plugin": "AlteryxBasePluginsGui.DbFileInput.DbFileInput",
+      "container_id": "10",
+      "config": {
+        "source": "C:\\data\\plan\\targets.yxdb",
+        "format": "yxdb",
+        "query": null,
+        "alias": null,
+        "csv": null,
+        "record_limit": null
+      },
+      "raw_config": "<Configuration>\n              <Passwords />\n              <File OutputFileName=\"\" RecordLimit=\"\" SearchSubDirs=\"False\" FileFormat=\"19\">C:\\data\\plan\\targets.yxdb</File>\n              <FormatSpecificOptions />\n            </Configuration>",
+      "annotation": "Plan targets by region and period",
+      "in_anchors": [],
+      "out_anchors": [
+        "Output"
+      ],
+      "meta": {
+        "Output": [
+          {
+            "name": "REGION",
+            "type": "V_String",
+            "size": 10,
+            "scale": null
+          },
+          {
+            "name": "PERIOD",
+            "type": "V_String",
+            "size": 7,
+            "scale": null
+          },
+          {
+            "name": "TARGET",
+            "type": "FixedDecimal",
+            "size": 19,
+            "scale": 2
+          }
+        ]
+      }
+    },
+    {
+      "tool_id": "2",
+      "type": "input",
+      "plugin": "AlteryxBasePluginsGui.DbFileInput.DbFileInput",
+      "container_id": "10",
+      "config": {
+        "source": "C:\\data\\sales\\actuals.yxdb",
+        "format": "yxdb",
+        "query": null,
+        "alias": null,
+        "csv": null,
+        "record_limit": null
+      },
+      "raw_config": "<Configuration>\n              <Passwords />\n              <File OutputFileName=\"\" RecordLimit=\"\" SearchSubDirs=\"False\" FileFormat=\"19\">C:\\data\\sales\\actuals.yxdb</File>\n              <FormatSpecificOptions />\n            </Configuration>",
+      "annotation": "Booked actuals, one row per sales line",
+      "in_anchors": [],
+      "out_anchors": [
+        "Output"
+      ],
+      "meta": {
+        "Output": [
+          {
+            "name": "REGION",
+            "type": "V_String",
+            "size": 10,
+            "scale": null
+          },
+          {
+            "name": "PERIOD",
+            "type": "V_String",
+            "size": 7,
+            "scale": null
+          },
+          {
+            "name": "ACTUAL",
+            "type": "FixedDecimal",
+            "size": 19,
+            "scale": 2
+          }
+        ]
+      }
+    },
+    {
+      "tool_id": "3",
+      "type": "join",
+      "plugin": "AlteryxBasePluginsGui.Join.Join",
+      "container_id": "10",
+      "config": {
+        "keys": [
+          {
+            "left": "REGION",
+            "right": "REGION"
+          },
+          {
+            "left": "PERIOD",
+            "right": "PERIOD"
+          }
+        ],
+        "select": {
+          "fields": [
+            {
+              "name": "Right_REGION",
+              "selected": false,
+              "rename": null,
+              "type": null,
+              "size": null
+            },
+            {
+              "name": "Right_PERIOD",
+              "selected": false,
+              "rename": null,
+              "type": null,
+              "size": null
+            }
+          ],
+          "unknown_selected": true
+        }
+      },
+      "raw_config": "<Configuration>\n              <JoinInfo connection=\"Left\">\n                <Field field=\"REGION\" />\n                <Field field=\"PERIOD\" />\n              </JoinInfo>\n              <JoinInfo connection=\"Right\">\n                <Field field=\"REGION\" />\n                <Field field=\"PERIOD\" />\n              </JoinInfo>\n              <JoinByRecordPos value=\"False\" />\n              <SelectConfiguration>\n                <Configuration outputConnection=\"Join\">\n                  <OrderChanged value=\"False\" />\n                  <CommaDecimal value=\"False\" />\n                  <SelectFields>\n                    <SelectField field=\"Right_REGION\" selected=\"False\" />\n                    <SelectField field=\"Right_PERIOD\" selected=\"False\" />\n                    <SelectField field=\"*Unknown\" selected=\"True\" />\n                  </SelectFields>\n                </Configuration>\n              </SelectConfiguration>\n            </Configuration>",
+      "annotation": "Targets to actuals on REGION, PERIOD",
+      "in_anchors": [
+        "Left",
+        "Right"
+      ],
+      "out_anchors": [
+        "L",
+        "J",
+        "R"
+      ],
+      "meta": {
+        "L": [
+          {
+            "name": "REGION",
+            "type": "V_String",
+            "size": 10,
+            "scale": null
+          },
+          {
+            "name": "PERIOD",
+            "type": "V_String",
+            "size": 7,
+            "scale": null
+          },
+          {
+            "name": "TARGET",
+            "type": "FixedDecimal",
+            "size": 19,
+            "scale": 2
+          }
+        ],
+        "J": [
+          {
+            "name": "REGION",
+            "type": "V_String",
+            "size": 10,
+            "scale": null
+          },
+          {
+            "name": "PERIOD",
+            "type": "V_String",
+            "size": 7,
+            "scale": null
+          },
+          {
+            "name": "TARGET",
+            "type": "FixedDecimal",
+            "size": 19,
+            "scale": 2
+          },
+          {
+            "name": "ACTUAL",
+            "type": "FixedDecimal",
+            "size": 19,
+            "scale": 2
+          }
+        ],
+        "R": [
+          {
+            "name": "REGION",
+            "type": "V_String",
+            "size": 10,
+            "scale": null
+          },
+          {
+            "name": "PERIOD",
+            "type": "V_String",
+            "size": 7,
+            "scale": null
+          },
+          {
+            "name": "ACTUAL",
+            "type": "FixedDecimal",
+            "size": 19,
+            "scale": 2
+          }
+        ]
+      }
+    },
+    {
+      "tool_id": "11",
+      "type": "container",
+      "plugin": "AlteryxGuiToolkit.ToolContainer.ToolContainer",
+      "container_id": null,
+      "config": {},
+      "raw_config": "<Configuration>\n          <Caption>Current-year attainment</Caption>\n          <Style TextColor=\"#514c31\" FillColor=\"#f2f1ec\" BorderColor=\"#514c31\" Transparency=\"25\" Margin=\"25\" />\n          <Disabled value=\"False\" />\n          <Folded value=\"False\" />\n        </Configuration>",
+      "annotation": "Current-year attainment",
+      "in_anchors": [],
+      "out_anchors": [],
+      "meta": {}
+    },
+    {
+      "tool_id": "4",
+      "type": "filter",
+      "plugin": "AlteryxBasePluginsGui.Filter.Filter",
+      "container_id": "11",
+      "config": {
+        "expression": "Left([PERIOD], 4) = [User.CurrentYear]"
+      },
+      "raw_config": "<Configuration>\n              <Expression>Left([PERIOD], 4) = [User.CurrentYear]</Expression>\n              <Mode>Custom</Mode>\n            </Configuration>",
+      "annotation": "Keep the current year's periods",
+      "in_anchors": [
+        "Input"
+      ],
+      "out_anchors": [
+        "T",
+        "F"
+      ],
+      "meta": {
+        "T": [
+          {
+            "name": "REGION",
+            "type": "V_String",
+            "size": 10,
+            "scale": null
+          },
+          {
+            "name": "PERIOD",
+            "type": "V_String",
+            "size": 7,
+            "scale": null
+          },
+          {
+            "name": "TARGET",
+            "type": "FixedDecimal",
+            "size": 19,
+            "scale": 2
+          },
+          {
+            "name": "ACTUAL",
+            "type": "FixedDecimal",
+            "size": 19,
+            "scale": 2
+          }
+        ],
+        "F": [
+          {
+            "name": "REGION",
+            "type": "V_String",
+            "size": 10,
+            "scale": null
+          },
+          {
+            "name": "PERIOD",
+            "type": "V_String",
+            "size": 7,
+            "scale": null
+          },
+          {
+            "name": "TARGET",
+            "type": "FixedDecimal",
+            "size": 19,
+            "scale": 2
+          },
+          {
+            "name": "ACTUAL",
+            "type": "FixedDecimal",
+            "size": 19,
+            "scale": 2
+          }
+        ]
+      }
+    },
+    {
+      "tool_id": "5",
+      "type": "summarize",
+      "plugin": "AlteryxSpatialPluginsGui.Summarize.Summarize",
+      "container_id": "11",
+      "config": {
+        "fields": [
+          {
+            "field": "REGION",
+            "action": "GroupBy",
+            "rename": "REGION",
+            "separator": null
+          },
+          {
+            "field": "PERIOD",
+            "action": "GroupBy",
+            "rename": "PERIOD",
+            "separator": null
+          },
+          {
+            "field": "TARGET",
+            "action": "Sum",
+            "rename": "TARGET_TOTAL",
+            "separator": null
+          },
+          {
+            "field": "ACTUAL",
+            "action": "Sum",
+            "rename": "ACTUAL_TOTAL",
+            "separator": null
+          },
+          {
+            "field": "REGION",
+            "action": "Count",
+            "rename": "LINES",
+            "separator": null
+          }
+        ]
+      },
+      "raw_config": "<Configuration>\n              <SummarizeFields>\n                <SummarizeField field=\"REGION\" action=\"GroupBy\" rename=\"REGION\" />\n                <SummarizeField field=\"PERIOD\" action=\"GroupBy\" rename=\"PERIOD\" />\n                <SummarizeField field=\"TARGET\" action=\"Sum\" rename=\"TARGET_TOTAL\" />\n                <SummarizeField field=\"ACTUAL\" action=\"Sum\" rename=\"ACTUAL_TOTAL\" />\n                <SummarizeField field=\"REGION\" action=\"Count\" rename=\"LINES\" />\n              </SummarizeFields>\n            </Configuration>",
+      "annotation": "Target and actual per region and period",
+      "in_anchors": [
+        "Input"
+      ],
+      "out_anchors": [
+        "Output"
+      ],
+      "meta": {
+        "Output": [
+          {
+            "name": "REGION",
+            "type": "V_String",
+            "size": 10,
+            "scale": null
+          },
+          {
+            "name": "PERIOD",
+            "type": "V_String",
+            "size": 7,
+            "scale": null
+          },
+          {
+            "name": "TARGET_TOTAL",
+            "type": "FixedDecimal",
+            "size": 19,
+            "scale": 2
+          },
+          {
+            "name": "ACTUAL_TOTAL",
+            "type": "FixedDecimal",
+            "size": 19,
+            "scale": 2
+          },
+          {
+            "name": "LINES",
+            "type": "Int64",
+            "size": 8,
+            "scale": null
+          }
+        ]
+      }
+    },
+    {
+      "tool_id": "6",
+      "type": "output",
+      "plugin": "AlteryxBasePluginsGui.DbFileOutput.DbFileOutput",
+      "container_id": "11",
+      "config": {
+        "source": "C:\\data\\out\\region_attainment.yxdb",
+        "format": "yxdb",
+        "alias": null,
+        "table": null,
+        "write_mode": "overwrite",
+        "keys": [],
+        "pre_sql": null,
+        "post_sql": null
+      },
+      "raw_config": "<Configuration>\n              <Passwords />\n              <File MaxRecords=\"\" FileFormat=\"19\">C:\\data\\out\\region_attainment.yxdb</File>\n              <FormatSpecificOptions>\n                <OutputOption>Overwrite</OutputOption>\n              </FormatSpecificOptions>\n              <MultiFile value=\"False\" />\n            </Configuration>",
+      "annotation": "region_attainment.yxdb",
+      "in_anchors": [
+        "Input"
+      ],
+      "out_anchors": [],
+      "meta": {
+        "Output": [
+          {
+            "name": "REGION",
+            "type": "V_String",
+            "size": 10,
+            "scale": null
+          },
+          {
+            "name": "PERIOD",
+            "type": "V_String",
+            "size": 7,
+            "scale": null
+          },
+          {
+            "name": "TARGET_TOTAL",
+            "type": "FixedDecimal",
+            "size": 19,
+            "scale": 2
+          },
+          {
+            "name": "ACTUAL_TOTAL",
+            "type": "FixedDecimal",
+            "size": 19,
+            "scale": 2
+          },
+          {
+            "name": "LINES",
+            "type": "Int64",
+            "size": 8,
+            "scale": null
+          }
+        ]
+      }
+    },
+    {
+      "tool_id": "7",
+      "type": "output",
+      "plugin": "AlteryxBasePluginsGui.DbFileOutput.DbFileOutput",
+      "container_id": "11",
+      "config": {
+        "source": "<scrubbed:prod_plan>",
+        "format": "db",
+        "alias": "prod_plan",
+        "table": "dbo.ATTAINMENT_HISTORY",
+        "write_mode": "update_insert",
+        "keys": [
+          "REGION",
+          "PERIOD"
+        ],
+        "pre_sql": null,
+        "post_sql": null
+      },
+      "raw_config": "<Configuration>\n              <Passwords />\n              <File MaxRecords=\"\" FileFormat=\"23\">&lt;scrubbed:prod_plan&gt;|||dbo.ATTAINMENT_HISTORY</File>\n              <FormatSpecificOptions>\n                <OutputOption>Update; Insert if new</OutputOption>\n                <TableStyle>Quoted</TableStyle>\n                <TransactionSize>0</TransactionSize>\n              </FormatSpecificOptions>\n              <UpdateKeys>\n                <Field field=\"REGION\" />\n                <Field field=\"PERIOD\" />\n              </UpdateKeys>\n              <MultiFile value=\"False\" />\n            </Configuration>",
+      "annotation": "dbo.ATTAINMENT_HISTORY",
+      "in_anchors": [
+        "Input"
+      ],
+      "out_anchors": [],
+      "meta": {
+        "Output": [
+          {
+            "name": "REGION",
+            "type": "V_String",
+            "size": 10,
+            "scale": null
+          },
+          {
+            "name": "PERIOD",
+            "type": "V_String",
+            "size": 7,
+            "scale": null
+          },
+          {
+            "name": "TARGET_TOTAL",
+            "type": "FixedDecimal",
+            "size": 19,
+            "scale": 2
+          },
+          {
+            "name": "ACTUAL_TOTAL",
+            "type": "FixedDecimal",
+            "size": 19,
+            "scale": 2
+          },
+          {
+            "name": "LINES",
+            "type": "Int64",
+            "size": 8,
+            "scale": null
+          }
+        ]
+      }
+    }
+  ],
+  "edges": [
+    {
+      "src": "1",
+      "src_anchor": "Output",
+      "dst": "3",
+      "dst_anchor": "Left",
+      "dst_order": 1,
+      "wireless": false
+    },
+    {
+      "src": "2",
+      "src_anchor": "Output",
+      "dst": "3",
+      "dst_anchor": "Right",
+      "dst_order": 1,
+      "wireless": false
+    },
+    {
+      "src": "3",
+      "src_anchor": "J",
+      "dst": "4",
+      "dst_anchor": "Input",
+      "dst_order": 1,
+      "wireless": false
+    },
+    {
+      "src": "4",
+      "src_anchor": "T",
+      "dst": "5",
+      "dst_anchor": "Input",
+      "dst_order": 1,
+      "wireless": false
+    },
+    {
+      "src": "5",
+      "src_anchor": "Output",
+      "dst": "6",
+      "dst_anchor": "Input",
+      "dst_order": 1,
+      "wireless": false
+    },
+    {
+      "src": "5",
+      "src_anchor": "Output",
+      "dst": "7",
+      "dst_anchor": "Input",
+      "dst_order": 1,
+      "wireless": false
+    }
+  ]
+}

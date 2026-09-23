@@ -14,6 +14,9 @@ BEGIN
 
   ALTER SESSION SET TIMEZONE = 'America/New_York', WEEK_START = 1;
 
+  -- contract C4: each mapped table's name is built once, then referenced as IDENTIFIER(:<name>)
+  LET ORDERS_EXPORT_SRC VARCHAR := SRC_DB || '.' || SRC_SCHEMA || '.ORDERS_EXPORT';
+
   -- Outbound stream 4_Output -> seg_03 (Join, Right anchor).
   CREATE OR REPLACE TRANSIENT TABLE MIG_WORK.WF0002_SEG_02_OUT AS
   WITH
@@ -25,7 +28,7 @@ BEGIN
           CUST_ID,
           AMOUNT,
           ORDER_DATE
-      FROM IDENTIFIER(:SRC_DB || '.' || :SRC_SCHEMA || '.ORDERS_EXPORT')
+      FROM IDENTIFIER(:ORDERS_EXPORT_SRC)
   ),
   -- tool 4: Select -- retypes all four columns and selects nothing else (*Unknown is unselected).
   -- Alteryx's coercion warns and nulls on text it cannot read, which is what the TRY_ forms do:

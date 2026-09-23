@@ -1,0 +1,7 @@
+{
+  "status": "OK",
+  "target": "dbt",
+  "errors": [],
+  "statements": 0,
+  "models": 3
+}

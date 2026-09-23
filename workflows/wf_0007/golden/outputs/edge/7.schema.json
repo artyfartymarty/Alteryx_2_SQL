@@ -1,0 +1,32 @@
+[
+  {
+    "name": "REGION",
+    "type": "V_String",
+    "size": 10,
+    "scale": null
+  },
+  {
+    "name": "PERIOD",
+    "type": "V_String",
+    "size": 7,
+    "scale": null
+  },
+  {
+    "name": "TARGET_TOTAL",
+    "type": "FixedDecimal",
+    "size": 19,
+    "scale": 2
+  },
+  {
+    "name": "ACTUAL_TOTAL",
+    "type": "FixedDecimal",
+    "size": 19,
+    "scale": 2
+  },
+  {
+    "name": "LINES",
+    "type": "Int64",
+    "size": 8,
+    "scale": null
+  }
+]

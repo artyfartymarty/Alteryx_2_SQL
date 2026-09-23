@@ -1,0 +1,84 @@
+{
+  "workflow": "wf_0007",
+  "segment": "seg_01",
+  "target": "sql",
+  "inputs": [
+    {
+      "logical": "TARGETS",
+      "tool_id": "1",
+      "columns": [
+        { "name": "REGION", "type": "VARCHAR", "nullable": true },
+        { "name": "PERIOD", "type": "VARCHAR", "nullable": true },
+        { "name": "TARGET", "type": "NUMBER(19,2)", "nullable": true }
+      ],
+      "keys": [],
+      "expected_rows": { "min": 0, "max": 500000 },
+      "large": false
+    },
+    {
+      "logical": "ACTUALS",
+      "tool_id": "2",
+      "columns": [
+        { "name": "REGION", "type": "VARCHAR", "nullable": true },
+        { "name": "PERIOD", "type": "VARCHAR", "nullable": true },
+        { "name": "ACTUAL", "type": "NUMBER(19,2)", "nullable": true }
+      ],
+      "keys": [],
+      "expected_rows": { "min": 0, "max": 5000000 },
+      "large": false
+    }
+  ],
+  "outputs": [
+    {
+      "stream": "3_J",
+      "kind": "work",
+      "table": "MIG_WORK.WF0007_SEG_01_OUT",
+      "logical": null,
+      "columns": [
+        { "name": "REGION", "type": "VARCHAR", "nullable": false },
+        { "name": "PERIOD", "type": "VARCHAR", "nullable": false },
+        { "name": "TARGET", "type": "NUMBER(19,2)", "nullable": true },
+        { "name": "ACTUAL", "type": "NUMBER(19,2)", "nullable": true }
+      ],
+      "keys": []
+    }
+  ],
+  "output": {
+    "stream": "3_J",
+    "kind": "work",
+    "table": "MIG_WORK.WF0007_SEG_01_OUT",
+    "logical": null,
+    "columns": [
+      { "name": "REGION", "type": "VARCHAR", "nullable": false },
+      { "name": "PERIOD", "type": "VARCHAR", "nullable": false },
+      { "name": "TARGET", "type": "NUMBER(19,2)", "nullable": true },
+      { "name": "ACTUAL", "type": "NUMBER(19,2)", "nullable": true }
+    ],
+    "keys": []
+  },
+  "row_relation": "expand",
+  "ordering": {
+    "keys": [],
+    "alteryx_deterministic": true,
+    "order_dependent_columns": []
+  },
+  "tolerances": {},
+  "normalizations": [],
+  "parity_risks": [
+    {
+      "tool_id": "3",
+      "class": "NULL_SEMANTICS",
+      "note": "A NULL join key matches nothing, so a target row with a NULL REGION or PERIOD leaves on the L anchor, which is wired to nothing, and never reaches the J stream. An inner join on `=` keeps that behaviour; a join written with IS NOT DISTINCT FROM would not. That is also why REGION and PERIOD are declared NOT NULL on this stream."
+    },
+    {
+      "tool_id": "3",
+      "class": "LOGIC",
+      "note": "The join is many-to-many on (REGION, PERIOD): every target row is paired with every actual line of its key, so a key with two actual lines carries its TARGET twice. The fan-out is Alteryx's own behaviour and the golden data keeps it; the downstream Sum therefore counts a target once per actual line, and a translation that pre-aggregated the actuals before joining would disagree."
+    },
+    {
+      "tool_id": "3",
+      "class": "LOGIC",
+      "note": "Key comparison is exact and case-sensitive -- no trimming, no case folding. Right_REGION and Right_PERIOD are deselected, so the stream carries the left side's key columns only, which on a matched row are equal to the right side's anyway."
+    }
+  ]
+}

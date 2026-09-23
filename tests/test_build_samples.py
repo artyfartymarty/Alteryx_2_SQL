@@ -127,6 +127,24 @@ def test_seed_defaults_status_and_metrics_when_no_manifest_exists(tmp_path):
     assert manifest["status"] == {} and manifest["metrics"] == {}
 
 
+def test_seed_copies_output_target_into_manifest_only_when_the_sample_carries_it(tmp_path):
+    samples_dir = _copy_sample(tmp_path, "wf_0001")
+    sample_path = samples_dir / "wf_0001" / "sample.json"
+    sample = read_json(sample_path)
+    sample["output_target"] = "dbt"
+    write_json(sample_path, sample)
+    repo = Repo(tmp_path / "repo")
+
+    manifest = build_samples.seed(repo, samples_dir, "wf_0001")
+
+    assert manifest["output_target"] == "dbt"
+
+    repo_without = Repo(tmp_path / "repo_without")
+    manifest_without = build_samples.seed(repo_without, SAMPLES, "wf_0001")
+
+    assert "output_target" not in manifest_without
+
+
 def test_build_raises_build_error_when_parse_status_is_not_clean(tmp_path, monkeypatch):
     repo = Repo(tmp_path)
     monkeypatch.setattr(parse, "run", lambda repo, wf_id, check:
