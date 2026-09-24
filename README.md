@@ -2,8 +2,9 @@
 
 ## 1. What this is
 
-An offline-first pipeline that turns an Alteryx workflow (`.yxmd`) into a Snowflake stored
-procedure, proves it against golden data, and hands it over with documentation. Deterministic
+An offline-first pipeline that turns an Alteryx workflow (`.yxmd`) into Snowflake code — a SQL stored
+procedure, a Snowpark Python procedure or a dbt project, chosen per workflow — proves it against golden
+data, and hands it over with documentation. Deterministic
 Python scripts under `scripts/` do the parsing, segmentation, SQL translation-checking and
 validation; a TypeScript orchestrator (`orchestrate.ts` / `orchestrator/*.ts`) drives a state
 machine over those scripts and **eight** GitHub Copilot custom agents (`.github/agents/*.agent.md`,
@@ -17,6 +18,18 @@ replaced without touching the others. The user's one explicit requirement beyond
 program spec is built in: **the pipeline asks a human to name the Snowflake table for every
 `.yxdb` file (and every other input and output)**, and it never invents one
 (`scripts/intake_prompt.py`, §5 below).
+
+### Where it stands
+
+- **Offline:** every sample workflow runs from parse to document with the mock runner, and the test suites pass
+  (node, `tsc`, pytest with nothing skipped — §4).
+- **With a real model:** the whole pipeline has run end to end, intake to document, on real models through the
+  real Copilot SDK: a local 27B model served by `llama-server`, and Claude Sonnet standing in through
+  `--runner external`. Model-written SQL, Snowpark and dbt output passed every golden set and the chain test
+  (`docs/live-smoke-test.md`, "Fourth live test").
+- **Not yet:** nothing has run on a real Snowflake account, a real Alteryx engine, or a GitHub-hosted model.
+  `docs/handoff-production.md` is the step-by-step guide for doing that in the company's setting, and
+  `docs/production-backlog.md` lists what only that setting can close.
 
 ### Architecture at a glance
 
@@ -53,24 +66,29 @@ flowchart TB
     P7["check_seams.py · plan_batches.py · stitch_analysis.py"]
     P8["prompt_context.py"]
     P9["lib/dbt_project.py → dbt (subprocess)"]
+    P10["contract_scaffold.py · contract_check.py (mechanical contract fields, then a check)"]
+    P11["translation_scaffold.py (every mechanical line of a translation; TODO bodies for the model)"]
+    P12["lib/snowpark_sandbox.py (agent Snowpark code runs in a child process)"]
     P1 ~~~ P2 ~~~ P3
     P4 ~~~ P5 ~~~ P6
     P7 ~~~ P8 ~~~ P9
+    P10 ~~~ P11 ~~~ P12
   end
   subgraph AR["AgentRunner seam — orchestrator/runner.ts"]
     direction TB
     M["MockRunner: replays samples/WF/canned/** — still runs the real validator"]
     C["CopilotRunner: one @github/copilot-sdk session per agent call"]
+    X["ExternalRunner (--runner external, a dev harness): each call handed out as .agent-requests/ID.request.json"]
   end
   subgraph SDK["Copilot SDK session"]
     direction TB
     AG["customAgents from .github/agents/*.agent.md — agent = role"]
-    TOOLS["model tool calls: view · create · glob · grep · powershell · ask_user · task (sub-agent)"]
+    TOOLS["model tool calls: view · create · edit · glob · grep · powershell · ask_user · task (sub-agent)<br/>not offered: web_fetch · web_search · sql · write_agent (excludedTools)"]
     AG --> TOOLS
   end
   subgraph HK["orchestrator/hooks.ts + policy.ts"]
     direction TB
-    H1["onPreToolUse → policy.decide → allow / deny (fail-closed, per-role lanes)"]
+    H1["onPreToolUse → policy.decide → allow / deny (fail-closed, per-role lanes)<br/>a denial is graded read · act · severe"]
     H2["onPostToolUse · onPostToolUseFailure · onErrorOccurred · onSessionEnd"]
     AUD[("audit.jsonl (redacted) · manifest.metrics")]
     H1 --> AUD
@@ -83,6 +101,7 @@ flowchart TB
   SM -->|runAgent| AR
   AR --> M
   AR --> C
+  AR --> X
   C --> SDK
   TOOLS -->|every call| H1
   H1 -->|allow / deny| TOOLS
@@ -98,7 +117,23 @@ flowchart TB
 role; the sub-agents a session spawns with `task` go through the same `onPreToolUse` (verified
 live, `docs/live-smoke-test.md`). A mid-session context compaction sends a fixed notes-file
 reminder to the three notes-keeping roles (intake, analyzer, fixer), and every `assistant.usage`
-event tracks the call's peak input-token count.
+event tracks the call's peak input-token count. Since the live-hardening task (L1), the session's
+runtime runs with the configured interpreter's directory first on `PATH`, so an agent's
+`python scripts/<name>.py …` is the project's interpreter in any run root. This was verified live
+in the fourth live test (`docs/live-smoke-test.md`): the system interpreter there has neither
+`yaml` nor `duckdb`, and the intake agent's `python scripts/intake_touchpoints.py wf_0001` and
+`python scripts/intake_prompt.py wf_0001 --no-interactive` both succeeded. Every task ends its
+instructions with the same fixed seven session rules (fix round 2, L9 nit: this summary named only
+the first four): relative paths; `glob`/`view`/`grep`; only its own workflow; a refused call is
+final; (L7) never read this pipeline's own `scripts/`/`orchestrator/` source to debug a difference;
+(L8) never read the golden data in bulk, one set's inputs at most; (L9) there is no network in these
+sessions. A spill file the SDK names in one of the session's own results becomes readable
+(`view`/`grep` only). A read that could cover another workflow is refused. Denials are graded: a `severe` one (another
+workflow, the pipeline's own files, the network, SQL outside the sandbox, destructive commands) parks the
+stage at once; `read` and `act` denials are refused and counted, and park the stage only past their budgets
+(`budgets.maxReadDenialsPerSession`, `budgets.maxActDenialsPerSession`, 20 each). On a timeout the in-flight
+turn is aborted first, and a timed-out session is kept only if it wrote its output in that session and the
+output passes the stage's check.
 
 ```mermaid
 sequenceDiagram
@@ -113,7 +148,7 @@ sequenceDiagram
   ST->>ST: budget check — maxToolCallsPerWorkflow
   ST->>RN: run(role, task)
   Note over RN,FS: intake, analyzer or fixer only — mkdir workflows/WF/notes/ before the session
-  RN->>SDK: createSession(customAgents, agent = role, model, hooks)
+  RN->>SDK: createSession(customAgents, agent = role, model, hooks, excludedTools)
   SDK->>MD: self-contained task prompt
   loop every tool call
     MD->>HK: onPreToolUse(toolName, toolArgs)
@@ -123,9 +158,10 @@ sequenceDiagram
     alt allowed
       HK-->>SDK: permissionDecision allow
       SDK->>FS: the tool runs inside the role's lane
-      SDK->>HK: onPostToolUse — result scanned for secrets and size
+      SDK->>HK: onPostToolUse — result scanned for secrets and size — a spill file the SDK names is recorded
     else denied
       HK-->>SDK: permissionDecision deny + reason
+      HK->>HK: record the denial as read or act
       Note over MD: the model sees the denial and carries on
     end
   end
@@ -141,19 +177,26 @@ sequenceDiagram
     RN->>RN: log "context compaction failed", compactions unchanged
   end
   MD-->>SDK: done — files written
+  opt the session timed out
+    RN->>SDK: abort() the in-flight turn, then disconnect
+  end
   SDK->>HK: onSessionEnd → recordMetrics
-  RN->>RN: finally — recordMetrics (idempotent: toolCalls, compactions, peakInputTokens → manifest.metrics), classify any error: timeout / rate-limit / context-overflow / denied
+  RN->>RN: finally — recordMetrics (idempotent: toolCalls, compactions, peakInputTokens, readDenials, actDenials, severeDenials → manifest.metrics), classify the end: denied if any severe denial (checked first, on every exit path), else timeout / rate-limit / context-overflow, else denied if act or read denials are over budget
   RN-->>ST: AgentResult { ok, error, toolCalls, ms }
-  ST->>ST: verify outputs · retry once (missing-output, timeout) · back off (rate-limit) · else escalate
+  ST->>ST: verify outputs · retry once (missing-output, timeout — a missing-output retry is told why) · back off (rate-limit) · else escalate
 ```
 
 **Stages and where a workflow can park.** Success states are skipped on re-runs; parked states
 (double circles) are never re-executed by a plain run and reopen only with `--from-stage`.
 Analyze runs the whole workflow in one call, or batch by batch once it is large enough, with
-every batch's and the stitched whole's seams checked by code; translate now splits by
+every contract's mechanical fields written and re-applied by `contract_scaffold.py`, every contract
+checked by `contract_check.py` (`docs/reference/contracts.md`) and every batch's and the stitched
+whole's seams checked by code; translate now splits by
 `output_kind` — one loop per segment for a procedures workflow, chain-checked against the
 stitched whole before `VALIDATED`, or one loop for the whole project for a dbt workflow, which
-gets `procs/README.md` instead of `master.sql`.
+gets `procs/README.md` instead of `master.sql`. Either way the translator starts from a skeleton
+`translation_scaffold.py` wrote (every mechanical line; a `TODO(scaffold)` body per tool, which
+`compile_check.py` refuses until it is filled — `docs/reference/output-targets.md` §4).
 
 ```mermaid
 flowchart TB
@@ -168,11 +211,12 @@ flowchart TB
   subgraph AN[analyze]
     direction LR
     PB{"plan_batches.py"}
-    PB -->|under budget| AC1["analyzer — one call"] --> CS["check_seams.py"]
-    PB -->|over budget| AC2["analyzer — one call per batch"] --> CS
+    PB --> SF["contract_scaffold.py --prefill: every mechanical field"]
+    SF -->|under budget| AC1["analyzer — one call: judgment only"] --> CS["contract_scaffold.py --apply → check_seams.py → contract_check.py"]
+    SF -->|over budget| AC2["analyzer — one call per batch"] --> CS
     CS -->|batched, after every batch| ST["stitch_analysis.py"]
   end
-  CS -->|"seam-mismatch"| NH((NEEDS_HUMAN))
+  CS -->|"seam-mismatch · contract: …"| NH((NEEDS_HUMAN))
   AN -->|tier T3| MAN((MANUAL))
   AN -->|contracts written| G[golden]
   G --> T[translate]
@@ -180,6 +224,7 @@ flowchart TB
   T -->|"output_kind: dbt"| DBTT
   subgraph seg["per segment, per wave — at most maxFixIterations"]
     direction LR
+    SK["translation_scaffold.py: the skeleton, once"] --> TR
     TR[translator] -->|"Snowpark: render_snowpark.py first"| CC["compile_check.py"]
     CC --> RV[reviewer]
     RV -->|BLOCK| FX[fixer]
@@ -196,6 +241,7 @@ flowchart TB
   CHK -->|needs_human| NH
   subgraph DBTT["dbt — one loop, the whole project, at most maxFixIterations"]
     direction LR
+    DSK["translation_scaffold.py: the project skeleton, once"] --> DTR
     DTR[translator] --> DCC["compile_check.py --target dbt"] --> DRV[reviewer]
     DRV -->|BLOCK| DFX[fixer]
     DRV -->|PASS| DVA["validator → validate_dbt.py"]
@@ -225,8 +271,8 @@ and records the decision with its reason. Full reference: **`docs/reference/outp
 
 How the decision is made: `scripts/target_check.py <wf> --prefer auto` classifies every node
 (`python` → `snowpark`; `r`, `run_command`, `download`, `email`, `render`, `spatial` → `manual`;
-anything else known → `sql`) and writes `segments/targets.json`. The analyzer copies each proposal
-into that segment's `contract.json` as `"target"` and **may only lower it** — `sql` → `snowpark`, or
+anything else known → `sql`) and writes `segments/targets.json`. The orchestrator pre-fills each
+proposal into that segment's `contract.json` as `"target"`, and the analyzer **may only lower it** — `sql` → `snowpark`, or
 either → `manual`, never back towards `sql`. The orchestrator verifies that before translating
 anything: a missing target (or one `targets.json` never proposed) parks the workflow at
 `NEEDS_HUMAN` with `target-missing: <seg>`, a raised one with
@@ -324,13 +370,63 @@ orchestrator never invokes `gh` (no issue for open intake questions, no pull req
 
 **Optional: a local BYOK model, for the `local` profile / `--runner copilot`.** This repo's own
 live tests used `scripts/dev/serve_model.ps1` (a loopback-only `llama-server` launcher for a
-PrismML llama.cpp fork serving `Ternary-Bonsai-2-27B-PQ2_0.gguf`, with optional `-CacheTypeK`/
-`-CacheTypeV` KV-cache quantization flags for a larger context window) against
+PrismML llama.cpp fork serving `Ternary-Bonsai-2-27B-PQ2_0.gguf`, with `-CacheTypeK`/`-CacheTypeV`
+KV-cache quantization flags, on by default since fix round 1 below) against
 `orchestrator.config.json`'s `profiles.local`, pointed at `http://127.0.0.1:8080/v1`. **Full
 results, both what worked and what did not across all three tests, are in `docs/live-smoke-test.md`** —
 summarized in §11 below. This step is optional: every number in this README's §4 and every worked
 example in `workflows/` comes from `--runner mock`, which needs no model, no login and no network
 at all.
+
+Live hardening (Task L7, R1): a live end-to-end run against `llama-server`, run with `-c 262144` and the
+default 4 parallel slots, overflowed its context — the server logged `Context size has been exceeded`
+at `n_tokens = 98490` and the SDK logged `translator context compaction failed` — because the SDK did
+not know this BYOK model's own limits and compacted too late. At 4 slots this build ran ONE unified
+262144-token cache shared by every slot: the SDK's own background compaction request (~140k tokens)
+landed beside the main conversation (~98k) in that same shared pool, and the two together exceeded it.
+It is **passing `-np` at all** that changes this, not how many slots you ask for (fix round 1 review,
+M1: this build's own help text says the unified, shared-cache mode is the default only "if number of
+slots is auto", i.e. only when `-np` is omitted) — `serve_model.ps1` always passes `-np` explicitly, so
+it is never in that mode. On this build, `-c 262144 -np 2` reports `n_slots=2, n_ctx_slot=131072,
+kv_unified=false`: the context is SPLIT evenly, a fixed, independent 131072-token allocation per slot,
+not one shared pool, so the session's own conversation and the SDK's background compaction request
+each get their own budget instead of competing for one.
+
+Live hardening fix round 1 (R-c, R-d): `serve_model.ps1`'s defaults (`-Context 262144 -Parallel 2
+-CacheTypeK q4_0 -CacheTypeV q4_0`) ARE the setup the committed `orchestrator.config.json`'s
+`profiles.local.provider.maxPromptTokens` (**100000**, not the fix round 0 value of 120000 — see
+below) is sized against; running the script with no flags at all now matches the committed config,
+which it did not before this fix round (the old default `-Context` was 32768, a quarter of what
+100000 alone would need). If you run a different `-Context`/`-Parallel` (a different GPU), lower
+`maxPromptTokens` to match: the script itself prints `n_ctx_slot = Context / Parallel` and a
+`maxPromptTokens` that fits it (about 77% of `n_ctx_slot`) on every run, and — when it can read
+`orchestrator.config.json` — warns if the configured value exceeds THAT FIT, not the raw per-slot
+budget (fix round 2, L7-m3: comparing against the raw slot let 120000 print "fits" even though the
+wf_0007 probe is exactly what proved it overflows), and says why not when it can't read the file at
+all. **Why not closer to the SDK's own 80% compaction threshold:** a live dbt-workflow run (the
+wf_0007 probe) with `maxPromptTokens: 120000` against this same 131072-token slot reached **131095
+tokens with ZERO compactions**. Fix round 2 (L7-m4) corrects the first-round reasoning here: if the
+SDK's background-compaction (80%) and blocking (95%) thresholds are both relative to
+`maxPromptTokens`, as this repo assumes, a 131095-token request with no compaction at all means the
+SDK's own token estimate was under roughly 114000 — at least ~15% below the real count, or, if
+compaction never even started, as much as ~37% below it. 100000 (`≈ 131072 × 0.77`) is a plausible,
+conservative pull-back from 120000 under that range, not a value proven safe by the 9% figure fix
+round 1 first used. The real check going forward is `CopilotRunner`'s own log line (this run's actual
+`maxPromptTokens`/`maxOutputTokens`/model, once per session start) together with `assistant.usage`'s
+`peakInputTokens` (recorded per role in a workflow's `manifest.json`, `metrics.<role>.peakInputTokens`)
+on the next long session — that ratio is the real number 77% only estimates.
+
+`orchestrator.config.json`'s `profiles.local.provider.maxPromptTokens` tells the SDK's `createSession`
+(the SDK's `ProviderConfig.maxPromptTokens`, `node_modules/@github/copilot-sdk/dist/types.d.ts`) the
+prompt budget to compact against; the SDK's own default background-compaction threshold is 80% of
+that budget (`InfiniteSessionConfig.backgroundCompactionThreshold`, same file), so at 100000 the main
+conversation is compacted at roughly 80k tokens — comfortably inside its own slot's 131072. `maxOutputTokens`
+is still unset (fix round 1 review, M2): 100000 leaves 31072 tokens of headroom above `maxPromptTokens`
+itself (131072 − 100000), and 51072 tokens above the SDK's own 80%-of-100000 compaction point (131072 −
+80000) — either way, judged enough margin without also guessing a cap on the model's own output length
+untested here, though (L7-m4) that margin is not independently measured, only estimated. The hosted
+profile sets neither `maxPromptTokens` nor `maxOutputTokens`: the SDK already knows Copilot's own
+models' limits.
 
 ## 4. Running the tests
 
@@ -475,7 +571,9 @@ mkdir -p "$SCRATCH"
 cp -r scripts mappings catalog "$SCRATCH/"
 # "python"/"samplesDir" resolve against --root by default (`path.resolve(root, config.python)`),
 # so a scratch orchestrator.config.json needs them absolute -- this repo's real venv and samples/,
-# not copies, since only scripts/ actually has to exist under "$SCRATCH" itself.
+# not copies, since only scripts/ actually has to exist under "$SCRATCH" itself. A --runner copilot
+# session gets that interpreter's directory first on PATH (`sessionEnvironment`, orchestrator/cli.ts),
+# so the agents' own `python scripts/<name>.py …` runs this venv, not the system Python.
 # In Git Bash `pwd` prints /c/Users/…, which Node on Windows cannot resolve; `pwd -W` prints the
 # drive-letter form C:/Users/…. (The orchestrator refuses to start if this path does not exist.)
 REPO="$(pwd -W 2>/dev/null || pwd)"
@@ -515,9 +613,10 @@ identical — so "no answer is promoted" is the precise claim, not "the bytes ne
 
 Every stage writes into `workflows/<id>/`: `parse.py` → `parsed/dag.json`; `intake_touchpoints.py`
 + `intake_prompt.py` + the intake agent → `intake/`; `segment.py`, `target_check.py`,
-`plan_batches.py`, the analyzer agent and `check_seams.py` → `segments/*/contract.json`,
-`segments/targets.json`, `segments/batches.json`, `segments/seams.json`, `analysis.md`,
-`unsupported.json`; `alteryx_sim.py` → `golden/`; the translator/fixer/reviewer/validator agents and
+`plan_batches.py`, `contract_scaffold.py`, the analyzer agent, `check_seams.py` and `contract_check.py` →
+`segments/*/contract.json`, `segments/targets.json`, `segments/batches.json`, `segments/seams.json`, `analysis.md`,
+`unsupported.json`; `alteryx_sim.py` → `golden/`; `translation_scaffold.py` (before the translator's first
+session, only where no translation exists yet) → the skeleton the translator fills; the translator/fixer/reviewer/validator agents and
 `compile_check.py`/`validate_segment.py`/`validate_snowpark.py`/`validate_dbt.py` (real scripts) →
 `segments/*/proc.sql` (or `dbt/**`), `review.json`, `validation*.json`; `validate_workflow.py` (or,
 for a dbt workflow, `validate_dbt.py` itself) → `validation_workflow*.json`; the orchestrator →
@@ -609,7 +708,77 @@ ceiling that accumulates across every agent session that workflow has ever run, 
 `manifest.metrics`, which persists on disk between runs. Crossing it before a role even starts
 parks that stage `NEEDS_HUMAN` with reason `budget`, exactly like any other escalation above:
 a plain re-run will not retry it. An explicit `--from-stage <stage>` both reopens the stage and
-grants it a fresh budget for what follows.
+grants it a fresh budget for what follows. The budget must be a positive integer, and
+`budgets.maxReadDenialsPerSession` and `budgets.maxActDenialsPerSession` non-negative integers.
+Anything else is a configuration error: the orchestrator exits 2 naming the key, before any
+workflow runs.
+
+**A denied tool call parks the stage at once when it was severe; other refusals are budgeted.**
+Every refused call is still refused, and every denial carries a class (`orchestrator/POLICY.md`,
+"Denial classes"):
+- `severe` — it tried to reach outside the session's workflow or the sandbox, or to do damage: any
+  SQL-tool denial (but not the SDK's own `sql` todo store, an `act`); a call refused because it names
+  another workflow, in any spelling Windows reads as one (`workflows./wf_0002/…`,
+  `WORKFL~1\wf_0002\…`) — a broad read that could reach one is a `read`; a path that starts at the
+  home directory (`~/.ssh/…`); a write — through a write tool, an `apply_patch` header, a shell
+  command (`Set-Content`, `Out-File`, `Remove-Item`, `Copy-Item`'s destination, `>`, …) or a
+  validator's `compare.py --out`/`--db` — to the own workflow's `golden/` or `audit.jsonl`, into
+  another workflow, into the pipeline's own trees (`scripts/`, `orchestrator/`, `.github/`,
+  `mappings/`, `catalog/`, `cookbook/`, `docs/`, `tests/`, `samples/`, …), onto one of its top-level
+  files (`orchestrator.config.json`, `README.md`, `pyproject.toml`, `conftest.py`, …) or out of the
+  repository; a destructive command (a `format` only as the disk command) or a recursive/forced
+  delete; a script given `--root` or a Snowflake-account flag; an external location; a shell command
+  — or input typed into a running shell — that names a network tool (`curl`, `Invoke-WebRequest`,
+  `ssh`, `ping`, `tnc`, `git clone`/`fetch`/`pull`, a `python -c` importing `urllib.request`/
+  `requests`/`socket`, a UNC share `\\host\share`, …), a package installer (`pip install`,
+  `npm install`, `npx`, `uv add`, `Install-Module`, `winget install`, …) or a credential store
+  (`$env:`, `Get-Credential`, `printenv`, `~/.ssh`, `.snowflake/connections.toml`, …); an unknown
+  tool whose name says it reaches the network or deletes (`web_fetch`, `delete_file`, …); two
+  command keys on a shell call, or a path key beside a `grep`/`glob`'s `paths`. A search's own
+  literal pattern, a write's content and a planning tool's text are text, not a reach:
+  `Select-String 'env:'` or `grep -rn curl scripts` is not severe, and a write is judged by its
+  target (`orchestrator/POLICY.md`, item 8).
+- `read` — a refused call of a tool that only reads (`view`, `grep`, `glob`, `read`, `read_file`,
+  `ls`, `list_directory`, `search`, `search_files`, `find`, and the SDK's `read_`/`list_`
+  shell-session tools), a refused `git status`/`git diff`/`git log` with only its own flags, or a
+  refused shell command whose every statement starts with a read-only cmdlet (`Get-ChildItem`,
+  `Get-Content`, `Select-String`, `Test-Path`, …) and holds none of `{`, `}`, `$(`, `@(`, `>`, a
+  backtick, `[`, `&`, `Invoke-` or `iex`. For the PowerShell tool quotes are PowerShell's: a `|`,
+  `;`, `(`, `[` or `{` inside them is text, so `Get-Content x | Select-String -Pattern "def (a|b)"`
+  is a read.
+  A `grep`/`glob` with a lone `path`/`file`/`dir` key instead of `paths` is a `read` too, and its
+  reason says to use `paths`; so is a Windows alias that names no other workflow.
+- `act` — every other attempted action: an interpreter one-liner, a command the role may not run, a
+  chained command, a write inside the own workflow but outside the role's lane, a NEW scratch file
+  at the run root (`_diag.py`), a shell call whose one command key is not `command`, an unknown tool.
+
+  **The live translator's session, as an example.** On the end-to-end run of wf_0001 a translator
+  made 173 calls. It wrote two throwaway DuckDB probes at the run root, `_diag.py` and `diag.py`,
+  both refused; it tried three `python -c` one-liners, `validate_segment.py --help` twice and a
+  `cd …; python …` chain; and it made seven refused reads (a `grep` with no path, `glob *`, a view of
+  the run root, …). Under the first cut of Task L6 the two root files were severe and would have
+  parked it at the first. They are scratch files, not the pipeline's: now they are two of 8 `act`
+  denials, with 7 `read` denials — both within their budgets, so the session is judged by the
+  `proc.sql` it wrote. Had it written the same probe to `scripts/_diag.py`, or overwritten
+  `orchestrator.config.json`, that one write would have parked it at once.
+
+One `severe` denial ends the session as `denied`, which parks the stage `NEEDS_HUMAN` at once,
+as the program spec says — whatever else ended the session: a severe attempt followed by a timeout,
+a rate limit or a context overflow is still `denied`, never retried, and never kept by Task L7's
+rule that keeps a timed-out session whose output passes its check (design doc §4, deviation 14).
+More than `budgets.maxActDenialsPerSession` (default 20) `act` denials end it as `denied` too, with
+the reason `act-denials: <n> over the budget of <m>; …`, and so do more than `budgets.maxReadDenialsPerSession` (default 20) `read` denials
+(`read-denials: <n> over the budget of <m>; …`). The budgets catch a session that thrashes; within
+both, the session's outcome is decided as if nothing had been denied, and the stage's own verify
+callbacks and scripts judge what it wrote. (A live translator whose SQL passed all four golden sets
+made 33 blocked attempts, about twenty of them stopping a shell it had started itself, which is
+allowed now.) An act budget of 0 restores the spec's rule for every attempted action. This is a
+deviation from the spec (§9, item 11). Each session's counts are summed into
+`manifest.metrics.<role>.readDenials` / `.actDenials` / `.severeDenials`, and one log line per
+session names all three. Every denial is still in `workflows/<wf>/audit.jsonl`, written before the
+decision returns, and its `pre` line carries the reason and the class. The other retries are
+unchanged: one identical retry for `missing-output` or `timeout`, a back-off for `rate-limit`, and
+none for `context-overflow` or `denied`.
 
 **The fixer loop, from a real run.** None of the seven committed workflows needed it — every
 canned segment validated on the translator's first attempt — so here is a real transcript from a
@@ -781,11 +950,86 @@ procedure.
    names nothing a human could be signing off on) are refused regardless of scope — no signature
    over a translation difference can repair broken reference data or explain an unclassified one.
 9. **Keyless streams are classified by nearest-match pairing** — a heuristic, not an exact
-   correspondence, used only when a stream has no declared key to join golden and actual rows on.
+   correspondence, used only when a stream has no declared key to join golden and actual rows on,
+   or when its declared keys repeat in the golden rows (live hardening, Task L11): the analyzer
+   declares keys as a judgment, a real Alteryx output may repeat an id, and a key that does not
+   identify a row cannot join anything. Such a stream is compared exactly as a keyless one, and its
+   report carries the advisory `checks.keys_not_unique` (never a failure, never `needs_human` by
+   itself) and a note that the contract's keys should be revisited. It used to be a `GOLDEN_DATA`
+   cluster with `needs_human`, which parked a correct translation in a live run.
 10. **GitHub is opt-in.** The spec's issue and pull request happen only with `--gh` or
     `github.enabled: true`; otherwise (the default) the orchestrator never invokes `gh`, logs
     `gh: disabled` and skips them, exactly as when `gh` is not installed; workflow status is
     unaffected (`stagePr`/`stageIntake` in `orchestrator/stages.ts`).
+11. **A denied tool call aborts the stage at once only when it was severe; other refusals are
+    budgeted.** The spec says "tool denied by policy → log, abort stage, NEEDS_HUMAN". That rule
+    holds at once for every `severe` denial, whatever else ends the session (a timeout, a rate
+    limit): a call that tried to reach outside its workflow or the sandbox (SQL, another workflow in
+    any spelling, the home directory, a write into another workflow, into the pipeline's own files or
+    out of the repository, a network tool, an installer, a credential store, `--root`, a backend
+    flag) or to do damage (a destructive command, a recursive delete, a write to the answer key or
+    the audit). It holds for other attempted actions (`act`: an interpreter one-liner, a command the
+    role may not run, a write inside the own workflow outside the role's lane, a new scratch file at
+    the run root, an unknown tool) beyond `budgets.maxActDenialsPerSession`
+    (default 20), and for blocked reads beyond `budgets.maxReadDenialsPerSession` (default 20). Every
+    refused call is still refused, recorded in the audit and counted in `manifest.metrics`.
+    The reason: a refused call has no effect, and every output is verified afterwards. The live
+    evidence (Task L1) is the three phase-2 intake sessions (`docs/live-smoke-test.md`, "Third live
+    test"). Each wrote `plan.md` and `mappings.yaml` and was then parked `denied`. 33 of their 54
+    denials were refused reads. The 21 attempted actions were the notes-directory attempts that
+    Task N1 removes. Task L6 added the end-to-end run of wf_0001: its analyzer's contract passed
+    `contract_check.py` and `check_seams.py`, and the session still parked on three `act` denials —
+    a `Select-String` search misread as an action because of a `|` inside its quoted pattern (now
+    a read), an interpreter one-liner, and an edit of intake's `open_questions.md` inside its own
+    workflow. Under Task L6 it would have been judged by its outputs. A later live translator on
+    wf_0001 wrote SQL that passed all four golden sets and made 33 blocked attempts, about twenty of
+    them `stop_powershell` on its own shell; so `stop_*` is allowed now, and the act budget is 20
+    like the read budget. The end-to-end run's translator (§6, "The live translator's session") also
+    wrote two throwaway probes at the run root; a new scratch file there is an `act`, while a write
+    into the pipeline's own files parks at once (L6 fix round 2). See "A denied tool call parks the
+    stage…" in §6.
+12. **A contract's mechanical fields are generated, not written by the analyzer.** The spec's
+    analyzer writes all of `contract.json`. Here `scripts/contract_scaffold.py` derives every field
+    that follows from the parsed DAG, the segment cuts, `targets.json` and `mappings.yaml` (identity,
+    tables, write modes, column names and types), pre-fills it before the analyzer and re-applies it
+    after; the analyzer decides only judgment (row relation, ordering, tolerances, normalizations,
+    parity risks, nullability, keys, lowering a target), and `scripts/contract_check.py` gates every
+    contract before golden (`docs/reference/contracts.md`). The live evidence: a real model's analyzer
+    got six mechanical fields wrong and nothing caught them.
+13. **A retry after a missing output is told why.** The spec retries "once with the same prompt";
+    here the one retry's task adds a fixed sentence and, in a data fence, the recorded reason and
+    the checker's report (`orchestrator/feedback.ts`). A timeout's retry is unchanged.
+14. **The translator and the fixer test their own work.** The spec lets only the validator and
+    intake execute SQL. The translator and the fixer may now also run the validator script on their
+    own segment (`validate_segment.py`/`validate_snowpark.py <wf> <own segment>`, or
+    `validate_dbt.py <wf>` for a dbt project, `--set <name>` the only flag). It runs on a local double,
+    never on Snowflake: the backend flags stay refused to every agent. The double runs on the host,
+    so the agent's code runs there, inside a sandbox: a Snowpark `proc.py` is refused pandas/numpy
+    file entry points statically and then run in a **child process** under an audit hook that blocks
+    file, network and process access before it is imported (`lib.snowpark_sandbox`) — with a wall-clock
+    timeout, a minimal environment (no `SNOWFLAKE_*` or tokens), no read of any workflow file once the
+    hook is armed (so the expected outputs are unreadable), and a nonce-signed result the parent
+    verifies; a SQL procedure runs with DuckDB's file and network access switched off and locked. A
+    blocked host operation is a FAIL naming it. This protects the machine the self-test runs on, not
+    Snowflake. The reports it leaves are
+    deleted before the orchestrator's validator runs, so the verdict is always the validator's own.
+    The SQL tool is unchanged for them. The reason: a live translator parked trying exactly this, and
+    a failure it sees in its own session is fixed there rather than in another fixer iteration.
+15. **The orchestrator writes the first version of every translation: its skeleton.** The spec's
+    translator and fixer write `proc.sql` (and `translation_notes.md`) for their segment. Here, before
+    the translator's first session, `scripts/translation_scaffold.py` writes every mechanical line of
+    the translation -- a SQL procedure's header, session line, `LET` lines, write statements (in the
+    form each write mode needs), work-table names and `RETURN`; a Snowpark module's signature, reads
+    and writes; a dbt project's fixed files, YAML, model files and `config(...)` lines -- with one
+    `TODO(scaffold)` body per tool for the translator to replace. `compile_check.py` refuses a file
+    that still holds one (`scaffold:todo`); an existing translation is never written over; a
+    translator that leaves the skeleton untouched has written nothing (`missing-output`) -- judged on the
+    translation files alone (the procedure file, or every `models/**/*.sql` of a dbt project,
+    byte-identical and still holding a TODO; notes, reports and logs do not count), and a skeleton with
+    no TODO in it is a complete translation. A sixth
+    session rule says not to read the golden data in bulk. The reason: live translators spent their
+    sessions on the mechanical lines -- a dbt translator read every golden CSV and overflowed its
+    context without writing a single file (`docs/reference/output-targets.md` §4).
 
 ## 10. Repo map
 
@@ -802,6 +1046,7 @@ orchestrator/
   runner.ts      AgentRunner: MockRunner (canned replay) and CopilotRunner (real SDK)
   hooks.ts       session hooks: audit trail (workflows/<id>/audit.jsonl), redaction, metrics
   stages.ts      the state machine: stage order, retries, budgets, error routing
+  feedback.ts    what a retried agent is told about its previous attempt (fenced)
   cli.ts         argument parsing, config loading, the workflow pool
   test/*.test.ts
 scripts/
@@ -809,6 +1054,8 @@ scripts/
   parsers/{plugin_map,registry,tool_config}.py, parsers/ext/*.py   parser + its extension points
   parse.py, invariants.py, segment.py, inject_outputs.py
   load_golden.py, gen_source_views.py, compile_check.py, compare.py, validate_segment.py
+  contract_scaffold.py, contract_check.py       every contract's mechanical fields, and its checker
+  translation_scaffold.py                       every translation's mechanical lines (the skeleton the translator fills)
   intake_touchpoints.py, intake_prompt.py       the yxdb-to-table prompt (§5)
   dev/{formula,alteryx_sim,build_samples,answer_samples}.py, dev/serve_model.ps1
 samples/wf_000N/{source,golden_inputs,expected_sql,broken_sql,canned}/, sample.json   fixtures for the 7 sample workflows
@@ -821,6 +1068,7 @@ docs/
   spec/00-README.md, 01-copilot-setup.md, 02-schemas-reference.md    the program spec (never edited by this build)
   reference/{dag-contract,simulator-semantics}.md                     what the parser/simulator actually implement
   reference/output-targets.md                                         sql / snowpark / dbt: the decision, artefacts, deployment (§1)
+  reference/contracts.md                                              mechanical vs judgment contract fields, the checker
   live-smoke-test.md                                                  the real Copilot SDK runs, three so far (§3, §11 below)
   superpowers/specs/2026-09-18-alteryx-snowflake-pipeline-design.md   this build's own design + deviations (§9)
 ```
@@ -836,9 +1084,11 @@ and observed the result; **still open** means it was not exercised, whether or n
   (`docs/live-smoke-test.md`): `view`, `glob`, `grep`, `powershell`, `task` were all observed with
   real argument shapes and correctly classified by the existing regexes across the first live
   test's two attempts (zero `unrecognized-tool` denials there). The second live test (larger
-  context, 2026-09-20) then observed one genuinely unrecognized name, `list_powershell` — correctly
-  denied by the fail-closed default, confirming that path works too, not just the already-known
-  names. The third live test (262k context, 2026-09-23) observed the write tool for the first
+  context, 2026-09-20) then observed one genuinely unrecognized name, `list_powershell`, denied by
+  the fail-closed default. A later live run showed it is part of the SDK's shell family (a command
+  still running after `initial_wait` is read back with `read_powershell` by `shellId`), so the
+  policy now allows the read-only `read_*`/`list_*` shell-session tools, and since Task L6's fix
+  round 1 `stop_*` too, which stops only a shell the session started (`orchestrator/POLICY.md`). The third live test (262k context, 2026-09-23) observed the write tool for the first
   time: `create` with `path` and `file_text`, classified by `WRITE_TOOL` and used to write
   `intake/plan.md` and `mappings.yaml` on all three samples; it also saw `ask_user` with `question`
   and `choices`. **Still open:** no `SQL_TOOL`-classified call was ever attempted, because a local

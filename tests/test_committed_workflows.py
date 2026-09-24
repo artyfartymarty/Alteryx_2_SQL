@@ -21,6 +21,7 @@ import json
 import os
 import re
 import subprocess
+import unicodedata
 from pathlib import Path
 
 import pytest
@@ -569,3 +570,39 @@ def test_no_shipped_file_points_at_a_scratchpad():
             offenders.append(rel)
     assert not offenders, ("these files point at a scratchpad directory that exists on no other "
                            "machine:\n" + "\n".join(offenders))
+
+
+def test_no_shipped_file_carries_a_bidirectional_control_or_a_line_separator():
+    """A literal bidirectional override or isolate (U+202A-U+202E, U+2066-U+2069) or a literal line or
+    paragraph separator (U+2028, U+2029) is invisible in review and can make code read as something it
+    is not (the Trojan Source class; review of live-hardening L3, M4). Code that needs one writes the
+    escape, `\\u202e`."""
+    offenders = []
+    for rel in _hand_off_files():
+        text = _read_text_or_none(ROOT / rel)
+        if text is None:
+            continue
+        found = sorted({f"U+{ord(ch):04X}" for ch in text
+                        if 0x202A <= ord(ch) <= 0x202E or 0x2066 <= ord(ch) <= 0x2069 or ord(ch) in (0x2028, 0x2029)})
+        if found:
+            offenders.append(f"{rel}: {', '.join(found)}")
+    assert not offenders, "literal invisible control characters are committed:\n" + "\n".join(offenders)
+
+
+def test_no_shipped_file_carries_a_literal_format_character():
+    """The same, for every Unicode format (Cf) character -- U+180E, U+200B-U+200F, U+2060, U+FEFF and the
+    rest: invisible in review, so a regex class or a string holding one reads as something it is not (the
+    combined re-review of live hardening found U+180E/U+200B/U+200D/U+2060 inside two regex classes in
+    `orchestrator/policy.ts`). Code that needs one writes the escape, `\\u200b`. The one exception is a
+    byte-order mark as a file's very first character: an encoding marker, which a parser fixture keeps on
+    purpose (`tests/parser_corpus/bom/`)."""
+    offenders = []
+    for rel in _hand_off_files():
+        text = _read_text_or_none(ROOT / rel)
+        if text is None:
+            continue
+        body = text[1:] if text.startswith("\ufeff") else text
+        found = sorted({f"U+{ord(ch):04X}" for ch in body if unicodedata.category(ch) == "Cf"})
+        if found:
+            offenders.append(f"{rel}: {', '.join(found)}")
+    assert not offenders, "literal invisible format characters are committed:\n" + "\n".join(offenders)

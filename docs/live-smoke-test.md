@@ -574,8 +574,13 @@ Every park came from a policy denial that was correct:
   `C:\Users\<you>\Desktop\Alteryx-to-Snowflake\<session>\…`, a directory that is not the run root. The policy
   denied each read as "path outside the repository", and a denial parks the stage. The same model built the correct
   path for its `create` calls, so this is intermittent path copying, not a missing capability.
-- **A sibling workflow (wf_0006).** The model read files under `workflows/wf_0001/`, which was present in the shared
-  run root. The policy denied it ("no access to other workflows") and the stage parked.
+- **A sibling workflow (wf_0006, wf_0007).** Both models read files under `workflows/wf_0001/`, which was present in
+  the shared run root (wf_0007 did so three times, besides its mangled paths). The policy denied it ("no access to
+  other workflows") and the stage parked.
+- **The SDK's own spill file (wf_0001, wf_0006).** When a tool result was large, the SDK saved it to a temporary
+  file and told the model to open it; the policy denied the read because the file is outside the repository. (Added
+  after the fact: the first version of this write-up missed these two denials. The live-hardening round made those
+  files readable; see "Fourth live test".)
 - **The notes directory (all three).** Each intake agent tried to create `workflows/<wf>/notes/` before writing its
   notes file: with PowerShell `New-Item` or `md`, with `.venv\Scripts\python.exe -c "…makedirs…"`, and once by
   writing a small Python script with `create` that would make it. The policy denied every one (PowerShell
@@ -642,3 +647,63 @@ tokens per second.
 4. A design decision for the owner, not taken here: a path or cross-workflow denial currently parks the stage at once.
    Returning the first such denial to the model so it can correct the path (and parking only on a repeat) would let a
    run recover from a copying slip without loosening any deny.
+
+## Fourth live test — the live-hardening round, every stage, 2026-09-23
+
+After the third test (above), every cause of a live park was traced and fixed (the live-hardening round: agent sessions
+run the project's interpreter; the SDK's spill files are readable; refused calls are graded read / act / severe with
+budgets instead of all parking; fixed session rules; generated contract fields with a checker; compile-time write-mode
+rules; translation scaffolds; the SDK's unused built-in tools hidden; output folders pre-created; context limits for the
+local model; a timed-out session's checked output kept). Then the three samples were run again, each in its own short
+run root (`C:\mig\runs\<name>`), from intake to document, with the same local model — first as probes, then as full
+end-to-end runs with no manual step except the intake answers, which came from each sample's documented answer key
+(`scripts/dev/answer_samples.py`, standing in for the person who answers intake's questions).
+
+### Setup
+- Server: `serve_model.ps1 -Context 262144 -CacheTypeK q4_0 -CacheTypeV q4_0 -Parallel 2` (two slots of 131072 tokens
+  each; `-np 2` splits the context per slot on this build). The local profile tells the SDK `maxPromptTokens: 100000`:
+  the SDK's token estimate undercounts this model's tokenizer — with 120000 a request reached 131095 tokens and the
+  server refused it.
+- Model, SDK and machine as in the third test.
+
+### Results with the local model (no overrides)
+
+| sample | target | intake | analyze (model's own contracts) | golden | translate | document |
+|---|---|---|---|---|---|---|
+| wf_0007 | dbt project | READY | DONE | DONE | **VALIDATED** — both segments PASS, chain PASS, idempotent | **DONE** |
+| wf_0006 | SQL + Snowpark | READY | DONE | DONE | seg_01 (SQL) PASS on all four golden sets, idempotent; seg_02 (Snowpark) the model's `proc.py` PASSed all four sets in its self-test, then the session parked on `web_fetch` (fixed afterwards: the SDK's web tools are no longer offered) | — |
+| wf_0001 | SQL | READY | DONE | DONE | an earlier run (with a logged override of one analyze park) reached **VALIDATED**; the final run's SQL matched every golden set exactly but parked on a key the model had declared that repeats in the data (fixed afterwards: such a stream is compared without keys, with an advisory) | — |
+
+wf_0007 is the first full live run of the pipeline: every stage, from intake to document, with a real model through
+the real Copilot SDK and no manual step beyond the intake answers. Its dbt translator filled the orchestrator's
+skeleton in 39 tool calls (4.5 minutes) with no denial; before the scaffolds, the same model wrote nothing in 90 calls
+and overflowed its context.
+
+### What the local model still does badly
+It is a 27-billion-parameter model quantized to about 2 bits. It miscopies long paths, retries a refused call many
+times, reaches for `python -c` and chained shell commands against the rules, and reads far more than it needs. The
+pipeline now contains these: refused reads and benign attempts are counted against a budget instead of ending the
+session, and every output is judged by the deterministic checks.
+
+### The same pipeline with a stronger model standing in (Claude Sonnet)
+To see how the pipeline behaves with a capable model — a closer preview of the hosted models the company will use —
+wf_0001 and wf_0007 were run again with `--runner external` (`orchestrator/external_runner.ts`, a small development
+harness): the orchestrator wrote each agent call's exact task text to `.agent-requests/`, a Claude Sonnet agent did the
+work following the same agent file and session rules, and the orchestrator carried on with its real checks. The Copilot
+SDK and its tool policy were not in this loop (the local runs above cover them).
+
+| sample | intake | analyze | translate | review | validate | chain | minutes per agent task |
+|---|---|---|---|---|---|---|---|
+| wf_0001 (SQL) | written, waited for answers | contract passes both checks | SQL compiles; PASS on all four golden sets, idempotent | PASS | PASS | PASS, idempotent | 1.5–9.5 |
+| wf_0007 (dbt) | written, waited for answers | two contracts pass both checks | dbt project compiles; PASS on all four sets for both segments | PASS | PASS | PASS, idempotent | 1.5–8.5 |
+
+Both reached `translate: VALIDATED` with no fixer round. Two findings from these runs were fixed on the way: a key the
+analyzer declared that repeats in the golden data, and a NOT NULL it declared that the golden data contradicts, had each
+parked a correct translation as a golden-data problem; both are now advisories on the report (`keys_not_unique`,
+`nullability_contract`) while the rows are still compared in full.
+
+
+### Honest verdict
+- The pipeline runs end to end with a real model; the SQL, Snowpark and dbt paths have each produced model-written
+  output that passes every golden set and the chain test.
+- Nothing here ran on Snowflake, on Alteryx, or with a GitHub-hosted model.

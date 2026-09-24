@@ -65,6 +65,13 @@ of those two is exercised by this page's own executable example — see Parity r
 - `write_mode`: `overwrite` → `CREATE OR REPLACE TABLE … AS`; `append`/`truncate_append` →
   `INSERT INTO … (cols) SELECT …` (the second preceded by a `DELETE FROM`/`TRUNCATE`); `update_insert`
   → `MERGE … WHEN MATCHED THEN UPDATE … WHEN NOT MATCHED THEN INSERT …` on `keys`.
+  `scripts/compile_check.py` holds every final target to exactly this form (`c4:write_mode`, reading
+  the contract's `write_mode`, else `intake/mappings.yaml`'s `mode`, where `merge` is `update_insert`):
+  one such write of `IDENTIFIER(:<LOGICAL>_TGT)`, the `MERGE` on exactly the contract's keys, and no
+  other statement on the target but the tool's own PreSQL before it and PostSQL after it. A
+  `truncate_append` target, like an append or update_insert one, needs its before-state in the golden
+  data (`golden/targets_before/<set>/<LOGICAL>.csv`, `docs/handoff-production.md`): its `TRUNCATE`
+  needs the table to exist, and `scripts/load_golden.py` creates a target only from that file.
 - `keys`: the `MERGE`'s `ON` clause for `update_insert`; meaningless for the other three modes.
 - `pre_sql` / `post_sql`: separate statements run before/after the write, in the procedure's own
   statement list — never inlined into the write statement itself.
@@ -77,6 +84,12 @@ of those two is exercised by this page's own executable example — see Parity r
   `LET <LOGICAL>_TGT VARCHAR := TGT_DB || '.' || TGT_SCHEMA || '.<LOGICAL>';` (contract C4) exactly
   as every source read does, and never an expression inside `IDENTIFIER(…)`
   (`scripts/compile_check.py`'s `c4:identifier_expression`).
+- Do not write an `overwrite` target as `TRUNCATE` + `INSERT INTO`: an overwrite replaces the table
+  with the incoming schema and data, and the table need not exist beforehand -- the golden sets hold
+  no prior state for an overwrite target (`golden/targets_before/` is exported only for a target that
+  keeps rows or whose write needs the table: append, update_insert, truncate_append, or one with a
+  PreSQL/PostSQL), so the validator creates none and the `TRUNCATE` fails where `CREATE OR REPLACE
+  TABLE … AS` would not. `c4:write_mode` refuses it.
 - Do not translate `Update; Insert if new` as two separate statements (`UPDATE` then `INSERT ...
   WHERE NOT EXISTS`) instead of one `MERGE` unless the target engine cannot express `MERGE` — the
   two-statement form is not atomic and can double-count a row that a concurrent writer inserts

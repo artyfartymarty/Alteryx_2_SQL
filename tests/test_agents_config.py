@@ -626,7 +626,7 @@ def test_reviewer_blocks_on_the_dbt_project_shape():
 def test_validator_picks_validate_dbt_for_a_dbt_workflow():
     _, body = _read("validator")
     squeezed = " ".join(body.split())
-    assert ".venv/Scripts/python.exe scripts/validate_dbt.py <id>" in squeezed
+    assert "python scripts/validate_dbt.py <id>" in squeezed
     assert "once for the whole workflow" in squeezed
     assert '"target": "dbt"' in squeezed
     assert "stop and report" in squeezed
@@ -768,3 +768,69 @@ def test_intake_analyzer_and_fixer_keep_notes():
         assert f"notes/{name}.md" in squeezed, name
         assert "the durable record stays in the contract and the files" in squeezed, name
         assert PHASE_2_MARKER in body, name
+
+
+# --- live hardening, Task L1 (R1): scripts run as `python scripts/…` from any run root ----------
+# A run root is a copy WITHOUT `.venv` whose orchestrator.config.json names the interpreter by
+# absolute path, so the old `.venv/Scripts/python.exe scripts/…` form resolved nowhere and the live
+# models probed for an interpreter instead. The orchestrator now puts the configured interpreter
+# first on PATH for every agent session (orchestrator/cli.ts's `sessionEnvironment`).
+
+L1_MARKER = "<!-- amended: live hardening L1 -->"
+
+
+def test_every_agent_runs_scripts_as_python_on_the_session_path():
+    files = sorted(AGENTS_DIR.glob(f"*{SUFFIX}")) + [ROOT / ".github" / "copilot-instructions.md"]
+    assert len(files) == 10
+    for path in files:
+        text = path.read_text(encoding="utf-8")
+        squeezed = " ".join(text.split())
+        for venv in (".venv/Scripts", ".venv/bin", ".venv\\Scripts", "python.exe"):
+            assert venv not in text, f"{path.name} still names {venv}"
+        assert "`python scripts/<name>.py …`" in squeezed, path.name
+        assert "never through a `.venv/…` path" in squeezed, path.name
+        if path.name == f"cookbook-curator{SUFFIX}":
+            # Fix round 1 (M8): the curator is CLI-only (README §1), so no orchestrator puts anything
+            # on its PATH -- the file must not claim one does.
+            assert "orchestrator puts" not in squeezed, path.name
+            assert "no orchestrator starts you" in squeezed, path.name
+        else:
+            assert "puts the project's interpreter first on PATH" in squeezed, path.name
+        if path.suffix == ".md" and path.name.endswith(SUFFIX):
+            assert L1_MARKER in text, path.name
+
+
+def _role_scripts() -> dict[str, set[str]]:
+    """`orchestrator/policy.ts`'s `ROLE_SCRIPTS`: the scripts each role's session may run."""
+    text = (ROOT / "orchestrator" / "policy.ts").read_text(encoding="utf-8")
+    body = text[text.index("export const ROLE_SCRIPTS"):]
+    body = re.sub(r"//[^\n]*", "", body[body.index("{") + 1:body.index("\n};")])
+    return {role.strip('"'): set(re.findall(r'"(scripts/[a-z_]+\.py)"', scripts))
+            for role, scripts in re.findall(r'("?[a-z-]+"?)\s*:\s*\[([^\]]*)\]', body)}
+
+
+def test_every_script_an_agent_file_shows_runs_as_bare_python():
+    """Every code span that runs a script names the interpreter as `python` (the parser-recovery
+    agent's `python -m pytest tests/parser_corpus -q` is the spec's own wording, restored) -- and,
+    since live hardening L4 (a translator parked trying to run a validator its role could not), every
+    script an agent file shows running is one its own role may run (`ROLE_SCRIPTS`; the policy's
+    argument rules are checked on the same examples in `orchestrator/test/policy.test.ts`)."""
+    allowed = _role_scripts()
+    assert {"translator", "fixer", "validator", "intake"} <= set(allowed), allowed
+    runs = 0
+    for path in sorted(AGENTS_DIR.glob(f"*{SUFFIX}")):
+        role = path.name[:-len(SUFFIX)]
+        text = path.read_text(encoding="utf-8")
+        for match in re.finditer(r"(\S+)\s+(scripts/[a-z_/]+\.py|-m pytest)", text):
+            interpreter = match.group(1).strip("`")
+            if interpreter.endswith(("python", "python.exe", "python3", "py")):
+                runs += 1
+                assert interpreter == "python", f"{path.name}: {match.group(0)}"
+                script = match.group(2)
+                if script != "-m pytest":
+                    assert script in allowed.get(role, set()), (
+                        f"{path.name} shows `{match.group(0)}`, and ROLE_SCRIPTS does not let {role} run {script}")
+    assert runs >= 8, f"only {runs} script runs found -- the scan is not seeing them"
+    for role in ("translator", "fixer"):
+        for script in ("scripts/validate_segment.py", "scripts/validate_snowpark.py", "scripts/validate_dbt.py"):
+            assert script in allowed[role], (role, script)

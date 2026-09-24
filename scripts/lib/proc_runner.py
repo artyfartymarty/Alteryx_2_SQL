@@ -495,6 +495,19 @@ def identifier_calls(statement: str) -> list[tuple[str, str]]:
     return calls
 
 
+def masked_code(statement: str, *, strings: bool = True) -> str:
+    """`statement` with every comment -- and, unless `strings=False`, every single-quoted string
+    literal -- replaced by spaces, character for character, so an offset in the result is the same
+    offset in `statement`. A `"quoted identifier"` is kept: it is a name, not text (Task L4's
+    `c4:write_mode` reads column names out of a MERGE's ON clause)."""
+    out: list[str] = []
+    for kind, start, end in _spans(statement):
+        chunk = statement[start:end]
+        blank = kind == "comment" or (strings and kind == "string" and chunk.startswith("'"))
+        out.append(re.sub(r"[^\n]", " ", chunk) if blank else chunk)
+    return "".join(out)
+
+
 def _literal_text(part: str) -> str | None:
     text = part.strip()
     if not text.startswith("'"):
@@ -517,6 +530,12 @@ def run_proc(backend, sql_text: str, args: dict[str, str]) -> ProcInfo:
         raise ProcError(f"no argument supplied for parameter(s) {', '.join(missing)} "
                         f"of {proc.name}")
     values = {**args, **let_values(proc, args)}   # the LETs run here, never on the backend
+    # Live hardening L4 fix round 1 (P): the procedure is agent-written SQL, and DuckDB can read and
+    # write the host's files. Its connection loses external access -- for good -- before the first
+    # statement runs. A backend without the switch (the Snowflake one never runs this) is left as is.
+    lock = getattr(backend, "lock_external_access", None)
+    if callable(lock):
+        lock()
     for statement in proc.statements:
         backend.execute(bind(statement, values))
     return proc

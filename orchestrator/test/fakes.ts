@@ -71,6 +71,13 @@ def run(session, src_db, src_schema, tgt_db, tgt_schema, run_id) -> str:
     return "OK"
 `;
 
+/** What the fake `translation_scaffold.py` writes (Task L8): a skeleton whose one stub body is the TODO
+ * marker -- every mechanical line of the real skeleton is the real script's (tests/test_translation_scaffold.py). */
+export const SKELETON = (name: string): string =>
+  name.endsWith(".py")
+    ? `# the orchestrator's skeleton (fake)\ndef run(session, src_db, src_schema, tgt_db, tgt_schema, run_id):\n    # tool 1: input\n    TODO(scaffold)\n    return "OK"\n`
+    : `-- the orchestrator's skeleton (fake)\n-- tool 1: input\nt1_input AS (\n    TODO(scaffold)\n)\n`;
+
 /** What the fake `render_snowpark.py` writes, matching the real script's template shape. */
 const RENDERED_SQL = (wf: string, seg: string, body: string) =>
   `CREATE OR REPLACE PROCEDURE MIG_WORK.${wf.toUpperCase().replace("_", "")}_${seg.toUpperCase()}(SRC_DB STRING, SRC_SCHEMA STRING, TGT_DB STRING, TGT_SCHEMA STRING, RUN_ID STRING)\n` +
@@ -542,6 +549,110 @@ export async function makeEnv(options: FakeOptions): Promise<Fake> {
     return result(0, `${id}: stitched ${batches.length} batches`);
   };
 
+  /** The segments a `--segments a,b` argument names, else every segment of order.json. */
+  const scopeOf = async (id: string, args: string[]): Promise<string[]> => {
+    const at = args.indexOf("--segments");
+    if (at >= 0) return args[at + 1].split(",");
+    return (await readJsonOr<string[][]>(wfDir(root, id, "segments", "order.json"), [])).flat();
+  };
+
+  /** `contract_scaffold.py <wf> [--segments …] --prefill|--apply|--prune-unjudged` (Task L3): --prefill
+   * writes a scaffold-shaped contract (mechanical fields only, the target proposal copied, no
+   * judgment) wherever none exists; --apply changes nothing here (the canned contracts are the
+   * reference it would reproduce) but exits 1 naming the segment on `contract-unreadable:<seg>`;
+   * --prune-unjudged deletes every contract without a `row_relation`. `scaffold-crashes` exits 2. */
+  const fakeScaffold = async (id: string, args: string[]): Promise<ShResult> => {
+    if (options.scenario === "scaffold-crashes") return result(2, "", "Traceback (most recent call last): contract_scaffold.py crashed");
+    const scope = await scopeOf(id, args);
+    if (args.includes("--prefill")) {
+      const proposals = (await readJsonOr<{ segments?: Record<string, string> }>(wfDir(root, id, "segments", "targets.json"), {})).segments ?? {};
+      const written: string[] = [];
+      for (const seg of scope) {
+        const file = wfDir(root, id, "segments", seg, "contract.json");
+        if (await exists(file)) continue;
+        await writeJson(file, {
+          workflow: id,
+          segment: seg,
+          ...(proposals[seg] ? { target: proposals[seg] } : {}),
+          inputs: [],
+          outputs: [],
+          normalizations: [],
+        });
+        written.push(seg);
+      }
+      return result(0, `${id}: pre-filled ${written.join(", ") || "none"}`);
+    }
+    if (args.includes("--apply")) {
+      const unreadable = scenarioSegment("contract-unreadable");
+      if (unreadable && scope.includes(unreadable)) {
+        return result(1, "", `${unreadable}: contract.json is not a JSON object (Expecting value: line 1 column 1 (char 0))`);
+      }
+      return result(0, `${id}: re-applied the mechanical fields; rewrote none`);
+    }
+    if (args.includes("--prune-unjudged")) {
+      const removed: string[] = [];
+      for (const seg of scope) {
+        const file = wfDir(root, id, "segments", seg, "contract.json");
+        if (!(await exists(file))) continue;
+        if ("row_relation" in (await readJsonOr<Record<string, unknown>>(file, {}))) continue;
+        await rm(file);
+        removed.push(seg);
+      }
+      return result(0, `${id}: removed the unjudged contracts of ${removed.join(", ") || "none"}`);
+    }
+    return result(0, "{}");
+  };
+
+  /** `contract_check.py <wf> [--segments …]` (Task L3): `contract-bad:<seg>` refuses `<seg>`'s contract
+   * the FIRST time it is in scope (the retry then passes), `contract-bad-stuck:<seg>` every time,
+   * with one line per problem on stderr; `contract-check-crashes` exits 2. */
+  let contractChecks = 0;
+  const fakeContractCheck = async (id: string, args: string[]): Promise<ShResult> => {
+    if (options.scenario === "contract-check-crashes") return result(2, "", "Traceback (most recent call last): contract_check.py crashed");
+    const scope = await scopeOf(id, args);
+    const bad = scenarioSegment("contract-bad") ?? scenarioSegment("contract-bad-stuck");
+    if (bad && scope.includes(bad)) {
+      contractChecks += 1;
+      if (scenarioSegment("contract-bad-stuck") || contractChecks === 1) {
+        return result(1, `${id}: 2 problems in ${scope.length} contract(s) checked`,
+          `${bad}: row_relation is missing; expected one of "1:1", "filter", "aggregate", "expand"\n` +
+            `${bad}: parity_risks[0].tool_id is "99"; expected a tool of ${bad}: 1, 2`);
+      }
+    }
+    return result(0, `${id}: ${scope.length} contract(s) checked, every one passes`);
+  };
+
+  /** `translation_scaffold.py <wf> [--segment <seg>]` (Task L8): a skeleton holding the TODO marker where
+   * no file exists yet -- the segment's `proc.py` (a snowpark contract) or `proc.sql`, or with `--dbt` (or, with
+   * neither flag, a manifest saying `output_kind: dbt`) `dbt/dbt_project.yml` and `dbt/models/orders_out.sql` --
+   * and never over an existing file, as the real script. `translation-scaffold-crashes` exits 2 writing
+   * nothing. */
+  const fakeTranslationScaffold = async (id: string, args: string[]): Promise<ShResult> => {
+    if (options.scenario === "translation-scaffold-crashes") {
+      return result(2, "", "Traceback (most recent call last): translation_scaffold.py crashed");
+    }
+    const lines: string[] = [];
+    const put = async (file: string, text: string): Promise<void> => {
+      const rel = path.relative(root, file).split(path.sep).join("/");
+      if (await exists(file)) lines.push(`kept ${rel} (it exists; the scaffold never writes over a file)`);
+      else {
+        await write(file, text);
+        lines.push(`wrote ${rel}`);
+      }
+    };
+    const at = args.indexOf("--segment");
+    if (at >= 0) {
+      const seg = args[at + 1];
+      const contract = await readJsonOr<{ target?: string }>(wfDir(root, id, "segments", seg, "contract.json"), {});
+      const name = contract.target === "snowpark" ? "proc.py" : "proc.sql";
+      await put(wfDir(root, id, "segments", seg, name), SKELETON(name));
+    } else if (args.includes("--dbt") || (await loadManifest(root, id)).output_kind === "dbt") {
+      await put(wfDir(root, id, "dbt", "dbt_project.yml"), CANNED_DBT["dbt_project.yml"]);
+      await put(wfDir(root, id, "dbt", "models", "orders_out.sql"), SKELETON("orders_out.sql"));
+    }
+    return result(0, lines.join("\n"), "note: seg_01: a note the scaffold prints");
+  };
+
   const py = async (script: string, args: string[], opts?: { inheritStdio?: boolean }): Promise<ShResult> => {
     calls.py.push({ script, args, inheritStdio: Boolean(opts?.inheritStdio) });
     calls.order.push(`py:${script}`);
@@ -676,6 +787,12 @@ export async function makeEnv(options: FakeOptions): Promise<Fake> {
         return await fakeCheckSeams(id, args);
       case "stitch_analysis.py":
         return await fakeStitch(id);
+      case "contract_scaffold.py":
+        return await fakeScaffold(id, args);
+      case "contract_check.py":
+        return await fakeContractCheck(id, args);
+      case "translation_scaffold.py":
+        return await fakeTranslationScaffold(id, args);
       default:
         return result(2, "", `fake py has no script ${script}`);
     }

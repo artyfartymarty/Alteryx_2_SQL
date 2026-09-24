@@ -311,6 +311,44 @@ deployment command), `docs/reference/output-targets.md` §5 (the environment var
 1.12, installs it into `.venv`, pins it in `constraints.txt`, and runs the dbt sample on the sandbox
 (`docs/handoff-production.md` §2.4 and rung 3).
 
+## Isolate agent-code execution
+
+**What is missing.** OS-level isolation for the agent-written Python the pipeline runs on the host: a
+Snowpark segment's `proc.py` (`scripts/validate_snowpark.py`, and the chain hand-off in
+`scripts/validate_workflow.py`) and the parser-recovery agent's `scripts/parsers/ext/*.py`, which
+`scripts/parse.py` imports on the host by design. The Snowpark self-test runs the module in a child
+process under a `sys.addaudithook` (`scripts/lib/snowpark_sandbox.py`) with a static gate
+(`scripts/lib/snowpark_rules.py`); the SQL self-test runs on a DuckDB connection with external access
+locked. These are **defence in depth, not a security boundary** — the in-process Snowpark sandbox was
+attacked three times (live hardening L4 fix rounds 2–5: a `sys.modules` reach, a `sqlite3` file write,
+and `pd.eval(..., engine="python")` reaching `__import__("_winapi")` for native file/process calls
+that fire no audit event — all now closed). Fix round 5 turned both gates into ALLOW-lists: the static
+gate accepts only the Snowpark/pandas surface the benign corpus uses, and the audit hook is
+default-deny (only the audit events a benign procedure records are allowed, every other refused,
+whole native families — `_winapi.*`, `winreg.*`, `ctypes.*`, `socket.*`, `subprocess.*`, `sqlite3.*`,
+`msvcrt.*`, `_wmi.*` — outright). Even so, agent code still shares the harness's Python process. The
+parser extensions run with no sandbox at all.
+
+**Why it matters.** A prompt-injected translator or fixer can run the Snowpark self-test on a `proc.py`
+it wrote (live hardening L4, R2), and a prompt-injected parser-recovery agent writes the `ext/*.py`
+that `parse.py` then imports. An in-process audit hook depends on the static gate keeping `sys`,
+frames and every stdlib module out of reach; each is a textual AST check, and the adversarial pass
+showed such checks are worth hardening but are not a boundary. Real isolation is the program spec's
+container.
+
+**What exists to build on.** `scripts/lib/snowpark_sandbox.py` (the child process, the audit hook, the
+timeout, the minimal environment, the nonce-signed result), `scripts/lib/snowpark_rules.py` (the
+static gate), `orchestrator/POLICY.md` ("Known limitations", "the container is what isolation is
+for"), the program spec's container (`docs/spec/01-copilot-setup.md` §11.1: only `workflows/`
+writable, no network), and `tests/test_snowpark_sandbox.py` / `tests/test_snowpark_rules.py` (the
+attack payloads as tests).
+
+**First concrete step.** Run the whole pipeline (validators included) inside the spec's container — a
+read-only mount of everything but `workflows/`, no network — so the host is protected by the OS, not
+by the audit hook; and either run the Snowpark self-test only in that container, or validate Snowpark
+procedures only on Snowflake, where the code runs in Snowflake, not on the host. Give the
+parser-recovery `ext/*.py` the same treatment (import it only inside the container).
+
 ## dbt hooks that touch another table
 
 **What is missing.** On the dbt target a PreSQL/PostSQL becomes a `pre_hook`/`post_hook` of the target

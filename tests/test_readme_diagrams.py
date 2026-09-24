@@ -36,3 +36,13 @@ def test_the_diagrams_show_the_targets_the_chain_the_batches_and_the_backend_swi
     text = "\n".join(_blocks())
     missing = [item for item in MUST_SHOW if item not in text]
     assert not missing, missing
+
+
+def test_no_sequence_diagram_line_holds_a_semicolon():
+    # Mermaid reads ";" as a statement separator in a sequence diagram, so a message containing one
+    # breaks the whole diagram on GitHub (found by the Mermaid 11 render check, 2026-09-24).
+    for block in _blocks():
+        if not block.lstrip().startswith("sequenceDiagram"):
+            continue
+        offenders = [line.strip() for line in block.splitlines() if ";" in line and not line.strip().startswith("%%")]
+        assert not offenders, offenders

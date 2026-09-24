@@ -31,7 +31,23 @@ Six checks, in order:
    `<LOGICAL>_SRC` name is only ever read (FROM/JOIN/USING) and a `<LOGICAL>_TGT` name only ever
    written (CREATE … TABLE, INSERT/MERGE INTO, UPDATE, DELETE FROM, TRUNCATE). Check 0 also requires every parameter to
    be declared exactly `<NAME> STRING` (no other type, no DEFAULT), the one header the orchestrator's
-   SQL policy accepts;
+   SQL policy accepts. `c4:write_mode` (live hardening L4, `write_mode_errors`): every final target is
+   written in exactly the form its write mode needs -- the contract's `write_mode`, else
+   `intake/mappings.yaml`'s `mode` (`lib.vocab.TARGET_WRITE_MODES`): overwrite one `CREATE OR REPLACE
+   TABLE IDENTIFIER(:<LOGICAL>_TGT) AS …`, append one `INSERT INTO`, truncate_append a `TRUNCATE` or
+   `DELETE FROM` (no WHERE) then one `INSERT INTO`, update_insert/merge one `MERGE INTO` on exactly the
+   contract's keys with `WHEN MATCHED THEN UPDATE` and `WHEN NOT MATCHED THEN INSERT`; any other
+   statement on the target is the Output tool's PreSQL (before) or PostSQL (after), allowed only when
+   `dag.json` gives the tool one -- and required when it does (live hardening L8 fix round 1, M3: a
+   dropped PreSQL/PostSQL is named here rather than left to validation). It is reported beside the parse and run results, not instead of
+   them. A target with no known write mode, or a merge target with no keys, is exit 2 (the contract
+   has to say it, not the procedure). `c4:external_access` (live hardening L4 fix round 1,
+   `external_access_errors`): no statement reaches a file, a stage, the network, an extension or the
+   engine's settings -- `COPY`, `PUT`/`GET`, `ATTACH`, `INSTALL`/`LOAD`, `EXPORT`/`IMPORT`, `PRAGMA`,
+   `SET`, `CREATE STAGE`/`SECRET`/`… INTEGRATION`, a function that reads files, settings or the
+   network (`lib.dbt_surface.DENIED_FUNCTION`, plus Snowflake's stage and file functions), or a table
+   reference that is a file or a stage. Such a procedure never runs, and `run_proc` also switches the
+   double's external access off (and locks it) before a procedure's first statement;
 2. every statement parses with sqlglot's Snowflake parser and is not a `Command` fallback, which
    is what sqlglot produces when it does not actually understand a statement;
 3. empty tables are created for each `contract.inputs[]` — mapped sources under
@@ -46,7 +62,8 @@ target (`contract.json`'s `"target"`, or `--target`) is a different shape and ge
 cheaper gate instead — nothing here runs a Snowpark procedure locally (there is no local Snowpark
 runtime to run it on): `proc.py` is checked against `lib.snowpark_rules.check_proc_py` (spec §4.2's
 AST-walk rules: allowed imports, no session.sql/call, no exec/eval/open, the C4 signature, the
-table-name allow-list, per-tool comments), and `proc.sql` is checked for staying in sync with
+table-name allow-list, per-tool comments, and `rule:write_mode` -- the target write call its write
+mode needs, resolved as for `c4:write_mode`), and `proc.sql` is checked for staying in sync with
 `render_snowpark.render(proc.py, …)` plus its own C4 signature.
 
 The `dbt` target (`compile_check.py <wf> --target dbt`, no segment: a dbt project is one unit) is a
@@ -84,6 +101,7 @@ import re
 import sys
 import tempfile
 import traceback
+from dataclasses import dataclass
 from pathlib import Path
 
 import sqlglot
@@ -96,7 +114,7 @@ from lib.backend import SANDBOX_DB, BackendError, DuckDBBackend
 from lib.io import read_json, read_yaml, write_json
 from lib.paths import Repo, add_root_arg, seg_token, wf_token
 from lib.proc_runner import (LetError, ProcError, ProcInfo, bind, identifier_arguments, identifier_calls,
-                              let_values, parse_proc, run_proc)
+                              let_values, masked_code, parse_proc, run_proc)
 
 # Fix round 2 (M1): the one RETURN a body may have -- a single string literal (quotes doubled or
 # backslash-escaped inside), nothing else.
@@ -107,8 +125,10 @@ _ROLE_WORD_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_$]*|[(),;]")
 _TABLE_MODIFIERS = frozenset({"OR", "REPLACE", "TRANSIENT", "TEMPORARY", "TEMP", "VOLATILE", "LOCAL", "GLOBAL",
                               "TABLE", "IF", "NOT", "EXISTS"})
 _RETURN_LITERAL_RE = re.compile(r"^RETURN\s*'(?:[^'\\]|''|\\.)*'$", re.IGNORECASE | re.DOTALL)
-from lib.snowpark_rules import check_proc_py
+from lib import snowpark_rules
+from lib.scaffold import todo_errors
 from lib.vocab import DATA_LESS_TYPES
+from lib.write_modes import ContractError, TargetWrite, dag_nodes, mappings_of, target_writes
 
 COMPILE_SCHEMA = "MIG_COMPILE"
 WORK_SCHEMA = "MIG_WORK"
@@ -164,9 +184,25 @@ def compile_check(repo: Repo, wf_id: str, seg: str | None, target: str = "auto")
         proc_path = repo.seg(wf_id, seg, "proc.sql")
         if not proc_path.exists():
             raise FileNotFoundError(f"{wf_id}/{seg} has no procedure to check: {proc_path}")
-        report = _check(proc_path.read_text(encoding="utf-8"), contract, wf_id, seg)
+        targets = target_writes(contract, _mappings(repo, wf_id), _dag_nodes(repo, wf_id, seg))
+        report = _check(proc_path.read_text(encoding="utf-8"), contract, wf_id, seg, targets)
     write_json(repo.seg(wf_id, seg, "compile_check.json"), report)
     return report
+
+
+# --- c4:write_mode (Task L4): each final target written in exactly its write mode's form -----------
+
+
+# ContractError, TargetWrite and target_writes live in `lib.write_modes` (fix round 1): the Snowpark
+# gate `validate_snowpark.py` applies before it imports a module resolves write modes the same way.
+
+
+def _mappings(repo: Repo, wf_id: str) -> dict:
+    return mappings_of(repo, wf_id)
+
+
+def _dag_nodes(repo: Repo, wf_id: str, seg: str) -> list[dict]:
+    return dag_nodes(repo, wf_id, seg)
 
 
 # --- the dbt target -----------------------------------------------------------------------------
@@ -210,10 +246,13 @@ def compile_check_dbt(repo: Repo, wf_id: str) -> dict:
     # files, so they fire even when the project cannot parse at all (e.g. a renamed source breaks
     # every model that reads it, so dbt parse fails too -- both are real problems and both are
     # reported). A surface error means dbt never runs: not even `dbt parse`.
-    surface = dbt_project.check_surface(project)
-    errors = surface + _dbt_layout_errors(project, wf_id) + _dbt_source_errors(project, contracts, mappings)
+    # Task L8: an unfilled skeleton (scripts/translation_scaffold.py) is refused by name, and nothing
+    # else is checked -- dbt never runs over a project that still holds a TODO body.
+    unfilled = _dbt_todo_errors(project)
+    surface = [] if unfilled else dbt_project.check_surface(project)
+    errors = unfilled or (surface + _dbt_layout_errors(project, wf_id) + _dbt_source_errors(project, contracts, mappings))
     models = 0
-    if not surface:
+    if not surface and not unfilled:
         with tempfile.TemporaryDirectory(prefix="dbt-compile-") as tmp:
             result = dbt_project.run_dbt("parse", project,
                                          vars=dbt_project.local_vars(dbt_project.COMPILE_SRC_SCHEMA),
@@ -239,6 +278,21 @@ def compile_check_dbt(repo: Repo, wf_id: str) -> dict:
             os.rmdir(report_path)                    # a junction or a directory symlink
     write_json(report_path, report)
     return report
+
+
+def _dbt_todo_errors(project: Path) -> list[str]:
+    """`scaffold:todo` for every line of the project's models and YAML files that still holds the
+    skeleton's TODO marker (a model body, a hook in a config line). Only regular files inside the
+    project are read: a link, or anything it leads to, is `dbt:surface`'s to refuse."""
+    errors = []
+    inside = project.resolve()
+    paths = [project / name for name in ("dbt_project.yml", "profiles.yml")]
+    paths += sorted(project.glob("models/**/*.yml")) + sorted(project.glob("models/**/*.sql"))
+    for path in paths:
+        if path.is_file() and not dbt_surface.is_link(path) and path.resolve().is_relative_to(inside):
+            rel = path.relative_to(project).as_posix()
+            errors += todo_errors(path.read_text(encoding="utf-8", errors="replace"), rel)
+    return errors
 
 
 def _dbt_layout_errors(project: Path, wf_id: str) -> list[str]:
@@ -376,12 +430,18 @@ def _dbt_target_config_errors(name: str, config: dict, output: dict, outputs_map
     for key, value in expected.items():
         actual = config.get(key)
         if key == "unique_key" and actual is not None:
-            actual = sorted(str(k).upper() for k in actual) if isinstance(actual, list) \
-                else [str(actual).upper()]
+            # A key that needs quotes (a reserved word) is written double-quoted (Task L8 fix round 1, I2):
+            # the same column as the mapping's bare name.
+            actual = sorted(_unquote_key(str(k)).upper() for k in actual) if isinstance(actual, list) \
+                else [_unquote_key(str(actual)).upper()]
         if actual != value:
             errors.append(f"dbt:model_config: models/{name}.sql has {key}={actual!r}; the {mode} "
                           f"write mode needs {key}={value!r}")
     return errors
+
+
+def _unquote_key(key: str) -> str:
+    return key[1:-1] if len(key) > 1 and key.startswith('"') and key.endswith('"') else key
 
 
 def _dbt_tool_comment_errors(project: Path, dags: dict) -> list[str]:
@@ -433,7 +493,16 @@ def _dbt_hook_errors(nodes: dict, dags: dict, mappings: dict) -> list[str]:
     return errors
 
 
-def _check(sql_text: str, contract: dict, wf_id: str, seg: str) -> dict:
+def _check(sql_text: str, contract: dict, wf_id: str, seg: str, targets: list[TargetWrite] | None = None) -> dict:
+    """The `sql` target's checks. `targets` are the final targets with their write modes
+    (`target_writes`); None reads them from `contract` alone (no mappings, no PreSQL/PostSQL)."""
+    if targets is None:
+        targets = target_writes(contract)
+    # Task L8: an unfilled skeleton (scripts/translation_scaffold.py) is refused by name before
+    # anything else is checked -- a TODO body is not SQL, so every later check would only echo it.
+    unfilled = todo_errors(sql_text, "proc.sql")
+    if unfilled:
+        return {"status": "ERROR", "errors": unfilled, "statements": 0}
     errors: list[str] = []
     try:
         proc = parse_proc(sql_text)
@@ -454,6 +523,17 @@ def _check(sql_text: str, contract: dict, wf_id: str, seg: str) -> dict:
         # on the local double (which still folds the old expression form -- see proc_runner).
         return {"status": "ERROR", "errors": table_references, "statements": len(proc.statements)}
 
+    # Fix round 1 (P): a statement that reaches a file, a stage, the network or the engine's settings
+    # never runs -- not even on the double, whose own lock (`run_proc`) is the second guard.
+    external = external_access_errors(proc)
+    if external:
+        return {"status": "ERROR", "errors": external, "statements": len(proc.statements)}
+
+    # Task L4: a write in the wrong form still runs on the local double (every target table is
+    # created empty below), so it is reported beside whatever the parse and the run say, not
+    # instead of them -- one compile report then names everything a fixer has to change.
+    write_errors = write_mode_errors(proc, targets)
+
     values = {**ARGS, **let_values(proc, ARGS)}
     bound = []
     for statement in proc.statements:
@@ -466,6 +546,7 @@ def _check(sql_text: str, contract: dict, wf_id: str, seg: str) -> dict:
 
     if not errors:
         errors.extend(_run_errors(sql_text, contract))
+    errors = write_errors + errors
     return {"status": "ERROR" if errors else "OK", "errors": errors,
             "statements": len(proc.statements)}
 
@@ -477,24 +558,18 @@ def _check_snowpark(repo: Repo, wf_id: str, seg: str, contract: dict) -> dict:
     if not proc_py_path.exists():
         raise FileNotFoundError(f"{wf_id}/{seg} has no procedure module to check: {proc_py_path}")
     source = proc_py_path.read_text(encoding="utf-8")
+    # Task L8: an unfilled skeleton is refused by name first (see `_check`).
+    unfilled = todo_errors(source, "proc.py")
+    if unfilled:
+        return {"status": "ERROR", "target": "snowpark", "errors": unfilled, "statements": 0}
 
-    data_nodes = _data_nodes(repo, wf_id, seg)
-    errors = list(check_proc_py(source, wf_id, seg, {**contract, "nodes": data_nodes}))
+    # The whole Snowpark gate (fix round 1): the same one `validate_snowpark.py` applies before it
+    # imports a module -- the data nodes, and each target's write mode resolved as for `c4:write_mode`
+    # (the contract's, else the mappings'; ContractError: exit 2).
+    errors = list(snowpark_rules.segment_rule_errors(repo, wf_id, seg, contract, source))
     errors.extend(_render_errors(repo, wf_id, seg, source))
     return {"status": "ERROR" if errors else "OK", "target": "snowpark",
             "errors": sorted(set(errors)), "statements": 0}
-
-
-def _data_nodes(repo: Repo, wf_id: str, seg: str) -> list[dict]:
-    """The segment's dag.json nodes, minus the ones with no data-transformation semantics of
-    their own -- what snowpark_rules.check_proc_py's tool_comments rule walks. Empty (not an
-    error) when dag.json does not exist: check_proc_py treats "no nodes at all" as leniently as
-    "no contract.nodes at all"."""
-    dag_path = repo.seg(wf_id, seg, "dag.json")
-    if not dag_path.exists():
-        return []
-    dag = read_json(dag_path)
-    return [node for node in dag.get("nodes") or [] if node.get("type") not in DATA_LESS_TYPES]
 
 
 def _render_errors(repo: Repo, wf_id: str, seg: str, source: str) -> list[str]:
@@ -647,6 +722,336 @@ def return_form_errors(proc: ProcInfo) -> list[str]:
     return errors
 
 
+#: `IDENTIFIER(:<VAR>)` -- the one table reference contract C4 allows a procedure to write through.
+_TGT_CALL_RE = re.compile(r"\bIDENTIFIER\s*\(\s*:(?P<name>[A-Za-z_][A-Za-z_0-9$]*)\s*\)", re.IGNORECASE)
+_AS_RE = re.compile(r"\s*AS\b", re.IGNORECASE)
+_ALIAS_ONLY_RE = re.compile(r"\s*(?:AS\s+)?[A-Za-z_][A-Za-z0-9_$]*\s*", re.IGNORECASE)
+_CREATE_OTHER_RE = re.compile(r"\s*(LIKE|CLONE)\b", re.IGNORECASE)
+#: The token stream of a MERGE's tail: a quoted identifier, a word, or a parenthesis.
+_MERGE_TOKEN_RE = re.compile(r'"(?:[^"]|"")*"|[A-Za-z_][A-Za-z0-9_$]*|[()]')
+_NAME = r'(?:[A-Za-z_][A-Za-z0-9_$]*|"(?:[^"]|"")+")'
+#: One conjunct of a MERGE's ON clause as `c4:write_mode` accepts it: `<alias>.<col> = <alias>.<col>`.
+_KEY_EQUALITY_RE = re.compile(rf"(?P<lq>{_NAME})\s*\.\s*(?P<lc>{_NAME})\s*=\s*(?P<rq>{_NAME})\s*\.\s*(?P<rc>{_NAME})")
+#: Each `WHEN [NOT] MATCHED … THEN <action>` clause of a MERGE, in order.
+_MERGE_CLAUSE_RE = re.compile(r"\bWHEN\s+(?P<matched>NOT\s+MATCHED|MATCHED)\b.*?\bTHEN\s+(?P<action>UPDATE|DELETE|INSERT)\b",
+                              re.IGNORECASE | re.DOTALL)
+
+
+@dataclass(frozen=True)
+class _Write:
+    """One statement's write to a target: its `form` (what `c4:write_mode` compares), `label` (how a
+    message shows it), and what follows the `IDENTIFIER(…)` in the statement (a MERGE's ON clause):
+    `code` with comments and string literals blanked, `text` with only the comments blanked -- the
+    same offsets, so a clause found in the one is shown from the other."""
+    form: str
+    label: str
+    code: str
+    text: str
+
+
+def _write_form(before: str, after: str, statement_head: str) -> tuple[str, str] | None:
+    """(form, label) of the write an `IDENTIFIER(:<X>_TGT)` makes after the code `before` it and
+    before the code `after` it; None when it is not a write (a read is `c4:identifier_role`'s)."""
+    words = [word.upper() for word in _ROLE_WORD_RE.findall(before)]
+    if not words:
+        return None
+    last, previous = words[-1], (words[-2] if len(words) > 1 else "")
+    if last == "INTO":
+        known = {"INSERT": ("insert", "INSERT"), "OVERWRITE": ("insert_overwrite", "INSERT OVERWRITE"),
+                 "MERGE": ("merge", "MERGE"), "COPY": ("copy", "COPY INTO")}
+        return known.get(previous, ("other", f"{statement_head} … INTO"))
+    if last == "FROM":
+        if previous != "DELETE":
+            return None
+        # Only an alias after the name (fix round 1, N2) still empties the whole table.
+        whole = not after.strip() or _ALIAS_ONLY_RE.fullmatch(after) is not None
+        return ("delete", "DELETE") if whole else ("delete_where", "DELETE … WHERE")
+    if last == "UPDATE":
+        return "update", "UPDATE"
+    position = len(words) - 1
+    while position >= 0 and words[position] in _TABLE_MODIFIERS:
+        position -= 1
+    if position < 0:
+        return None
+    head = words[position]
+    if head == "CREATE":
+        as_follows = _AS_RE.match(after) is not None
+        if words[position + 1:] == ["OR", "REPLACE", "TABLE"] and as_follows:
+            return "ctas", "CREATE OR REPLACE TABLE … AS"
+        other = _CREATE_OTHER_RE.match(after)                  # N2: CREATE TABLE … LIKE / CLONE
+        if other is not None:
+            return "create", f"{' '.join(words[position:])} … {other.group(1).upper()}"
+        return "create", " ".join(words[position:]) + ("" if as_follows else " with no AS right after the name")
+    if head in ("TRUNCATE", "DROP", "ALTER"):
+        return head.lower(), head
+    return None
+
+
+def _target_writes_in(proc: ProcInfo, variable: str) -> list[_Write]:
+    """Every write to `IDENTIFIER(:<variable>)` in the body, in statement order."""
+    writes = []
+    for statement in proc.statements:
+        code = masked_code(statement)
+        text = masked_code(statement, strings=False)   # the same offsets, string literals kept
+        head_words = _ROLE_WORD_RE.findall(code)
+        head = head_words[0].upper() if head_words else ""
+        for match in _TGT_CALL_RE.finditer(code):
+            if match.group("name").upper() != variable:
+                continue
+            form = _write_form(code[:match.start()], code[match.end():], head)
+            if form is not None:
+                writes.append(_Write(form=form[0], label=form[1], code=code[match.end():], text=text[match.end():]))
+    return writes
+
+
+def _required_form(target: TargetWrite) -> str:
+    variable = f"IDENTIFIER(:{target.logical}_TGT)"
+    return {
+        "overwrite": f"CREATE OR REPLACE TABLE {variable} AS …",
+        "append": f"INSERT INTO {variable} (<columns>) SELECT …",
+        "truncate_append": (f"TRUNCATE TABLE {variable} (or DELETE FROM it, with no WHERE) followed by "
+                            f"INSERT INTO {variable} (<columns>) SELECT …"),
+        "update_insert": (f"MERGE INTO {variable} … ON the contract's keys {_sql_keys(target.keys)} … "
+                          f"WHEN MATCHED THEN UPDATE … WHEN NOT MATCHED THEN INSERT …"),
+    }[target.mode]
+
+
+_WRITE_FORM = {"overwrite": "ctas", "append": "insert", "truncate_append": "insert", "update_insert": "merge"}
+_CLEARS = ("truncate", "delete")
+
+
+def write_mode_errors(proc: ProcInfo, targets: list[TargetWrite]) -> list[str]:
+    """`c4:write_mode` (Task L4): each final target is written through `IDENTIFIER(:<LOGICAL>_TGT)`
+    exactly as its write mode requires (`cookbook/output.md`, "Config fields that change the
+    pattern"): overwrite is one `CREATE OR REPLACE TABLE … AS`; append one `INSERT INTO`;
+    truncate_append a `TRUNCATE`/`DELETE FROM` (no WHERE) of it, then one `INSERT INTO`;
+    update_insert (intake's merge) one `MERGE INTO` on exactly the contract's keys with both
+    `WHEN MATCHED THEN UPDATE` and `WHEN NOT MATCHED THEN INSERT`. Any other statement on the target
+    is the Output tool's PreSQL (before the write) or PostSQL (after it) -- allowed only when the
+    tool has one (`dag.json`), and required when it does (Task L8 fix round 1, M3). A form is judged from
+    the text; nothing here has run on Snowflake."""
+    errors = []
+    for target in targets:
+        variable = f"{target.logical}_TGT".upper()
+        writes = _target_writes_in(proc, variable)
+        head = f"c4:write_mode: {target.logical} is {target.spelling}: write it with {_required_form(target)}"
+        if not writes:
+            errors.append(f"{head}; the procedure never writes IDENTIFIER(:{target.logical}_TGT)")
+            continue
+        found = " + ".join(write.label for write in writes)
+        core = [i for i, write in enumerate(writes) if write.form == _WRITE_FORM[target.mode]]
+        if not core:
+            errors.append(f"{head}, not {found}")
+            continue
+        if len(core) > 1:
+            errors.append(f"{head} once, not {found}")
+            continue
+        start = end = core[0]
+        if target.mode == "truncate_append":
+            clears = [i for i in range(end) if writes[i].form in _CLEARS]
+            if not clears:
+                errors.append(f"{head}, not {found}")
+                continue
+            start = clears[-1]
+        problems = []
+        if start > 0 and not target.pre_sql:
+            problems.append(f"a statement before the write is allowed only as tool {target.tool_id}'s PreSQL, "
+                            f"and it has none")
+        if writes[start + 1:end]:
+            problems.append("nothing may come between the TRUNCATE/DELETE and the INSERT")
+        if writes[end + 1:] and not target.post_sql:
+            problems.append(f"a statement after the write is allowed only as tool {target.tool_id}'s PostSQL, "
+                            f"and it has none")
+        # Task L8 fix round 1 (M3): the Output tool's PreSQL/PostSQL is not optional -- a skeleton's slot
+        # deleted outright would otherwise compile and drop it silently (dbt:hooks already requires a hook).
+        if target.pre_sql and start == 0:
+            problems.append(f"tool {target.tool_id} has a PreSQL: it is a statement on "
+                            f"IDENTIFIER(:{target.logical}_TGT) before the write, and there is none")
+        if target.post_sql and not writes[end + 1:]:
+            problems.append(f"tool {target.tool_id} has a PostSQL: it is a statement on "
+                            f"IDENTIFIER(:{target.logical}_TGT) after the write, and there is none")
+        if problems:
+            errors.append(f"{head} alone, not {found} ({'; '.join(problems)})")
+            continue
+        if target.mode == "update_insert":
+            errors.extend(_merge_errors(target, writes[end]))
+    return errors
+
+
+def _merge_errors(target: TargetWrite, merge: _Write) -> list[str]:
+    """The MERGE matches on exactly the contract's keys -- `<a>.<K> = <b>.<K>` per key, two different
+    aliases, joined by AND and nothing else (a NULL key then never matches, which is Alteryx's rule
+    too) -- and has both an update of matched rows and an insert of the rest."""
+    variable = f"IDENTIFIER(:{target.logical}_TGT)"
+    errors = []
+    span = _merge_on_clause(merge.code)
+    keys = _merge_keys(merge.code[span[0]:span[1]]) if span is not None else None
+    if keys is None or set(keys) != {key.upper() for key in target.keys}:
+        shown = " ".join(merge.text[span[0]:span[1]].split()) if span is not None else "(no ON clause found)"
+        errors.append(f"c4:write_mode: {target.logical} is {target.spelling}: the MERGE INTO {variable} must match "
+                      f"on exactly the contract's keys {_sql_keys(target.keys)} -- ON <target>.<KEY> = "
+                      f"<source>.<KEY> for each key, joined by AND, nothing else -- not ON {shown}")
+    clauses = {(" ".join(m.group("matched").upper().split()), m.group("action").upper())
+               for m in _MERGE_CLAUSE_RE.finditer(merge.code)}
+    if not {("MATCHED", "UPDATE"), ("NOT MATCHED", "INSERT")} <= clauses:
+        errors.append(f"c4:write_mode: {target.logical} is {target.spelling}: the MERGE INTO {variable} needs both "
+                      f"WHEN MATCHED THEN UPDATE and WHEN NOT MATCHED THEN INSERT (Update; Insert if new)")
+    return errors
+
+
+def _merge_on_clause(after: str) -> tuple[int, int] | None:
+    """The (start, end) offsets of a MERGE's ON clause in `after`: from the first top-level ON after
+    its USING to the first top-level WHEN. None when there is no such ON."""
+    depth, using, start = 0, False, None
+    for match in _MERGE_TOKEN_RE.finditer(after):
+        token = match.group(0)
+        if token in "()":
+            depth += 1 if token == "(" else -1
+            continue
+        if depth:
+            continue
+        word = token.upper()
+        if start is None:
+            if word == "USING":
+                using = True
+            elif word == "ON" and using:
+                start = match.end()
+        elif word == "WHEN":
+            return start, match.start()
+    return (start, len(after)) if start is not None else None
+
+
+def _merge_keys(on_clause: str) -> list[str] | None:
+    """The key columns an ON clause equates, one `<a>.<K> = <b>.<K>` per top-level AND; None as soon
+    as a conjunct is anything else (an OR, a function, a literal, one alias on both sides)."""
+    conjuncts, depth, start = [], 0, 0
+    for match in _MERGE_TOKEN_RE.finditer(on_clause):
+        token = match.group(0)
+        if token in "()":
+            depth += 1 if token == "(" else -1
+        elif depth == 0 and token.upper() == "AND":
+            conjuncts.append(on_clause[start:match.start()])
+            start = match.end()
+    conjuncts.append(on_clause[start:])
+    keys = []
+    for conjunct in conjuncts:
+        text = conjunct.strip()
+        while text.startswith("(") and text.endswith(")") and _balanced(text[1:-1]):
+            text = text[1:-1].strip()
+        match = _KEY_EQUALITY_RE.fullmatch(text)
+        if match is None:
+            return None
+        left, right = _unquote_name(match.group("lc")), _unquote_name(match.group("rc"))
+        if _unquote_name(match.group("lq")) == _unquote_name(match.group("rq")) or left != right:
+            return None
+        keys.append(left)
+    return keys
+
+
+def _balanced(text: str) -> bool:
+    depth = 0
+    for char in text:
+        depth += {"(": 1, ")": -1}.get(char, 0)
+        if depth < 0:
+            return False
+    return depth == 0
+
+
+def _unquote_name(name: str) -> str:
+    """A name as the key check compares it: unquoted, upper-cased. Quoted or not, and in any case,
+    because contract keys are Alteryx field names verbatim and every other stage compares keys
+    case-insensitively (`compare.py`) -- fix round 1, I2."""
+    return (name[1:-1].replace('""', '"') if name.startswith('"') else name).upper()
+
+
+_PLAIN_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_$]*")
+
+
+def _sql_keys(keys) -> str:
+    """The keys as a MERGE has to spell them: a plain identifier as is, anything else (a space, a
+    symbol) double-quoted, so the message names a spelling that compiles."""
+    return ", ".join(key if _PLAIN_NAME_RE.fullmatch(key) else '"' + key.replace('"', '""') + '"' for key in keys)
+
+
+# --- c4:external_access (live hardening L4 fix round 1, P) ---------------------------------------------
+#
+# A segment procedure reads its sources through IDENTIFIER(:<LOGICAL>_SRC) and writes tables; nothing in
+# it has any business with a file, a stage, the network, an extension or the engine's settings. On the
+# local double (DuckDB) such SQL would reach the host's files, so it is refused here by name, before
+# anything runs; `lib.proc_runner.run_proc` also takes the double's external access away before a
+# procedure's first statement, for whatever gets past this list.
+
+#: Statement heads that move data to or from files, stages or the network, load extensions, or change
+#: the engine's settings -- DuckDB's and Snowflake's.
+_EXTERNAL_HEADS = frozenset({"COPY", "PUT", "GET", "LIST", "LS", "REMOVE", "RM", "ATTACH", "DETACH", "INSTALL",
+                             "FORCE", "LOAD", "EXPORT", "IMPORT", "PRAGMA", "SET", "RESET", "UNSET"})
+#: `CREATE` of an object that reaches outside the database: a stage, a secret, an integration, an
+#: external table, a file format.
+_EXTERNAL_CREATE_RE = re.compile(
+    r"^\s*CREATE\s+(?:OR\s+REPLACE\s+)?(?:(?:TEMP|TEMPORARY|PERSISTENT)\s+)?"
+    r"(?P<what>STAGE|SECRET|(?:\w+\s+)?INTEGRATION|EXTERNAL\s+TABLE|FILE\s+FORMAT)\b", re.IGNORECASE)
+#: Snowflake's own stage and file functions (DuckDB's are `dbt_surface.DENIED_FUNCTION`'s, reused).
+_SNOWFLAKE_FILE_FUNCTION = re.compile(
+    r"^(?:get_presigned_url|build_scoped_file_url|build_stage_file_url|get_stage_location|get_relative_path"
+    r"|get_absolute_path|infer_schema|to_file|fl_\w+|system\$\w+)$")
+_EXTERNAL_TAIL = ("a segment procedure reads its sources through IDENTIFIER(:<LOGICAL>_SRC) and writes tables, "
+                  "nothing else")
+_PATH_CHARACTERS = re.compile(r"[./\\:]")
+
+
+def _function_name(node: exp.Func) -> str:
+    return str(node.name if isinstance(node, (exp.Anonymous, exp.AnonymousAggFunc)) else node.sql_name()).lower()
+
+
+def external_access_errors(proc: ProcInfo, values: dict | None = None) -> list[str]:
+    """`c4:external_access`: no statement of the body reaches a file, a stage, the network, an
+    extension or the engine's settings -- by its head (`COPY`, `PUT`/`GET`, `ATTACH`, `INSTALL`/`LOAD`,
+    `EXPORT`/`IMPORT DATABASE`, `PRAGMA`, `SET`, ...), by `CREATE STAGE`/`SECRET`/`... INTEGRATION`, by a
+    function that reads files, settings or the network (`dbt_surface.DENIED_FUNCTION`: `read_*`,
+    `*_scan`, `glob`, `getenv`, `sniff_csv`, ...; Snowflake's stage and file functions), or by a table
+    reference that is a file (`FROM '<path>'`, a quoted name that looks like a path) or a stage (`@...`).
+    Functions and table references are read from sqlglot's tree of the bound statement -- the tree the
+    double renders and runs."""
+    if values is None:
+        values = {**ARGS, **let_values(proc, ARGS)}
+    errors: list[str] = []
+    for statement in proc.statements:
+        code = masked_code(statement)
+        words = _ROLE_WORD_RE.findall(code)
+        head = words[0].upper() if words else ""
+        if head in _EXTERNAL_HEADS:
+            errors.append(f"c4:external_access: {head} moves data to or from files, stages or the network, or "
+                          f"changes the engine's settings; {_EXTERNAL_TAIL}")
+            continue
+        created = _EXTERNAL_CREATE_RE.match(code)
+        if created:
+            errors.append(f"c4:external_access: CREATE {' '.join(created.group('what').upper().split())} reaches "
+                          f"outside the database; {_EXTERNAL_TAIL}")
+            continue
+        try:
+            tree = sqlglot.parse_one(bind(statement, values), read="snowflake")
+        except (ProcError, SqlglotError):
+            continue                                  # never runs: `_parse_errors` refuses it
+        if tree is None:
+            continue
+        for node in tree.find_all(exp.Func):
+            name = _function_name(node)
+            if dbt_surface.DENIED_FUNCTION.match(name) or _SNOWFLAKE_FILE_FUNCTION.match(name):
+                errors.append(f"c4:external_access: {name}() reads files, settings or the network; {_EXTERNAL_TAIL}")
+        for table in tree.find_all(exp.Table):
+            this = table.this
+            if isinstance(this, exp.Literal) and this.is_string:
+                errors.append(f"c4:external_access: '{this.name}' as a table reads a file; {_EXTERNAL_TAIL}")
+            elif isinstance(this, exp.Var) and str(this.name).startswith("@"):
+                errors.append(f"c4:external_access: {this.name} is a stage; {_EXTERNAL_TAIL}")
+            elif isinstance(this, exp.Identifier) and this.quoted and _PATH_CHARACTERS.search(this.name):
+                errors.append(f'c4:external_access: "{this.name}" as a table names a file; {_EXTERNAL_TAIL}')
+        for var in tree.find_all(exp.Var):
+            if str(var.name).startswith("@") and not isinstance(var.parent, exp.Table):
+                errors.append(f"c4:external_access: {var.name} is a stage; {_EXTERNAL_TAIL}")
+    return list(dict.fromkeys(errors))
+
+
 def _parse_errors(statements: list[str]) -> list[str]:
     errors = []
     for statement in statements:
@@ -758,7 +1163,7 @@ def main(argv=None) -> int:
 
     try:
         report = compile_check(Repo(args.root), args.wf_id, args.seg, target=args.target)
-    except (FileNotFoundError, KeyError, dbt_project.DbtUnavailable) as exc:
+    except (FileNotFoundError, KeyError, dbt_project.DbtUnavailable, ContractError) as exc:
         where = f"{args.wf_id}/{args.seg}" if args.seg else args.wf_id
         print(f"cannot compile-check {where}: {exc}", file=sys.stderr)
         return 2

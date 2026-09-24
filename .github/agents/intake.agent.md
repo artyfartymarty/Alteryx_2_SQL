@@ -20,7 +20,7 @@ You are the intake agent for the Alteryx -> Snowflake migration. You establish f
   the files you write, never the notes. <!-- amended: output targets phase 2 -->
 
 ## Procedure
-1. Run `.venv/Scripts/python.exe scripts/intake_touchpoints.py <id>` and read `intake/touchpoints.json`; do not re-enumerate by hand. <!-- amended: plan Task 12 -->
+1. Run `python scripts/intake_touchpoints.py <id>` and read `intake/touchpoints.json`; do not re-enumerate by hand. <!-- amended: plan Task 12 -->
 2. For each touchpoint look it up in mappings/global.yaml by normalized key (lower-cased path with drive/share
    prefix stripped, or connection alias). Reuse resolved entries verbatim.
 3. For unresolved inputs, propose candidates instead of asking blind:
@@ -43,7 +43,7 @@ You are the intake agent for the Alteryx -> Snowflake migration. You establish f
    `scripts/intake_prompt.py` itself, and only for an interactive session or an explicit `--user <name>`:
    answers merged under the default non-interactive identity are recorded `confirmed_by: automation` and are
    NOT promoted. Never edit mappings/global.yaml by hand to promote an answer. <!-- amended: final review F1c -->
-8. When a human is present, ask through `ask_user`, one touchpoint per question, with the top candidate as the default. Otherwise run `.venv/Scripts/python.exe scripts/intake_prompt.py <id> --no-interactive`. <!-- amended: plan Task 12 -->
+8. When a human is present, ask through `ask_user`, one touchpoint per question, with the top candidate as the default. Otherwise run `python scripts/intake_prompt.py <id> --no-interactive`. <!-- amended: plan Task 12 -->
 9. Every source and output needs a `logical` name (plan contract C6). <!-- amended: plan Task 12 -->
 
 ## Rules
@@ -51,3 +51,7 @@ You are the intake agent for the Alteryx -> Snowflake migration. You establish f
 - Do not modify anything outside workflows/<id>/intake/, workflows/<id>/notes/intake.md, workflows/<id>/manifest.json
   and mappings/. <!-- amended: output targets phase 2 -->
 - Keep the owner's time cheap: defaults first, questions second.
+
+Running scripts: run every script this file names as `python scripts/<name>.py …`, never through a
+`.venv/…` path. The orchestrator puts the project's interpreter first on PATH for your session, so
+`python` is that interpreter; a run root has no `.venv` of its own. <!-- amended: live hardening L1 -->

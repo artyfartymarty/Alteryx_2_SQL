@@ -19,17 +19,26 @@ that runs writes its numbers into `validation.json`:
    the *comparable set*: the keys that occur exactly once on both sides. A row that moved or was
    duplicated is one difference, reported once by `set_diff` and its own cluster, and it does not
    get to disturb the arithmetic of every column as well.
-5. **Keyed diff** — key uniqueness on both sides, then the rows only on one side (anti-joins) and
-   the rows whose values disagree (a join on the keys where any non-key column disagrees).
-6. **Row multiset** — when the contract declares no keys: both sides grouped by every column with
-   counts, which gives the two `set_diff` totals exactly. The surplus rows behind those totals are
-   then pulled (bounded like the keyed diff) and paired by *nearest match*: each surplus expected
-   row takes the unused surplus actual row it disagrees with in the fewest columns, a pair being
-   accepted only when at least half of the columns are equal. A pair that
-   agrees everywhere is two copies of the same row within tolerance and leaves the report — saying
-   so in `normalizations_applied`, because nothing here is silent; a pair that disagrees goes
-   through the same classification as a keyed mismatch and its cluster says `paired_by:
-   nearest_match`; a row no pair claimed is a row-presence cluster, exactly as on the keyed path.
+5. **Keyed diff** — duplicated keys in actual (a `LOGIC` cluster: the translation made them), then
+   the rows only on one side (anti-joins) and the rows whose values disagree (a join on the keys
+   where any non-key column disagrees). Keys that repeat in the *expected* rows never get here:
+   right after the counts, `_fall_back_if_keys_repeat` sends that stream down the keyless path
+   below, exactly as if it declared no keys, and adds the advisory `checks.keys_not_unique`
+   (`{"keys", "duplicate_groups", "examples"}`) plus a note in `normalizations_applied` that the
+   contract's keys should be revisited (live hardening, Task L11). The advisory is detail, never a
+   failure and never `needs_human` by itself: the keyless verdict stands. (Before Task L11 this
+   was a `GOLDEN_DATA` cluster with `needs_human`, which parked a correct translation of a stream
+   whose real output legitimately repeats an id under a key the analyzer had declared.)
+6. **Row multiset** — when the contract declares no keys, or its keys repeat in expected: both
+   sides grouped by every column with counts, which gives the two `set_diff` totals exactly. The
+   surplus rows behind those totals are then pulled (bounded like the keyed diff) and paired by
+   *nearest match*: each surplus expected row takes the unused surplus actual row it disagrees
+   with in the fewest columns, a pair being accepted only when at least half of the columns are
+   equal. A pair that agrees everywhere is two copies of the same row within tolerance and leaves
+   the report — saying so in `normalizations_applied`, because nothing here is silent; a pair that
+   disagrees goes through the same classification as a keyed mismatch and its cluster says
+   `paired_by: nearest_match`; a row no pair claimed is a row-presence cluster, exactly as on the
+   keyed path.
 7. **Tolerances** — applied in Python to the pulled rows, so a float within tolerance is no diff.
 
 Checks 2-6 are SQL through `backend.query`, in Snowflake dialect, built from the contract's column
@@ -50,7 +59,8 @@ Mismatches are grouped into diff clusters and each cluster is classified (`ROUND
   duplicated key, a schema failure and a synthetic cluster always end in `FAIL` (`_approved`).
   `GOLDEN_DATA` and `UNKNOWN` are never approvable either, at ANY scope, whatever
   `accepted_diff_classes` and however many matching approvals say otherwise: `GOLDEN_DATA` is a
-  fault in the reference data itself, which no signature over a translation difference can fix,
+  fault in the reference data itself (a NULL in a column the contract calls `NOT NULL`; since
+  Task L11, never a repeated key), which no signature over a translation difference can fix,
   and `UNKNOWN` by definition explains nothing a human could be signing off on;
 * anything else is `FAIL`.
 
@@ -68,11 +78,11 @@ accounts for the row-count and `set_diff` checks, and only on the side its rows 
 values — the comparable set already kept moved rows out of it — so only a cluster naming that
 column can answer for it, and a reader can check that from the report alone.
 
-That last sentence has one documented exception, and it is the *keyless* streams' alone: with no
-keys there is no comparable set, so the aggregates run over every row, and a row that is missing
-or extra necessarily shifts every aggregate of every column it carries a value in. So there, and
-only there, an unpaired row-presence cluster also answers for the `aggregates` check
-(`_KEYLESS_ROW_ACCOUNTABLE`). That would be a hole if such a cluster could be signed off, because
+That last sentence has one documented exception, and it is the *keyless* streams' alone (no keys
+declared, or keys that repeat in expected): with no keys there is no comparable set, so the
+aggregates run over every row, and a row that is missing or extra necessarily shifts every
+aggregate of every column it carries a value in. So there, and only there, an unpaired
+row-presence cluster also answers for the `aggregates` check (`_KEYLESS_ROW_ACCOUNTABLE`). That would be a hole if such a cluster could be signed off, because
 an approval names columns and never names *rows*; it is not, because **`_approved` refuses every
 cluster that is not about columns**. A report whose only finding is that rows are missing, extra
 or duplicated therefore ends in `FAIL` on either path, whatever `accepted_diff_classes` says, and
@@ -181,8 +191,9 @@ class _Diff:
     column_mismatches: dict = field(default_factory=dict)
     needs_human: bool = False
     truncated: bool = False
-    #: True when the contract declares no keys, so the rows were paired by nearest match rather
-    #: than joined. `_unexplained` reads it: with no keys there is no comparable set, so the
+    #: True when the contract declares no keys (or keys that repeat in expected, which
+    #: `_fall_back_if_keys_repeat` treats the same way), so the rows were paired by nearest match
+    #: rather than joined. `_unexplained` reads it: with no keys there is no comparable set, so the
     #: aggregates cover every row and a row that moved really does move them.
     keyless: bool = False
     #: {check name: (columns it implicates, the count it would report)}, so a failing check that
@@ -250,8 +261,10 @@ def compare(backend, expected: str, actual: str, contract: dict, tolerances: dic
 #: `checks` entries that are supporting numbers rather than a verdict. `column_counts` is
 #: deliberately here: two values inside tolerance can still be two *distinct* values, so a
 #: distinct-count difference is not by itself a failure, and `aggregate_mismatches` is only the
-#: detail behind `aggregates`.
-_DETAIL_CHECKS = frozenset({"column_counts", "aggregate_mismatches"})
+#: detail behind `aggregates`. `keys_not_unique` is an advisory about the contract, not the data:
+#: present only when the declared keys repeat in the expected rows, and then the stream has been
+#: compared by the keyless path, whose own checks carry the verdict (`_fall_back_if_keys_repeat`).
+_DETAIL_CHECKS = frozenset({"column_counts", "aggregate_mismatches", "keys_not_unique", "nullability_contract"})
 
 
 def _check_failed(name: str, value: Any) -> bool:
@@ -300,7 +313,8 @@ def _unexplained(checks: dict, diff: _Diff) -> list[str]:
     nothing else: the aggregates are computed over the comparable set precisely so that moved
     rows cannot move them, so an aggregate that still disagrees is about values, and only a
     cluster naming that column can speak for it. `_KEYLESS_ROW_ACCOUNTABLE` is the one documented
-    exception, and it is reached only when the stream declares no keys. A failing check with
+    exception, and it is reached only on the keyless path: a stream that declares no keys, or
+    whose keys repeat in expected (`_fall_back_if_keys_repeat`). A failing check with
     nothing behind it is the contradiction this guard exists to stop.
     """
     schema_named = any(cluster["scope"] == "schema" for cluster in diff.clusters)
@@ -409,6 +423,8 @@ class _Comparison:
         self.expected = expected
         self.actual = actual
         self.contract = contract
+        self.stream = output.get("stream")
+        self.write_mode = output.get("write_mode")
         self.tolerances = tolerances
         self.segment_dag = segment_dag
         self.sample_rows = max(0, int(sample_rows))
@@ -482,9 +498,16 @@ class _Comparison:
         self.actual_rows = self._row_count(self.actual)
         checks["counts"] = {"expected": self.expected_rows, "actual": self.actual_rows,
                             "verdict": "PASS" if self.expected_rows == self.actual_rows else "FAIL"}
+        # Before anything that reads the keys: from here on a stream whose declared keys repeat in
+        # the golden rows is a keyless stream, in every check and every cluster.
+        advisory = self._fall_back_if_keys_repeat()
+        if advisory:
+            checks["keys_not_unique"] = advisory
         checks["column_counts"] = self._count_differences()
         nullability = self._nullability_clusters()
         checks["nullability"] = "FAIL" if nullability else "PASS"
+        if self.nullability_advisory:
+            checks["nullability_contract"] = self.nullability_advisory
 
         self.aggregate_rows = self._comparable_rows()
         # Nothing comparable while both sides hold rows means the report compared nothing: every
@@ -498,6 +521,13 @@ class _Comparison:
         diff.clusters.extend(nullability)
         diff.needs_human = diff.needs_human or any(cluster["class"] == "GOLDEN_DATA"
                                                    for cluster in nullability)
+        # A merge target's keys are also its MERGE keys (compile_check's c4:write_mode): on
+        # Snowflake a MERGE whose key repeats is nondeterministic and errors by default, so there
+        # the advisory is not enough -- a human must fix the contract's keys.
+        if advisory and self.write_mode == "update_insert":
+            diff.needs_human = True
+            advisory["note"] = ("these keys are also the MERGE keys of an update_insert target; a MERGE on a "
+                                "key that repeats fails on Snowflake, so the contract's keys must be fixed")
         diff.clusters = _sort_clusters(diff.clusters)
         checks["set_diff"] = diff.set_diff
         checks["column_mismatches"] = diff.column_mismatches
@@ -577,9 +607,43 @@ class _Comparison:
     def _row_count(self, table: str) -> int:
         return int(self.backend.query(f"SELECT COUNT(*) FROM {table}")[1][0][0])
 
+    def _fall_back_if_keys_repeat(self) -> dict | None:
+        """When the declared keys repeat in the EXPECTED rows: switches this comparison to the
+        keyless path and returns the `keys_not_unique` advisory; otherwise changes nothing and
+        returns None (live hardening, Task L11).
+
+        A contract's `keys` is the analyzer's judgment (Task L3), and a real Alteryx output may
+        legitimately repeat an id -- wf_0001's excluded-orders stream holds two identical rows with
+        `ORDER_ID` 103 in its `edge` golden set. Keys that do not identify a row cannot join the two
+        sides, and the golden data is not at fault for it, so the stream is compared exactly as if
+        it declared no keys: no comparable set, whole-table counts and aggregates, the row multiset
+        with nearest-match pairing, the same tolerances, the keyless path's own `needs_human` (the
+        fallback never sets it) and its own approvals. The keyless verdict stands; the advisory and
+        a note in `normalizations_applied` only say that the contract's keys should be revisited.
+
+        Uniqueness is judged on the keys as the keyed path would read them -- normalizations
+        applied, a NULL key grouped with the other NULLs -- and on the expected side alone: keys
+        that are unique in expected but repeat in actual are the translation's duplicates, and stay
+        the keyed path's `LOGIC` cluster ("duplicate keys in actual").
+        """
+        if not self.keys:
+            return None
+        groups, examples = self._duplicate_keys(self.expected)
+        if not groups:
+            return None
+        names = [key.name for key in self.keys]
+        self.keys, self.non_keys = [], list(self.columns)
+        repeated = "key value repeats" if groups == 1 else "key values repeat"
+        self.normalizations_applied.append(
+            f"keys not unique: {self.stream or 'the output'} declares keys [{', '.join(names)}] "
+            f"but {groups} {repeated} in expected; compared without keys -- revisit the "
+            f"contract's keys")
+        return {"keys": names, "duplicate_groups": groups,
+                "examples": [{"key": key, "rows": rows} for key, rows in examples]}
+
     def _comparable_set(self) -> str | None:
         """A `WITH` body naming the keys that occur EXACTLY ONCE on BOTH sides, or None if the
-        contract declares no keys.
+        stream is compared keyless (no keys declared, or keys that repeat in expected).
 
         Rows that moved or were duplicated already have their own clusters and their own numbers
         in `set_diff`; letting them into the aggregates as well would make one difference look
@@ -656,19 +720,27 @@ class _Comparison:
         which no amount of fixing SQL will settle.
         """
         clusters = []
+        contradicted = []
         for column in self.columns:
             if self.nullable.get(column.name, True):
                 continue
-            for table, side, counts, cluster_class in (
-                    (self.expected, "expected", self.expected_counts, "GOLDEN_DATA"),
-                    (self.actual, "actual", self.actual_counts, "NULL_SEMANTICS")):
-                nulls = counts[column.name]["nulls"]
-                if nulls:
-                    clusters.append(_cluster(
-                        cluster_class, [column.name], nulls, self._null_examples(table, column, side),
-                        suspect=self._suspect_for_columns([column.name]), scope="columns",
-                        note="NULL in a column the contract calls NOT NULL"
-                             + ("" if side == "actual" else ", in the golden data")))
+            # Live hardening: the golden rows are the reference output. A NULL there in a column the
+            # contract calls NOT NULL means the contract's nullability claim (the analyzer's
+            # judgment) is wrong, not the data: the column is judged as nullable, the value diff
+            # still compares every row, and the report carries an advisory instead of a
+            # GOLDEN_DATA cluster that would park a correct translation for a human.
+            if self.expected_counts[column.name]["nulls"]:
+                contradicted.append(column.name)
+                continue
+            nulls = self.actual_counts[column.name]["nulls"]
+            if nulls:
+                clusters.append(_cluster(
+                    "NULL_SEMANTICS", [column.name], nulls, self._null_examples(self.actual, column, "actual"),
+                    suspect=self._suspect_for_columns([column.name]), scope="columns",
+                    note="NULL in a column the contract calls NOT NULL"))
+        self.nullability_advisory = ({"columns": contradicted,
+                                      "note": "declared NOT NULL but NULL in the golden data; revisit the "
+                                              "contract's nullability"} if contradicted else None)
         return clusters
 
     def _null_examples(self, table: str, column: _Column, side: str) -> list[dict]:
@@ -760,17 +832,14 @@ class _Comparison:
     # --- 4. keyed diff ---
 
     def _keyed_diff(self) -> _Diff:
+        """The comparison when the declared keys identify a row in the expected data.
+
+        Keys that repeat in expected never reach this path: `_fall_back_if_keys_repeat` has already
+        sent that stream down the keyless one (Task L11; this used to be a `GOLDEN_DATA` cluster
+        with `needs_human`). Keys that repeat in actual only are the translation's duplicates.
+        """
         diff = _Diff()
 
-        expected_duplicates, expected_examples = self._duplicate_keys(self.expected)
-        if expected_duplicates:
-            diff.needs_human = True     # the golden data cannot be repaired by fixing SQL
-            diff.clusters.append(_cluster(
-                "GOLDEN_DATA", sorted(key.name for key in self.keys), expected_duplicates,
-                [{"key": key, "expected": {"rows": rows}, "actual": None}
-                 for key, rows in expected_examples],
-                suspect=None, scope="rows", sides=("expected",),
-                note="duplicate keys in expected"))
         actual_duplicates, actual_examples = self._duplicate_keys(self.actual)
         if actual_duplicates:
             diff.clusters.append(_cluster(
@@ -894,7 +963,7 @@ class _Comparison:
                 mismatching.append({"key": self._key_of(row), "values": values})
         return mismatching, truncated
 
-    # --- 5. row multiset (no keys) ---
+    # --- 5. row multiset (no keys, or keys that repeat in expected) ---
 
     def _group_cte(self, name: str, table: str) -> str:
         """`<name> AS (…)`: one row per distinct (normalized) row of `table`, with its multiplicity."""
@@ -1034,7 +1103,8 @@ class _Comparison:
                 "all_null": all_null}
 
     def _multiset_diff(self) -> _Diff:
-        """The comparison when the contract declares no keys (program spec §9, plan task 7b).
+        """The comparison when the contract declares no keys (program spec §9, plan task 7b), or
+        keys that repeat in the expected rows (`_fall_back_if_keys_repeat`, Task L11).
 
         The counts stay a SQL multiset difference — exact, and unaffected by anything below. What
         is added is that the surplus rows themselves are fetched and paired by nearest match, so

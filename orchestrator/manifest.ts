@@ -130,8 +130,10 @@ export async function saveManifest(root: string, manifest: Manifest): Promise<vo
 
 /** The per-role metrics fields that are monotonic counters (or a running maximum) rather than a
  * plain "latest wins" snapshot, and so must be MAX'd across disk and memory rather than let disk
- * win unconditionally (F12 for `toolCalls`; Task W4 fix round 1 for the other two). */
-const MAX_MERGED_METRICS = ["toolCalls", "compactions", "peakInputTokens"] as const;
+ * win unconditionally (F12 for `toolCalls`; Task W4 fix round 1 for `compactions` and
+ * `peakInputTokens`; Task L1 for the two denial counts, summed per session like `toolCalls`, and Task
+ * L6 for the third, `severeDenials`). */
+const MAX_MERGED_METRICS = ["toolCalls", "compactions", "peakInputTokens", "readDenials", "actDenials", "severeDenials"] as const;
 
 /** Disk wins per role for every field EXCEPT the ones in `MAX_MERGED_METRICS` (F12, Task W4 fix
  * round 1): `toolCalls` and `compactions` are monotonically additive (hooks.ts's `recordMetrics`

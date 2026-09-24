@@ -15,13 +15,17 @@ import {
   CONTEXT_OVERFLOW,
   errorText,
   hooksFor,
+  MAX_ACT_DENIALS_PER_SESSION,
+  MAX_READ_DENIALS_PER_SESSION,
   NOTES_ROLES,
   notesReminder,
+  outputFolders,
   RATE_LIMIT,
   recordMetrics,
   redact,
 } from "./hooks.ts";
 import { readJsonOr, wfDir, writeJson } from "./manifest.ts";
+import { sessionExcludedTools } from "./policy.ts";
 import type {
   AgentCtx,
   AgentError,
@@ -350,7 +354,16 @@ export interface CopilotRunnerOptions {
   config: OrchestratorConfig;
   profile: Profile;
   agents: CustomAgentConfig[];
+  /** Live hardening, Task L7 fix round 1 (R-a): overrides `ABORT_BOUND_MS` for this runner. Tests
+   * only -- production code never sets this and gets the real bound. */
+  abortBoundMs?: number;
 }
+
+/** Live hardening, Task L7 fix round 1 (R-a): how long `run` waits for `session.abort()` to settle
+ * after a timeout, before giving up on it and moving on to `disconnect()` regardless. Bounded so a
+ * hung `abort()` call cannot itself hang `run` -- the SDK's own `sendAndWait` timeout is what put
+ * this method here in the first place, so nothing here should be able to wait unboundedly either. */
+const ABORT_BOUND_MS = 10_000;
 
 export class CopilotRunner implements AgentRunner {
   readonly root: string;
@@ -358,6 +371,7 @@ export class CopilotRunner implements AgentRunner {
   readonly profile: Profile;
   readonly agents: CustomAgentConfig[];
   private readonly client: CopilotClient;
+  private readonly abortBoundMs: number;
   private env?: Env;
 
   constructor(options: CopilotRunnerOptions) {
@@ -366,6 +380,7 @@ export class CopilotRunner implements AgentRunner {
     this.config = options.config;
     this.profile = options.profile;
     this.agents = options.agents;
+    this.abortBoundMs = options.abortBoundMs ?? ABORT_BOUND_MS;
   }
 
   attach(env: Env): void {
@@ -376,6 +391,15 @@ export class CopilotRunner implements AgentRunner {
     const env = this.env;
     if (!env) throw new Error("CopilotRunner has no env; call attach(env) before running agents");
     const profile = this.config.profiles[this.profile];
+    // Live hardening, Task L7 fix round 1 (R-d): once per session start, what the SDK was actually
+    // told for this session's provider -- an operator reading the log can see the effective limits
+    // without cross-referencing orchestrator.config.json, and a live run that overflows despite a
+    // set maxPromptTokens (the wf_0007 probe) is diagnosable from the log alone.
+    env.log(
+      `${wf.id}: ${role} session starting: model=${profile.roleModels?.[role] ?? profile.model ?? "(none)"} ` +
+        `maxPromptTokens=${profile.provider?.maxPromptTokens ?? "(unset)"} ` +
+        `maxOutputTokens=${profile.provider?.maxOutputTokens ?? "(unset)"}`,
+    );
     const { hooks, state } = hooksFor(role, wf, env, ctx?.segment, ctx?.dbt, ctx?.batch);
     const started = Date.now();
     // `detail` is logged to the console and recorded in the manifest by stages.ts. errorText keeps
@@ -387,21 +411,53 @@ export class CopilotRunner implements AgentRunner {
       detail: detail === undefined ? undefined : redact(detail).slice(0, AUDIT_ARG_LIMIT),
       toolCalls: state.toolCalls,
       ms: Date.now() - started,
+      severeDenials: state.severeDenials.length,
     });
+    // Task L1 (R3) and Task L6 (R2), a documented deviation from the program spec's "tool denied by
+    // policy -> abort stage, NEEDS_HUMAN" (docs/spec/01-copilot-setup.md): the spec's rule holds at once
+    // for a SEVERE attempt -- one that reached outside the workflow or the sandbox, or tried to do damage
+    // -- and any one parks the stage as `denied`. Every other refused call had no effect, and every
+    // output is verified afterwards, so it is recorded and budgeted instead: attempted actions over
+    // `budgets.maxActDenialsPerSession` (default 20) park the stage, and so do blocked reads over
+    // `budgets.maxReadDenialsPerSession` (default 20); within both, the session's outcome is decided
+    // exactly as if nothing had been denied. Every refused call is still refused, audited and counted.
+    // Undefined means "no denial decides this session".
+    const readBudget = this.config.budgets?.maxReadDenialsPerSession ?? MAX_READ_DENIALS_PER_SESSION;
+    const actBudget = this.config.budgets?.maxActDenialsPerSession ?? MAX_ACT_DENIALS_PER_SESSION;
+    const gradedDenials = (): AgentResult | undefined => {
+      const all = [...state.severeDenials, ...state.actDenials, ...state.readDenials].join("; ");
+      if (state.severeDenials.length > 0) {
+        return done("denied", `severe-denials: ${state.severeDenials.length} (parks at once); ${all}`);
+      }
+      if (state.actDenials.length > actBudget) {
+        return done("denied", `act-denials: ${state.actDenials.length} over the budget of ${actBudget}; ${all}`);
+      }
+      if (state.readDenials.length > readBudget) {
+        return done("denied", `read-denials: ${state.readDenials.length} over the budget of ${readBudget}; ${all}`);
+      }
+      return undefined;
+    };
 
-    // Task N1 (live evidence, docs/live-smoke-test.md "Third live test"): a notes-keeping role's
-    // session is told to write workflows/<wf>/notes/<role>.md, but its policy lane has no
-    // directory creation -- every intake session tried to make the directory itself and was
-    // denied. The orchestrator creates it instead, before the session starts. The path is built
-    // only from this.root, the fixed "workflows" segment, wf.id and the fixed "notes" segment --
-    // never from task text. A failure is logged (naming the workflow and role) and the session
-    // still runs; it never throws out of run.
-    if (NOTES_ROLES.includes(role)) {
+    // Task N1 (live evidence, docs/live-smoke-test.md "Third live test"), generalised by Task L9
+    // (R2, live evidence task-L9-brief.md): a role's session is told to write into folders whose
+    // policy lane has no directory creation -- so the orchestrator creates every one of them
+    // itself, before the session starts. Each path is built only from this.root, the fixed
+    // "workflows" segment, wf.id and hooks.ts's outputFolders (role and the fixed ids ctx carries)
+    // -- never from task text. Every folder is tried independently, so one failure never stops the
+    // rest; each failure is logged (naming the workflow, the role and the folder) and the session
+    // still runs regardless -- this never throws out of run.
+    const { folders: outputFoldersFor, skipped: skippedIds } = outputFolders(role, ctx ?? {});
+    // Live hardening, Task L9 fix round 2 (L9-m4): an id `outputFolders` refused (ID_PATTERN) is
+    // logged, not silently dropped -- see its own doc comment for why this cannot happen today.
+    for (const id of skippedIds) {
+      env.log(`${wf.id}: ${role} refused to create a folder for the id "${id}" (fails ID_PATTERN)`);
+    }
+    for (const folder of outputFoldersFor) {
       try {
-        await mkdir(wfDir(this.root, wf.id, "notes"), { recursive: true });
+        await mkdir(wfDir(this.root, wf.id, ...folder.split("/")), { recursive: true });
       } catch (error) {
         env.log(
-          `${wf.id}: ${role} could not create the notes directory: ${redact(errorText(error)).slice(0, AUDIT_ARG_LIMIT)}`,
+          `${wf.id}: ${role} could not create ${folder}/: ${redact(errorText(error)).slice(0, AUDIT_ARG_LIMIT)}`,
         );
       }
     }
@@ -420,6 +476,10 @@ export class CopilotRunner implements AgentRunner {
         mcpServers: this.config.mcpServers,
         customAgents: this.agents,
         agent: role,
+        // Live hardening, Task L9 (R1): never offer a tool the policy refuses for every role to
+        // begin with -- defence in depth on top of the policy itself (POLICY.md), extendable from
+        // orchestrator.config.json's session.excludedTools.
+        excludedTools: sessionExcludedTools(this.config.session?.excludedTools),
         hooks,
         // The policy already decided in onPreToolUse, so the session never blocks on a prompt.
         onPermissionRequest: () => ({ kind: "approve-once" }),
@@ -457,14 +517,84 @@ export class CopilotRunner implements AgentRunner {
       );
       await session.sendAndWait({ prompt: task }, this.config.sessionTimeoutMs);
     } catch (error) {
-      // The thrown error is judged FIRST, before state.denied: a crash that happens minutes
+      const text = errorText(error);
+      const timedOut = /timed?\s?out|timeout/i.test(text);
+      // Live hardening, Task L7 fix round 2 (IMP-1): every timeout aborts the in-flight turn
+      // (bounded, then still disconnected in `finally` regardless), BEFORE the session is
+      // classified -- including a session with a severe denial, which the check right below used
+      // to return `denied` on without ever reaching this block. `sendAndWait`'s timeout "does not
+      // abort in-flight agent work" (session.d.ts ~154), so the one turn most worth stopping -- one
+      // that already tried to reach outside its lane -- was exactly the one fix round 1's version
+      // of this block (unconditionally after the severe check) skipped.
+      if (timedOut && session) {
+        // A local, definitely-non-null alias for the closure below -- the same reason `activeSession`
+        // exists in the `try` block above (spike fact S5: a `let` narrowed by `if (... && session)`
+        // does not stay narrowed inside a nested closure).
+        const timedOutSession = session;
+        let bound: NodeJS.Timeout | undefined;
+        let offIdle: (() => void) | undefined;
+        try {
+          await Promise.race([
+            (async () => {
+              // Live hardening, Task L7 fix round 1 review (L7-m1): `abort()` "resolves when the
+              // abort request is acknowledged" (session.d.ts ~282), not when the turn has actually
+              // stopped -- a shell command or an attached sub-agent task can still be running, and
+              // still writing to disk, until the session actually goes idle. `session.idle`'s
+              // `IdleData.aborted` (generated/session-events.d.ts ~1417) is the SDK's own signal for
+              // that: "no background agents or attached shell commands in flight". The listener is
+              // registered BEFORE `abort()` is called, so an idle event fired synchronously inside
+              // `abort()` itself cannot be missed.
+              const idle = new Promise<void>((resolve) => {
+                offIdle = timedOutSession.on("session.idle", (event: { data?: { aborted?: boolean } }) => {
+                  if (event.data?.aborted) resolve();
+                });
+              });
+              await timedOutSession.abort();
+              await idle;
+            })(),
+            new Promise<never>((_, reject) => {
+              bound = setTimeout(
+                () => reject(new Error(`abort()/session.idle did not settle within ${this.abortBoundMs}ms`)),
+                this.abortBoundMs,
+              );
+            }),
+          ]);
+        } catch (abortError) {
+          env.log(
+            `${wf.id}: ${role} session.abort() after timeout failed or did not finish in time: ` +
+              `${errorText(abortError)}`,
+          );
+        } finally {
+          // The losing side of the race otherwise leaves a live timer for up to abortBoundMs after
+          // a fast, successful abort() -- harmless (Promise.race already handled both promises, so
+          // this can never become an unhandled rejection), but needless work for the event loop.
+          if (bound) clearTimeout(bound);
+          offIdle?.();
+        }
+      }
+      // L6 fix round 2 (I3): a SEVERE attempt parks the session whatever ended it -- the check
+      // comes first on every exit path (wins over context-overflow/rate-limit too, unchanged).
+      // Judged after the error, a severe attempt followed by a timeout or a rate limit came back
+      // `timeout` / `rate-limit`: retried, or (Task L7) kept as a success when the output on disk
+      // passed its check.
+      if (state.severeDenials.length > 0) return gradedDenials()!;
+      // Live hardening, Task L7 fix round 2 (L7-m2): an over-budget act/read denial (not severe)
+      // wins over a timeout classification too, on the same principle -- L6 fix round 2's I3 ruled
+      // only on severe denials, so a session that blew its (non-severe) denial budget and then also
+      // timed out fell all the way through to `done("timeout", text)` unclassified by its denials at
+      // all, unlike a crash, which already fell back to `gradedDenials() ?? done("error", text)`
+      // below. `gradedDenials()` here is `undefined` whenever neither budget was actually exceeded,
+      // so an ordinary timeout (nothing denied, or denials within budget) is unaffected.
+      if (timedOut) return gradedDenials() ?? done("timeout", text);
+      // Otherwise the thrown error is judged before any denial: a crash that happens minutes
       // after earlier, already-recovered-from permission denials must not be misreported as
-      // "denied" just because state.denied was set at some point earlier in the same session
+      // "denied" just because a denial happened at some point earlier in the same session
       // (live evidence, task-16-report.md ATTEMPT 1/2 — a context-window overflow was
       // misclassified as "denied" this way). "denied" is the fallback classification, used only
-      // when no other error signature explains why the session actually ended.
-      const text = errorText(error);
-      if (/timed?\s?out|timeout/i.test(text)) return done("timeout", text);
+      // when no other error signature explains why the session actually ended -- and, since
+      // Tasks L1 and L6, only for attempted actions or blocked reads over their budgets
+      // (gradedDenials).
+      //
       // context-overflow is judged BEFORE rate-limit and wins when both signatures are present
       // (F7, final review), mirroring hooks.ts's onErrorOccurred: an anchored "429" can still
       // legitimately co-occur with an "exceeds the available context size" message, and the two
@@ -476,8 +606,9 @@ export class CopilotRunner implements AgentRunner {
       // even when what sendAndWait itself throws does not.
       if (state.contextOverflow || CONTEXT_OVERFLOW.test(text)) return done("context-overflow", text);
       if (state.rateLimited || RATE_LIMIT.test(text)) return done("rate-limit", text);
-      if (state.denied) return done("denied", state.denials.join("; "));
-      return done("error", text);
+      // Task L1 (R3), Task L6 (R2): attempted actions or blocked reads over their budgets explain
+      // the end; denials within the budgets do not, so the session ends as the error it threw.
+      return gradedDenials() ?? done("error", text);
     } finally {
       // Task W4: unsubscribed before disconnect, on every exit path -- including the timeout and
       // crash paths that reach this block via the catch above.
@@ -488,11 +619,19 @@ export class CopilotRunner implements AgentRunner {
       // recordMetrics is idempotent per session, so a session where onSessionEnd DID already run
       // is not double-counted.
       recordMetrics(wf, role, state, Date.now() - started);
+      // Task L1 (R3), Task L6 (R2): one line per session, on every exit path, naming all three
+      // counts; audit.jsonl holds every denial with its class.
+      env.log(
+        `${wf.id}: ${role} session denials: ${state.readDenials.length} read (budget ${readBudget}), ` +
+          `${state.actDenials.length} act (budget ${actBudget}), ${state.severeDenials.length} severe ` +
+          `— see workflows/${wf.id}/audit.jsonl`,
+      );
     }
 
-    // A completed session that tried to leave its lane is still a prompt bug, not a success.
-    if (state.denied) return done("denied", state.denials.join("; "));
-    return done();
+    // A completed session that tried to reach outside its workflow or the sandbox, or kept trying
+    // what it may not, is still a prompt bug, not a success; one whose refused calls stayed within the
+    // budgets goes on to be judged by its stage's own verify callback.
+    return gradedDenials() ?? done();
   }
 
   private async answer(request: UserInputRequest, env: Env): Promise<UserInputResponse> {

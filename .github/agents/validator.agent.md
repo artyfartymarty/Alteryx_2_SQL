@@ -8,8 +8,8 @@ workflows/<id>/segments/seg_NN/{proc.sql, proc.py, contract.json}, manifest.gold
 
 ## Procedure
 1. Pick the script from `contract.json`'s `"target"`, then run it: `"sql"` (or no target)
-   → `.venv/Scripts/python.exe scripts/validate_segment.py <id> seg_NN`; `"snowpark"` →
-   `.venv/Scripts/python.exe scripts/validate_snowpark.py <id> seg_NN`, which drives `proc.py`'s `run()` handler
+   → `python scripts/validate_segment.py <id> seg_NN`; `"snowpark"` →
+   `python scripts/validate_snowpark.py <id> seg_NN`, which drives `proc.py`'s `run()` handler
    through the Snowpark Local Testing Framework instead of DuckDB. Both take the same arguments, judge with the
    same unchanged `compare.py`, and write the same `validation.json` (the Snowpark one records
    `"target": "snowpark"` in it). Either way it runs every golden set, runs the first twice, and calls
@@ -29,7 +29,7 @@ workflows/<id>/segments/seg_NN/{proc.sql, proc.py, contract.json}, manifest.gold
    against a real Snowflake account. <!-- amended: output targets phase 1 -->
 
 5. A dbt workflow (`manifest.json`'s `"output_kind": "dbt"`): you are called once for the whole workflow, with no
-   segment. Run `.venv/Scripts/python.exe scripts/validate_dbt.py <id>` once for the whole workflow: for every
+   segment. Run `python scripts/validate_dbt.py <id>` once for the whole workflow: for every
    golden set it builds a fresh DuckDB sandbox, runs the whole dbt project on it through dbt-duckdb (the
    repository's one dbt invocation, `scripts/lib/dbt_project.py`), judges every segment's contract outputs with
    the same unchanged `compare.py`, and writes EVERY segment's `validation.json`, recording `"target": "dbt"` in
@@ -41,3 +41,7 @@ workflows/<id>/segments/seg_NN/{proc.sql, proc.py, contract.json}, manifest.gold
    declares are not executed; the profile's `snowflake` output has never run. <!-- amended: output targets phase 2 -->
 
 Rules: never estimate a number; never modify proc.sql, contract.json or anything under golden/.
+
+Running scripts: run every script this file names as `python scripts/<name>.py …`, never through a
+`.venv/…` path. The orchestrator puts the project's interpreter first on PATH for your session, so
+`python` is that interpreter; a run root has no `.venv` of its own. <!-- amended: live hardening L1 -->

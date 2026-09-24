@@ -59,7 +59,12 @@ DAG = {
     "inbound": [], "outbound": [],
 }
 
-PROC_PY = '''# tool 2: Filter -- keep NOTE = 'keep'
+# Live hardening L4 fix round 1 (I1): this script now applies the Snowpark rules before it imports a
+# module, so every fixture below satisfies them -- a `# tool <id>:` comment per data node of DAG (1, 2
+# and 3), allowed imports only, and the target written in its write mode (mappings: overwrite).
+PROC_PY = '''# tool 1: Input -- ITEMS
+# tool 2: Filter -- keep NOTE = 'keep'
+# tool 3: Output -- ITEMS_OUT
 from snowflake.snowpark.functions import col
 
 
@@ -71,9 +76,15 @@ def run(session, src_db, src_schema, tgt_db, tgt_schema, run_id):
 '''
 PROC_PY_WRONG = PROC_PY.replace('== "keep"', '== "drop"')
 PROC_PY_RAISES = PROC_PY.replace("    kept.write", "    raise RuntimeError('boom')\n    kept.write")
+# `numpy.random`, not `random`: the Snowpark rules allow `numpy` and refuse every other import.
 PROC_PY_RANDOM = PROC_PY.replace('kept = session.table(f"{src_db}.{src_schema}.ITEMS").filter(col("NOTE") == "keep")',
-                                 'import random\n    kept = session.table(f"{src_db}.{src_schema}.ITEMS").filter(col("NOTE") == "keep").with_column("NOTE", col("NOTE"))\n    kept = session.create_dataframe([[r["ID"], r["NOTE"] + str(random.random())] for r in kept.collect()], schema=["ID", "NOTE"])')
-PROC_PY_MISSING_TARGET = PROC_PY.replace('    kept.write.mode("overwrite").save_as_table(f"{tgt_db}.{tgt_schema}.ITEMS_OUT")\n', "")
+                                 'import numpy\n    kept = session.table(f"{src_db}.{src_schema}.ITEMS").filter(col("NOTE") == "keep").with_column("NOTE", col("NOTE"))\n    kept = session.create_dataframe([[r["ID"], r["NOTE"] + str(numpy.random.random())] for r in kept.collect()], schema=["ID", "NOTE"])')
+# The target write stays in the text (the rules require it) but never runs, so the table is missing
+# at run time -- which is what this fixture exercises.
+PROC_PY_MISSING_TARGET = PROC_PY.replace(
+    '    kept.write.mode("overwrite").save_as_table(f"{tgt_db}.{tgt_schema}.ITEMS_OUT")\n',
+    '    if run_id == "never":\n'
+    '        kept.write.mode("overwrite").save_as_table(f"{tgt_db}.{tgt_schema}.ITEMS_OUT")\n')
 
 # --- fix round 1 (task-4-fix1.md ruling R1): the ACTUAL table's schema must come from Snowpark
 # itself, not from the contract's declared columns -- these four handlers each disagree with the
@@ -415,7 +426,8 @@ CONTRACT2 = {
 }
 CONTRACT2["output"] = CONTRACT2["outputs"][0]
 
-PROC_PY2 = '''def run(session, src_db, src_schema, tgt_db, tgt_schema, run_id):
+PROC_PY2 = '''# tool 4: Select -- pass the upstream stream through
+def run(session, src_db, src_schema, tgt_db, tgt_schema, run_id):
     upstream = session.table("MIG_WORK.WF0009_SEG_01_OUT")
     upstream.write.mode("overwrite").save_as_table("MIG_WORK.WF0009_SEG_02_OUT")
     return "OK"
@@ -532,3 +544,72 @@ def test_main_returns_two_on_an_unexpected_exception(tmp_path, monkeypatch):
 
     rc = vsp.main([WF, SEG, "--root", str(tmp_path)])
     assert rc == 2
+
+
+# --- live hardening L4, fix round 1 (I1): no agent code runs on the host unchecked ------------------
+# The translator and the fixer may run this script on their own proc.py, at any moment -- before any
+# compile check. So the script applies the same Snowpark rules `compile_check.py --target snowpark`
+# does (`lib.snowpark_rules.segment_rule_errors`) BEFORE it imports anything: a module that breaks
+# them is a domain FAIL naming the rule, and its code never runs. Each payload below would write a
+# marker file the moment the module is imported.
+
+def _payload(marker: Path, head: str = "") -> str:
+    return head + f'open({str(marker)!r}, "w").write("ran")\n' + PROC_PY
+
+
+def test_a_module_that_breaks_the_snowpark_rules_is_never_imported(tmp_path):
+    marker = tmp_path / "marker.txt"
+    repo = build(tmp_path / "root", proc_py=_payload(marker))
+
+    assert vsp.main([WF, SEG, "--root", str(tmp_path / "root")]) == 1
+
+    assert not marker.exists(), "validate_snowpark imported a module the Snowpark rules refuse"
+    report = read_json(repo.seg(WF, SEG, "validation.json"))
+    assert report["verdict"] == "FAIL" and report["needs_human"] is False
+    assert "rule:no_io" in report["error"] and "was not imported" in report["error"], report["error"]
+    assert read_json(repo.seg(WF, SEG, "validation.normal.json"))["verdict"] == "FAIL"
+
+
+def test_a_proc_override_that_imports_os_is_refused_before_it_runs(tmp_path):
+    marker = tmp_path / "marker.txt"
+    repo = build(tmp_path / "root")
+    override = tmp_path / "override.py"
+    override.write_text("import os\n" + _payload(marker).replace("open(", "os.fdopen(os.open(", 1)
+                        .replace(', "w").write', ', os.O_CREAT | os.O_WRONLY), "w").write', 1),
+                        encoding="utf-8", newline="\n")
+
+    report = vsp.validate_snowpark(repo, WF, SEG, proc_path=override)
+
+    assert not marker.exists()
+    assert report["verdict"] == "FAIL" and "rule:imports" in report["error"], report["error"]
+
+
+def test_the_loader_itself_refuses_a_module_that_breaks_the_rules(tmp_path):
+    """`load_module` is also what `validate_workflow.py`'s Snowpark hand-off calls; the gate is in it,
+    so no caller can import an agent's module without it."""
+    marker = tmp_path / "marker.txt"
+    repo = build(tmp_path / "root", proc_py=_payload(marker))
+    with pytest.raises(vsp.RulesRefused, match="rule:no_io"):
+        vsp.load_module(repo.seg(WF, SEG, "proc.py"), repo, WF, SEG, CONTRACT)
+    with pytest.raises(vsp.RulesRefused):
+        vsp.run_handler(repo, WF, SEG, "normal", CONTRACT, repo.seg(WF, SEG, "proc.py"), "r1")
+    assert not marker.exists()
+
+
+def test_the_loader_runs_exactly_the_text_it_checked(tmp_path, monkeypatch):
+    """The module is compiled from the source the gate read, never re-read from disk: a file swapped
+    between the check and the import cannot slip past it."""
+    marker = tmp_path / "marker.txt"
+    repo = build(tmp_path / "root")
+    path = repo.seg(WF, SEG, "proc.py")
+    real_check = vsp.snowpark_rules.segment_rule_errors
+
+    def check_then_swap(*args, **kwargs):
+        errors = real_check(*args, **kwargs)
+        path.write_text(_payload(marker), encoding="utf-8", newline="\n")   # after the check passed
+        return errors
+    monkeypatch.setattr(vsp.snowpark_rules, "segment_rule_errors", check_then_swap)
+
+    module = vsp.load_module(path, repo, WF, SEG, CONTRACT)
+    assert callable(module.run)
+    assert not marker.exists()

@@ -9,7 +9,9 @@
     "producer": "simulator"
   },
   "budgets": {
-    "maxToolCallsPerWorkflow": 400
+    "maxToolCallsPerWorkflow": 400,
+    "maxReadDenialsPerSession": 20,
+    "maxActDenialsPerSession": 20
   },
   "policy": {
     "sandboxDatabases": ["MIGDB"]
@@ -23,7 +25,8 @@
       "provider": {
         "type": "openai",
         "baseUrl": "http://127.0.0.1:8080/v1",
-        "apiKey": "local"
+        "apiKey": "local",
+        "maxPromptTokens": 100000
       },
       "model": "ternary-bonsai-2-27b",
       "reasoningEffort": "medium"

@@ -96,6 +96,9 @@ _JINJA_DELIMITERS = ("{{", "}}", "{%", "%}", "{#", "#}")
 
 _SRC_SCHEMA_RE = re.compile(r"^\{\{\s*var\('src_schema'\)\s*\}\}$")
 _IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+#: A `unique_key` that needs quotes (a reserved word such as ORDER; live hardening L8 fix round 1): the
+#: quotes are part of the value dbt splices, and nothing inside can end them or open Jinja.
+_QUOTED_KEY_RE = re.compile(r'^"[A-Za-z0-9_$ ]+"$')
 _SOURCE_TABLE_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]*$")
 _RELATIONSHIPS_TO_RE = re.compile(r"^ref\('[A-Za-z0-9_]+'\)$")
 _BARE_TESTS = frozenset({"not_null", "unique"})
@@ -732,8 +735,9 @@ def _config_value_problem(key: str, value) -> str | None:
             return "alias must be a plain identifier (dbt splices it into SQL)"
     elif key == "unique_key":
         keys = [value] if isinstance(value, str) else value
-        if not all(isinstance(k, str) and _IDENTIFIER_RE.match(k) for k in keys):
-            return "unique_key must be plain identifiers (dbt splices each into SQL unquoted)"
+        if not all(isinstance(k, str) and (_IDENTIFIER_RE.match(k) or _QUOTED_KEY_RE.match(k)) for k in keys):
+            return ("unique_key must be plain identifiers, or double-quoted names of letters, digits, _, $ and "
+                    "spaces (dbt splices each into SQL as written)")
     return None
 
 

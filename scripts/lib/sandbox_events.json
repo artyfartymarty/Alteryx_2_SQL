@@ -1,0 +1,9 @@
+[
+  "builtins.id",
+  "exec",
+  "import",
+  "marshal.loads",
+  "object.__getattr__",
+  "open",
+  "os.mkdir"
+]

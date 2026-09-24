@@ -22,3 +22,7 @@ deploy and how, and says that nothing in this repository has run against Snowfla
   reads (the file holds no credential), and say that `dbt-snowflake` is not installed in this repository, so the
   profile's `snowflake` output has never run. A dbt workflow's assumptions are in `dbt/translation_notes.md`, not
   `segments/*/translation_notes.md`; it has no `procs/master.sql` and no per-segment procedure.
+
+Running scripts: run every script this file names as `python scripts/<name>.py …`, never through a
+`.venv/…` path. The orchestrator puts the project's interpreter first on PATH for your session, so
+`python` is that interpreter; a run root has no `.venv` of its own. <!-- amended: live hardening L1 -->

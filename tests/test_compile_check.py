@@ -40,8 +40,10 @@ CONTRACT = {
     "outputs": [
         {"stream": "2_True", "table": "MIG_WORK.WF0009_SEG_01_OUT", "kind": "work", "logical": None,
          "columns": COLUMNS, "keys": ["ID"]},
+        # Task L4: a target carries its write mode (`c4:write_mode`), as every committed contract's does;
+        # PROC writes it with the INSERT INTO an append needs.
         {"stream": "2_True", "table": None, "kind": "target", "logical": "ITEMS_OUT", "tool_id": "7",
-         "columns": COLUMNS, "keys": ["ID"]},
+         "write_mode": "append", "columns": COLUMNS, "keys": ["ID"]},
     ],
     "row_relation": "filter",
     "ordering": {"keys": ["ID"], "alteryx_deterministic": True},

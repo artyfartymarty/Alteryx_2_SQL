@@ -223,33 +223,42 @@ def _run_snowpark_segment(backend, repo: Repo, wf_id: str, seg: str, golden_set:
     Snowpark really wrote. An output Snowpark no longer has is dropped from `backend` too, so it is
     judged as missing, never as the copy `backend` held before the segment ran (fix round 1, I3).
     On the re-run every input arrives reversed (see `_present`)."""
-    session = vsp.new_local_session()
+    from lib import snowpark_sandbox  # noqa: PLC0415  (lazy: the child imports validate_snowpark)
+    # Build the child's input tables in this process (a missing golden file is a usage error and
+    # propagates as one), then run the agent's proc.py in a sandboxed child (live hardening L4 fix
+    # round 2, X1) -- never in this process. The raw golden inputs, `targets_before`, and the ACTUAL
+    # upstream/target state handed in from `backend` (reversed on the re-run) are what the segment
+    # reads; every declared output is handed back with the schema Snowpark really wrote.
+    tables, _ = vsp.load_set_tables(repo, wf_id, golden_set)
+    if rerun:
+        for logical in plan["sources"]:
+            fqn = f"{args['SRC_DB']}.{args['SRC_SCHEMA']}.{logical}"
+            if fqn in tables:
+                tables[fqn]["rows"].reverse()
+    for fqn in _order_sensitive_inputs(backend, wf_id, seg, contract):   # ACTUAL chain state
+        handed = handoff.table_from_backend(backend, fqn)
+        if _present(seg, fqn, handed["rows"], seen, rerun):
+            handed["rows"].reverse()
+        tables[fqn] = handed
+
     try:
-        vsp.load_set_snowpark(session, repo, wf_id, golden_set)
-        try:
-            if rerun:                                                # raw golden inputs, reversed
-                for logical in plan["sources"]:
-                    fqn = f"{args['SRC_DB']}.{args['SRC_SCHEMA']}.{logical}"
-                    table = handoff.table_from_snowpark(session, fqn)
-                    if table is not None:
-                        table["rows"].reverse()
-                        handoff.load_into_snowpark(session, fqn, table)
-            for fqn in _order_sensitive_inputs(backend, wf_id, seg, contract):   # ACTUAL chain state
-                _hand_in(session, backend, seg, fqn, seen, rerun)
-            module = vsp.load_module(proc_path)
-            module.run(session, args["SRC_DB"], args["SRC_SCHEMA"], args["TGT_DB"], args["TGT_SCHEMA"],
-                       args["RUN_ID"])
-            for output in contract.get("outputs") or []:
-                fqn = v.actual_table(wf_id, seg, output)
-                table = handoff.table_from_snowpark(session, fqn)   # the REAL written schema
-                if table is None:
-                    backend.execute(f"DROP TABLE IF EXISTS {fqn}")
-                else:
-                    handoff.load_into_backend(backend, fqn, table)
-        except Exception as exc:  # noqa: BLE001 -- anything run() or the seam raises is a domain FAIL
-            raise ChainError(seg, exc) from exc
-    finally:
-        session.close()
+        source = vsp.gated_source(proc_path, repo, wf_id, seg, contract)   # the Snowpark gate first (L4 fix 1)
+    except vsp.RulesRefused as exc:
+        raise ChainError(seg, exc) from exc
+    output_fqns = [v.actual_table(wf_id, seg, output) for output in contract.get("outputs") or []]
+    result = snowpark_sandbox.run_segment(
+        source=source, display_path=str(proc_path), run_id=args["RUN_ID"], outputs=output_fqns,
+        inputs={"mode": "tables", "args": args,
+                "tables": [{"fqn": fqn, "table": table} for fqn, table in tables.items()]})
+    if result.kind != "ok":
+        raise ChainError(seg, ValueError(vsp.child_failure_reason(result)))
+    for output in contract.get("outputs") or []:
+        fqn = v.actual_table(wf_id, seg, output)
+        table = result.outputs.get(fqn)                          # the REAL written schema
+        if table is None:
+            backend.execute(f"DROP TABLE IF EXISTS {fqn}")
+        else:
+            handoff.load_into_backend(backend, fqn, table)
 
 
 def _run_sql_segment(backend, wf_id: str, seg: str, contract: dict, proc_path: Path, args: dict,
@@ -344,7 +353,8 @@ def _relations(entries: list[dict]) -> list[str]:
 # re-presented between two segments -- and documented as such.
 
 
-def _run_snowpark_segment_on_snowflake(sandbox, seg: str, proc_path: Path, args: dict) -> None:
+def _run_snowpark_segment_on_snowflake(sandbox, repo: Repo, wf_id: str, seg: str, contract: dict, proc_path: Path,
+                                       args: dict) -> None:
     from lib import snowflake_conn  # noqa: PLC0415  (lazy: never on the local path)
     session = snowflake_conn.snowpark_session(sandbox.connection_name)
     try:
@@ -353,7 +363,7 @@ def _run_snowpark_segment_on_snowflake(sandbox, seg: str, proc_path: Path, args:
         except Exception as exc:  # noqa: BLE001 -- the session, not the segment: redacted, a crash
             raise snowflake_conn.scrubbed(exc) from None
         try:
-            module = vsp.load_module(proc_path)
+            module = vsp.load_module(proc_path, repo, wf_id, seg, contract)   # the Snowpark gate first (L4 fix 1)
             module.run(session, args["SRC_DB"], args["SRC_SCHEMA"], args["TGT_DB"], args["TGT_SCHEMA"],
                        args["RUN_ID"])
         except Exception as exc:  # noqa: BLE001 -- anything run() raises is this segment's domain FAIL
@@ -376,7 +386,7 @@ def _run_chain_on_snowflake(repo: Repo, wf_id: str, golden_set: str, plan: dict,
             for seg in wave:
                 contract = plan["contracts"][seg]
                 if contract.get("target") == "snowpark":
-                    _run_snowpark_segment_on_snowflake(sandbox, seg, plan["procs"][seg], args)
+                    _run_snowpark_segment_on_snowflake(sandbox, repo, wf_id, seg, contract, plan["procs"][seg], args)
                 else:
                     try:
                         backend.call_procedure(plan["procs"][seg].read_text(encoding="utf-8"), args)

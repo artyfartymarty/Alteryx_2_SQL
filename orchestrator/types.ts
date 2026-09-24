@@ -77,6 +77,10 @@ export interface AgentResult {
   detail?: string;
   toolCalls: number;
   ms: number;
+  /** How many of the session's refused calls were severe (Task L6, R2). CopilotRunner reports every
+   * session with one as `denied`; `runAgent` never keeps, verifies or retries such a session whatever
+   * `error` a runner reports (L6 fix round 2, I3). Absent means none. */
+  severeDenials?: number;
 }
 
 /** What one agent call acts on. A procedures workflow's translate-stage roles act on one
@@ -124,8 +128,21 @@ export type Profile = "local" | "hosted";
 export type ReasoningEffort = "low" | "medium" | "high" | "xhigh" | "max";
 
 export interface ProfileConfig {
-  /** BYOK provider; omitted for the hosted profile, which uses Copilot's own models. */
-  provider?: { type?: "openai" | "azure" | "anthropic"; baseUrl: string; apiKey?: string };
+  /** BYOK provider; omitted for the hosted profile, which uses Copilot's own models. `maxPromptTokens`
+   * / `maxOutputTokens` (live hardening, Task L7, R1) are passed to the SDK's `createSession` unchanged
+   * (`ProviderConfig` in `node_modules/@github/copilot-sdk/dist/types.d.ts`): the runtime triggers its
+   * own conversation compaction before a request whose prompt would exceed `maxPromptTokens`. The local
+   * BYOK profile sets `maxPromptTokens` because the SDK does not know a self-hosted model's limits and
+   * would otherwise compact too late for `llama-server`'s own per-slot context budget (see
+   * `orchestrator.config.json`, `scripts/dev/serve_model.ps1`'s `-Parallel` and README §3); the hosted
+   * profile sets neither, since the SDK already knows Copilot's own models' limits. */
+  provider?: {
+    type?: "openai" | "azure" | "anthropic";
+    baseUrl: string;
+    apiKey?: string;
+    maxPromptTokens?: number;
+    maxOutputTokens?: number;
+  };
   model?: string;
   reasoningEffort?: ReasoningEffort;
   /** Per-role model override; falls back to `model`. */
@@ -149,7 +166,11 @@ export interface OrchestratorConfig {
   maxParseRecovery: number;
   sessionTimeoutMs: number;
   golden: { producer: "simulator" | "alteryx" };
-  budgets: { maxToolCallsPerWorkflow: number };
+  /** `maxReadDenialsPerSession` (Task L1, R3): how many blocked READS one agent session may collect
+   * before it parks as `denied`; absent means 20. `maxActDenialsPerSession` (Task L6, R2): how many
+   * attempted actions that are not severe it may collect; absent means 20, and 0 parks on the first. A
+   * severe attempt parks it at once. */
+  budgets: { maxToolCallsPerWorkflow: number; maxReadDenialsPerSession?: number; maxActDenialsPerSession?: number };
   profiles: Record<Profile, ProfileConfig>;
   /** Passed straight to createSession; the Snowflake MCP server goes here. */
   mcpServers?: Record<string, MCPServerConfig>;
@@ -162,6 +183,11 @@ export interface OrchestratorConfig {
    * batch by batch (`scripts/plan_batches.py --budget-chars`, Task W2). An estimate, not tokens
    * (roughly characters / 4). Absent means `DEFAULT_CONFIG`'s 60 000. */
   analyzerBudgetChars?: number;
+  /** Live hardening, Task L9 (R1): extra tool names for the SDK's own `excludedTools` (never
+   * offered to the model at all), on top of the fixed list every role's policy refuses outright
+   * (`policy.ts`'s `ALWAYS_EXCLUDED_BUILTIN_TOOLS`). Validated in `loadConfig`: a list of
+   * non-empty strings, or absent (the fixed list alone). */
+  session?: { excludedTools?: string[] };
 }
 
 export interface RunOptions {
@@ -170,7 +196,7 @@ export interface RunOptions {
   stopAfter?: Stage;
   tier?: Tier;
   dryRun?: boolean;
-  runner?: "mock" | "copilot";
+  runner?: "mock" | "copilot" | "external";
   profile?: Profile;
   /** Undefined means "decide from stdin being a TTY". */
   interactive?: boolean;

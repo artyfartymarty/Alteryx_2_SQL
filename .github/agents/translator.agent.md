@@ -10,12 +10,28 @@ model: gpt-6-astra
 - cookbook/snowpark.md for a Snowpark segment, cookbook/dbt.md for a dbt project: the same tools' idioms in that
   target <!-- amended: output targets phase 2 -->
 - on a repeat pass: segments/seg_NN/review.json and validation.json
+- the golden data only sparingly: the contract describes every column, so read at most one golden set's inputs
+  (`golden/inputs/normal/`) when an example helps -- never every set; the validator compares the rest <!-- amended: live hardening L8 -->
 
 ## Outputs
-- workflows/<id>/segments/seg_NN/proc.sql (or proc.py)
+- workflows/<id>/segments/seg_NN/proc.sql (or proc.py) -- the orchestrator's skeleton, every TODO body filled (the first rule) <!-- amended: live hardening L8 -->
 - workflows/<id>/segments/seg_NN/translation_notes.md (every assumption, one per line)
 
 ## Rules
+- **The orchestrator writes the skeleton first** (`scripts/translation_scaffold.py`): when your session starts,
+  `proc.sql` (or `proc.py`) already holds every mechanical line -- the C4 header, the session line, the `LET` lines,
+  one write statement per contract output in the form its write mode needs (an Output tool's PreSQL/PostSQL is a
+  TODO statement before/after it), the work-table names and the `RETURN` -- and one CTE stub per tool, named and
+  commented by the rules below, whose body is exactly `TODO(scaffold)` and whose comment says what it reads and
+  which columns it yields. Replace every `TODO(scaffold)` with that tool's transformation and change nothing else:
+  not the header, the `LET` lines, the write statements or the file layout (you may add an `ORDER BY` after a final
+  `SELECT`'s `FROM` when the output's order matters). `scripts/compile_check.py` refuses a file that still holds
+  `TODO(scaffold)`, naming each line (`scaffold:todo`). The rules below are what those lines already follow; they
+  matter when you write a TODO statement or read a compile error. A column that is a reserved word (`ORDER`,
+  `GROUP`, `ON`, …) is already double-quoted in the mechanical lines; quote it the same way in your bodies. A
+  skeleton with no `TODO(scaffold)` at all (a segment that only passes a stream through) is already the whole
+  translation: keep it as it is and write `translation_notes.md`. An Output tool's PreSQL/PostSQL is required, not
+  optional: `compile_check.py` refuses a write whose PreSQL/PostSQL statement is missing. <!-- amended: live hardening L8 -->
 - One CTE per tool named t<toolid>_<tooltype>, each preceded by a comment with the Alteryx tool ID and intent.
 - Sources come only from mappings.yaml or the upstream segment's work table. Never invent a table.
 - Contract C4 in full: the procedure is `MIG_WORK.<WF>_<SEG>(SRC_DB STRING, SRC_SCHEMA STRING, TGT_DB STRING, TGT_SCHEMA STRING, RUN_ID STRING) RETURNS STRING LANGUAGE SQL EXECUTE AS CALLER`. Each mapped table's name is built once at the top of the body, one `LET` per distinct table, using the `logical` names from mappings.yaml: `LET <LOGICAL>_SRC VARCHAR := SRC_DB || '.' || SRC_SCHEMA || '.<LOGICAL>';` for a source and `LET <LOGICAL>_TGT VARCHAR := TGT_DB || '.' || TGT_SCHEMA || '.<LOGICAL>';` for a final target (a logical that is both gets both). Inside the `LET` the procedure's arguments are named without a colon -- Snowflake's documented expression syntax; the colon binds a variable inside a SQL statement -- and a colon there is refused (`c4:let_form`), as is a comment inside a `LET` (put it on the line in front). Sources are then read as `IDENTIFIER(:<LOGICAL>_SRC)` and final targets written as `IDENTIFIER(:<LOGICAL>_TGT)` (a `_SRC` name is never written and a `_TGT` name never read: `c4:identifier_role`) -- never an expression inside `IDENTIFIER(…)`: Snowflake documents `IDENTIFIER(` with one value (a string literal, session variable, bind variable or Snowflake Scripting variable), and `scripts/compile_check.py` refuses anything else as `c4:let_form` or `c4:identifier_expression`. This is the documented form; nothing in this repo has run on Snowflake, and the first real-account run confirms it. Upstream segment tables and this segment's own `_OUT` tables are written literally as `MIG_WORK.…`. The body is `BEGIN`, those `LET`s, a linear list of plain SQL statements, one `RETURN 'OK';` as the last statement (`c4:return_form`), `END;`, with no other `LET` and no `DECLARE`, variable assignment, loops, `IF`, `CALL` or `EXECUTE IMMEDIATE`. <!-- amended: plan Task 12 --> <!-- amended: output targets phase 2 -->
@@ -33,9 +49,20 @@ model: gpt-6-astra
   gives `1.01` — rounding a FLOAT silently drifts from Alteryx's fixed-decimal arithmetic. <!-- amended: plan Task 12 -->
 - Filter: rows evaluating to NULL go to the False branch. Join: emit only the L/J/R outputs that downstream uses.
 - Cross Tab / Transpose: PIVOT / UNPIVOT; if the column set is dynamic, generate dynamic SQL and say so.
-- Output write modes: Overwrite -> CREATE OR REPLACE / TRUNCATE+INSERT, Append -> INSERT, Update;Insert if new -> MERGE.
-  Preserve pre-SQL and post-SQL from the Output tool as separate statements.
+- Output write modes -- each final target is written in exactly one form, the one its contract `write_mode`
+  (or `intake/mappings.yaml`'s `mode`) names, and `scripts/compile_check.py` refuses any other as `c4:write_mode`:
+  `overwrite` -> `CREATE OR REPLACE TABLE IDENTIFIER(:<LOGICAL>_TGT) AS …` (never TRUNCATE + INSERT: an overwrite
+  replaces the table, and the golden runs have no table to truncate); `append` -> `INSERT INTO
+  IDENTIFIER(:<LOGICAL>_TGT) (<columns>) SELECT …`; `truncate_append` -> `TRUNCATE TABLE IDENTIFIER(:<LOGICAL>_TGT)`
+  (or `DELETE FROM` it with no WHERE), then that `INSERT INTO`; `update_insert` (intake's `merge`) -> one
+  `MERGE INTO IDENTIFIER(:<LOGICAL>_TGT) … ON <target>.<KEY> = <source>.<KEY> AND …` on exactly the contract's keys,
+  with `WHEN MATCHED THEN UPDATE …` and `WHEN NOT MATCHED THEN INSERT …`.
+  Preserve pre-SQL and post-SQL from the Output tool as separate statements, before and after that write: they
+  are the only other statements that may touch the target, and only when the tool has them (`dag.json`). <!-- amended: live hardening L4 -->
 - Never execute SQL, never touch another segment, never edit cookbook/.
+  (Never through the SQL tool, and never a SQL file of your own: the one exception is running the validator
+  script on your own segment, as "Test your own segment" below says -- it runs your procedure on the local
+  double, never on Snowflake.) <!-- amended: live hardening L4 -->
 - On a repeat pass read validation.json first and change only what its diagnosis points at.
 
 ## Snowpark segments (`contract.json`'s `"target": "snowpark"`) <!-- amended: output targets phase 1 -->
@@ -46,6 +73,11 @@ one of them as a named check:
 
 - Source of truth: `segments/<seg>/proc.py`, a module with exactly one public entry point
   `def run(session, src_db, src_schema, tgt_db, tgt_schema, run_id) -> str` returning `"OK"`.
+- **The skeleton** (`scripts/translation_scaffold.py`): `proc.py` already holds `run`'s signature, every input read
+  into a named DataFrame (`src_<logical>` for a mapped source, `in_<stream>` for an upstream stream), one
+  `# tool <id>:` stub per data node whose `TODO(scaffold)` line you replace -- its comment names what it reads and
+  the `out_<stream>` it must assign -- every write from its `out_<stream>` in the form its write mode needs, and
+  `return "OK"`. Keep the signature, the reads, the writes and the return as they are. <!-- amended: live hardening L8 -->
 - Rules (checked by `compile_check.py --target snowpark`, §5.1), every one of them a named check:
   - **Imports** only from `snowflake.snowpark`, `snowflake.snowpark.functions`,
     `snowflake.snowpark.types`, `pandas`, `numpy`, `re`, `math`, `datetime`, `decimal`; no `exec`,
@@ -70,7 +102,11 @@ one of them as a named check:
   - **Exactly one sink**: `.write.mode("overwrite" | "append").save_as_table(<one positional
     literal>)`, the table named in the same two forms, with `<LOGICAL>` an `outputs[].logical` this
     contract declares for the `{tgt_db}.{tgt_schema}` form; `.merge(...)` on
-    `session.table(f"{tgt_db}.{tgt_schema}.<LOGICAL>")` is that same shape. `saveAsTable` is a real
+    `session.table(f"{tgt_db}.{tgt_schema}.<LOGICAL>")` is that same shape. A final target's write
+    mode picks which (`rule:write_mode`, live hardening L4): `overwrite` and `append` their own
+    `.mode(...)`, `truncate_append` `.mode("truncate")`, `update_insert` the `.merge(...)` on exactly
+    the contract's keys; a `.update(...)` or `.delete(...)` of the target is the Output tool's
+    PreSQL or PostSQL, and only when the tool has one. `saveAsTable` is a real
     alias and is held to the same rule. Every OTHER way of putting something somewhere is refused
     wherever the name appears, as an attribute or as a bare name, whatever the receiver is called:
     `insert_into`, `insertInto`, `copy_into_location`, `copyIntoLocation`, `copy_into_table`,
@@ -90,6 +126,27 @@ one of them as a named check:
   - One `# tool <id>: …` comment per data node of the segment (the CTE rule's equivalent).
     `pandas` is allowed for row-sequential logic through `to_pandas()` /
     `session.create_dataframe(pdf)`; the notes must say which tool needed it.
+  - **The gate is an ALLOW-list, not a deny-list** (live hardening L4 fix round 5): it accepts only
+    the surface the benign corpus uses and refuses everything else — so reach for the documented
+    Snowpark DataFrame/Column API and the pandas carry-over idioms, nothing more. Concretely: a
+    method call `x.m(...)` is refused unless `m` is a Snowpark DataFrame/Column method
+    (`filter`/`where`/`select`/`with_column`/`group_by`/`agg`/`join`/`union`/`sort`/`distinct`/
+    `merge`/`save_as_table`/…), a Snowpark Column method (`alias`/`asc`/`desc`/`is_null`/
+    `within_group`/`cast`/…) or a pandas carry-over method (`to_pandas`/`sort_values`/`reset_index`/
+    `groupby`/`iterrows`/`itertuples`/`to_dict`/`sum`); `.eval`, `.query`, `.pipe`, `.style`,
+    `.plot`, `.apply`, `.to_pandas_batches`, every `to_*` writer and every `read_*` reader are OFF
+    it. A `pd.`/`np.` module attribute is refused unless on its short allow-list (`pd.isna`/
+    `pd.notna`/`pd.NA`/`pd.DataFrame`/`pd.Series`/`pd.Timestamp`; `np.random`/`np.nan`), so `pd.eval`
+    and `pd.read_csv` never resolve; `engine="python"` is refused outright. If your translation
+    genuinely needs a name that is off the allow-list, say so in the notes rather than working around
+    it — the allow-list is widened deliberately, not evaded. <!-- amended: live hardening L4 fix round 5 -->
+- **A final target is written in its write mode** (`rule:write_mode`): `overwrite` ->
+  `.write.mode("overwrite").save_as_table(f"{tgt_db}.{tgt_schema}.<LOGICAL>")`, `append` -> `.mode("append")`,
+  `truncate_append` -> `.mode("truncate")`, `update_insert` (intake's `merge`) -> one
+  `session.table(f"{tgt_db}.{tgt_schema}.<LOGICAL>").merge(<source>, <target>["<KEY>"] == <source>["<KEY>"] & …,
+  [when_matched().update({…}), when_not_matched().insert({…})])` on exactly the contract's keys. A `.update(…)` or
+  `.delete(…)` of the target is the Output tool's PreSQL (before the write) or PostSQL (after it), and only when the
+  tool has one. <!-- amended: live hardening L4 -->
 - `segments/<seg>/proc.sql` is a RENDERED artefact, not yours: `scripts/render_snowpark.py <id> seg_NN` writes
   the `LANGUAGE PYTHON` wrapper (`RUNTIME_VERSION` from `mappings/global.yaml`'s `program.snowpark_runtime`,
   `PACKAGES`, `HANDLER = 'run'`, `EXECUTE AS CALLER`) around `proc.py` verbatim. Never write or edit `proc.sql`
@@ -99,12 +156,24 @@ one of them as a named check:
   is the Local Testing Framework, which implements a subset of Snowflake's functions and types.
 
 Done when translation_notes.md lists every assumption and compile_check exits 0 — for a `sql` segment that is
-`.venv/Scripts/python.exe scripts/compile_check.py <id> seg_NN`; for a `snowpark` segment it is
-`.venv/Scripts/python.exe scripts/render_snowpark.py <id> seg_NN` first, then
-`.venv/Scripts/python.exe scripts/compile_check.py <id> seg_NN --target snowpark`, with the notes also saying
+`python scripts/compile_check.py <id> seg_NN`; for a `snowpark` segment it is
+`python scripts/render_snowpark.py <id> seg_NN` first, then
+`python scripts/compile_check.py <id> seg_NN --target snowpark`, with the notes also saying
 which tool forced `pandas`, if any.
 Exit 1 means a real compile error to fix; exit 2 means the script itself could not run (usage or unexpected
 error, e.g. proc.sql or contract.json missing) — stop and report rather than treating it as a compile error. <!-- amended: plan Task 12 -->
+
+Test your own segment before you finish, but run the validator at most ONCE per session. Once compile_check exits 0,
+run it one time against the golden data: `python scripts/validate_segment.py <id> seg_NN` for a `sql` segment,
+`python scripts/validate_snowpark.py <id> seg_NN` for a `snowpark` one, adding `--set <name>` (repeatable) to run
+only some golden sets. Read `segments/seg_NN/validation.json` (and `validation.<set>.json`): exit 0 is a pass, 2
+means the script could not run (stop and report). On exit 1 (a real FAIL), do not run the validator again, and do
+not read the pipeline's own `scripts/` or `orchestrator/` source to debug the difference -- the validation report,
+the contract, the cookbook and `docs/reference/` are the evidence. Write what you have (the failing checks, the diff
+clusters, the suspect CTE) into `translation_notes.md` and finish: the orchestrator's own validator and the fixer
+iterations take it from there. Only your own segment and only `--set` are accepted -- no other segment, no other
+flag. The orchestrator's validator re-runs the authoritative validation independently afterwards: the reports your
+run leaves are cleared before it runs, so they are for you, never the verdict. <!-- amended: live hardening L7 -->
 
 ## dbt projects (`manifest.json`'s `"output_kind": "dbt"`) <!-- amended: output targets phase 2 -->
 A workflow whose `manifest.json` says `"output_kind": "dbt"` is not translated segment by segment. You are called
@@ -115,6 +184,15 @@ is `docs/reference/output-targets.md` §3.3; the idioms per tool are in `cookboo
 `scripts/compile_check.py <id> --target dbt` checks every rule below as a named check (`dbt:<name>` in
 `dbt/compile_check.json`):
 
+- **The orchestrator writes the project's skeleton first** (`scripts/translation_scaffold.py`): `dbt_project.yml`,
+  `profiles.yml`, `README.md`, `models/sources.yml` and `models/schema.yml` are complete, and every contract output
+  has its model with its exact `config(...)` line (an Output tool's PreSQL/PostSQL is `pre_hook='TODO(scaffold)'` /
+  `post_hook='TODO(scaffold)'` in it), its `source()`/`ref()` reads as the first CTEs (`src_<logical>`,
+  `ref_<model>`), one CTE stub per tool with its `-- tool <id>:` comment and a `TODO(scaffold)` body, the Output
+  tool's comment and the final `SELECT`. Replace every `TODO(scaffold)` -- a CTE body, or a hook's one statement --
+  and change nothing else: not the file layout, the YAML files or the config lines; write `translation_notes.md`
+  yourself. `compile_check.py --target dbt` refuses a remaining `TODO(scaffold)` (`scaffold:todo`) before dbt ever
+  runs. The rules below are what the skeleton already follows. <!-- amended: live hardening L8 -->
 - **The project is a closed surface** (`dbt:surface`, `dbt:project_yml`, `dbt:yaml`; checked before dbt ever runs,
   by `compile_check.py` and by `scripts/lib/dbt_project.py` itself, so a project outside it is never parsed,
   validated or deployed). The project holds exactly `dbt_project.yml`, `profiles.yml`, `README.md`,
@@ -221,5 +299,18 @@ alteryx_migration:
 ```
 
 Done when translation_notes.md lists every assumption and
-`.venv/Scripts/python.exe scripts/compile_check.py <id> --target dbt` exits 0. Exit 1 is a named check failing:
+`python scripts/compile_check.py <id> --target dbt` exits 0. Exit 1 is a named check failing:
 read `dbt/compile_check.json`. Exit 2 means the script itself could not run: stop and report.
+Then test the project, at most ONCE: `python scripts/validate_dbt.py <id>` (add `--set <name>` to run only some
+golden sets) runs it on DuckDB and writes every segment's `validation.json` and
+`workflows/<id>/validation_workflow.json`. Read them: exit 0 is a pass, 2 means the script could not run (stop and
+report). On exit 1 (a real FAIL), do not run the validator again, and do not read the pipeline's own `scripts/` or
+`orchestrator/` source to debug the difference -- the validation report, the contract, the cookbook and
+`docs/reference/` are the evidence. Write what you have into `translation_notes.md` and finish: the orchestrator's
+own validator and the fixer iterations take it from there. Only the workflow id and `--set` are accepted. The
+orchestrator's validator re-runs the authoritative validation independently afterwards; the reports your run leaves
+are cleared before it runs. <!-- amended: live hardening L7 -->
+
+Running scripts: run every script this file names as `python scripts/<name>.py …`, never through a
+`.venv/…` path. The orchestrator puts the project's interpreter first on PATH for your session, so
+`python` is that interpreter; a run root has no `.venv` of its own. <!-- amended: live hardening L1 -->

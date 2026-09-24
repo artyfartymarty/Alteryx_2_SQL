@@ -261,10 +261,18 @@ def test_a_tgt_name_read_as_a_source_is_refused(tmp_path, statement):
 
 
 def test_a_tgt_name_may_be_deleted_from_and_updated(tmp_path):
-    """A PreSQL `DELETE FROM` and a PostSQL `UPDATE` of the target (wf_0003's shape) write it."""
-    proc = _with_statement("DELETE FROM IDENTIFIER(:ITEMS_OUT_TGT) WHERE ID IS NULL").replace(
+    """A PreSQL `DELETE FROM` and a PostSQL `UPDATE` of the target (wf_0003's shape) write it.
+    Task L4: they sit before and after the write, and the Output tool declares both in `dag.json`
+    (`c4:write_mode` allows a statement beside the write only as the tool's own PreSQL/PostSQL)."""
+    proc = PROC.replace(
+        "  INSERT INTO IDENTIFIER(:ITEMS_OUT_TGT)",
+        "  DELETE FROM IDENTIFIER(:ITEMS_OUT_TGT) WHERE ID IS NULL;\n  INSERT INTO IDENTIFIER(:ITEMS_OUT_TGT)").replace(
         "  RETURN 'OK';", "  UPDATE IDENTIFIER(:ITEMS_OUT_TGT) SET NOTE = 'x' WHERE NOTE IS NULL;\n  RETURN 'OK';")
-    assert cc.compile_check(build(tmp_path, proc), WF, SEG)["status"] == "OK"
+    repo = build(tmp_path, proc)
+    repo.seg(WF, SEG, "dag.json").write_text(json.dumps({"nodes": [{"tool_id": "7", "type": "output", "config": {
+        "pre_sql": "DELETE FROM dbo.ITEMS_OUT WHERE ID IS NULL",
+        "post_sql": "UPDATE dbo.ITEMS_OUT SET NOTE = 'x' WHERE NOTE IS NULL"}}]}), encoding="utf-8")
+    assert cc.compile_check(repo, WF, SEG)["status"] == "OK"
 
 
 def test_the_cli_exits_1_on_a_c4_refusal(tmp_path, capsys):

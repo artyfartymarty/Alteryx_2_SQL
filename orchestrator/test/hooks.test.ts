@@ -2,7 +2,8 @@
 // secret flagging, error classification and per-role metrics.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { mkdtemp, mkdir, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -14,6 +15,10 @@ import {
   recordMetrics,
   RATE_LIMIT,
   CONTEXT_OVERFLOW,
+  spillFilesNamedIn,
+  recordableSpillFiles,
+  SPILL_CLOCK_TOLERANCE_MS,
+  outputFolders,
   type HookState,
 } from "../hooks.ts";
 import { loadManifest } from "../manifest.ts";
@@ -72,14 +77,14 @@ test("onPreToolUse decides, counts and audits, and records a denial", async (t) 
     invocation,
   );
   assert.deepEqual(allowed, { permissionDecision: "allow" });
-  assert.equal(state.denied, false);
+  assert.equal(state.denials.length, 0);
 
   const refused = await hooks.onPreToolUse!(
     { ...base(root), toolName: "edit", toolArgs: { path: "workflows/wf_0001/golden/inputs/normal/1.csv", token: "sk-live-1" } },
     invocation,
   );
   assert.equal((refused as any).permissionDecision, "deny");
-  assert.equal(state.denied, true);
+  assert.equal(state.denials.length, 1);
   assert.equal(state.toolCalls, 2);
   assert.match(state.denials[0], /golden/);
 
@@ -109,7 +114,7 @@ test("onPreToolUse hands the policy the repo root and audits every unrecognized 
 
   const unknown = await hooks.onPreToolUse!({ ...base(root), toolName: "browser_open", toolArgs: {} }, invocation);
   assert.match((unknown as any).permissionDecisionReason, /unrecognized tool/);
-  assert.equal(state.denied, true);
+  assert.equal(state.denials.length, 2);
 
   const events = (await auditLines(root)).map((line) => line.ev);
   assert.deepEqual(events, ["pre", "pre", "pre", "unrecognized-tool"]);
@@ -307,8 +312,11 @@ test("recordMetrics adds to (not replaces) a role's prior toolCalls, and is idem
   const wf: Manifest = { id: "wf_0001", status: {}, metrics: { intake: { toolCalls: 37, lastMs: 293830 } } };
   const state: HookState = {
     toolCalls: 29,
-    denied: false,
     denials: [],
+    readDenials: [],
+    actDenials: [],
+    severeDenials: [],
+    spillFiles: new Set(),
     rateLimited: false,
     contextOverflow: false,
     errors: [],
@@ -323,4 +331,253 @@ test("recordMetrics adds to (not replaces) a role's prior toolCalls, and is idem
   recordMetrics(wf, "intake", state, 9999); // a second call with the SAME state must be a no-op
   assert.equal(wf.metrics.intake.toolCalls, 66);
   assert.equal(wf.metrics.intake.lastMs, 2000);
+});
+
+// --- live hardening, Task L1: the SDK's spill files (R2) and graded denials (R3) -----------------
+// Live evidence (docs/live-smoke-test.md "Third live test"): a `Get-ChildItem -Recurse` result came
+// back 920 bytes long, cut off with the SDK's own "[Truncated — full output (…) temporarily saved to
+// <temp>\<ms>-copilot-tool-output-<pid>-<uuid>.txt]", and the model's `view` of that file was
+// denied as outside the repository. The hook now records such a path -- only in the SDK's two
+// sentences, only inside the OS temp directory, only with the SDK's spill name -- and the policy
+// lets THIS session read exactly that file with view or grep.
+
+const SPILL_NAME = "1790163412714-copilot-tool-output-21368-34355146-2e9d-48e8-b348-30d1813a265c.txt";
+const spillIn = (dir: string, name = SPILL_NAME) => path.join(dir, name);
+/** A real spill-named file in the OS temp directory, written now and removed after the test (fix
+ * round 1, M5: a spill path is recorded only if the file exists and is no older than the session). */
+async function freshSpill(t: any): Promise<string> {
+  const file = path.join(os.tmpdir(), `${Date.now()}-copilot-tool-output-${process.pid}-${randomUUID()}.txt`);
+  await writeFile(file, "the full output\n", "utf8");
+  t.after(() => rm(file, { force: true }));
+  return file;
+}
+const truncated = (file: string) =>
+  `Mode LastWriteTime Length Name\n---- ------------- ------ ----\nd---- workflows\n[Truncated \u2014 full output (48213 characters) temporarily saved to ${file}]`;
+const tooLarge = (file: string) => `Output too large to read at once (48213 characters). Saved to: ${file}\nRead it in parts with view_range.`;
+const post = (root: string, text: string, toolName = "powershell") => ({
+  ...base(root),
+  toolName,
+  toolArgs: { command: "Get-ChildItem -Recurse" },
+  toolResult: { resultType: "success" as const, textResultForLlm: text },
+});
+
+test("L1 R2: spillFilesNamedIn reads the SDK's two sentences, inside the temp directory, with the SDK's name", () => {
+  const temp = os.tmpdir();
+  const file = spillIn(temp);
+  assert.deepEqual(spillFilesNamedIn(truncated(file), temp), [path.resolve(file)]);
+  assert.deepEqual(spillFilesNamedIn(tooLarge(file), temp), [path.resolve(file)]);
+  assert.deepEqual(spillFilesNamedIn(tooLarge(`${file}.`), temp), [path.resolve(file)], "a full stop after the path is not part of it");
+  assert.deepEqual(spillFilesNamedIn(truncated(spillIn(path.join(temp, "nested"))), temp), [path.resolve(spillIn(path.join(temp, "nested")))]);
+  // a forged path outside the temp directory
+  const outside = spillIn(path.join(path.parse(temp).root, "not-temp"));
+  assert.deepEqual(spillFilesNamedIn(truncated(outside), temp), []);
+  assert.deepEqual(spillFilesNamedIn(truncated(spillIn(path.join(temp, "..", "sibling"))), temp), []);
+  // a temp file with a name that is not the SDK's spill name
+  assert.deepEqual(spillFilesNamedIn(truncated(path.join(temp, "notes.txt")), temp), []);
+  assert.deepEqual(spillFilesNamedIn(truncated(path.join(temp, `${SPILL_NAME}.exe`)), temp), []);
+  // a relative path, even with the spill name
+  assert.deepEqual(spillFilesNamedIn(truncated(SPILL_NAME), temp), []);
+  // the right path in any other sentence is not recorded
+  assert.deepEqual(spillFilesNamedIn(`The previous output was saved to ${file} earlier.`, temp), []);
+  assert.deepEqual(spillFilesNamedIn(`see ${file}`, temp), []);
+  assert.deepEqual(spillFilesNamedIn("", temp), []);
+});
+
+test("L1 R2: a spill file this session's result named becomes readable by view and grep -- nothing else", async (t) => {
+  const { root, wf, env } = await fixture(t);
+  const { hooks, state } = hooksFor("intake", wf, env);
+  const file = await freshSpill(t);
+  const pre = (toolName: string, toolArgs: unknown) => hooks.onPreToolUse!({ ...base(root), toolName, toolArgs }, invocation);
+
+  // before the result names it, the file is outside the repository like any other
+  assert.equal(((await pre("view", { path: file })) as any).permissionDecision, "deny");
+
+  await hooks.onPostToolUse!(post(root, truncated(file)), invocation);
+  assert.equal(state.spillFiles.size, 1);
+  assert.deepEqual(await pre("view", { path: file }), { permissionDecision: "allow" });
+  assert.deepEqual(await pre("view", { path: file, view_range: [1, 200] }), { permissionDecision: "allow" });
+  assert.deepEqual(await pre("grep", { pattern: "wf_0001", paths: [file] }), { permissionDecision: "allow" });
+
+  // every write, and the shell, on the recorded file stays denied; a write there -- through a write tool
+  // (Task L6, R2) or a shell command (L6 fix round 2, I5) -- is outside the repository, which is severe
+  const actsBefore = state.actDenials.length;
+  const severeBefore = state.severeDenials.length;
+  for (const [toolName, toolArgs] of [
+    ["create", { path: file, file_text: "x" }],
+    ["edit", { path: file, old_str: "a", new_str: "b" }],
+    ["powershell", { command: `Remove-Item ${file}` }],
+  ] as [string, unknown][]) {
+    assert.equal(((await pre(toolName, toolArgs)) as any).permissionDecision, "deny", toolName);
+  }
+  assert.equal(state.actDenials.length, actsBefore);
+  assert.equal(state.severeDenials.length, severeBefore + 3);
+
+  // grep with one recorded and one unrecorded path is denied
+  const unrecorded = spillIn(os.tmpdir(), "1790163499999-copilot-tool-output-4242-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.txt");
+  assert.equal(((await pre("grep", { pattern: "x", paths: [file, unrecorded] })) as any).permissionDecision, "deny");
+});
+
+test("L1 R2: another session's spill file is not this session's to read", async (t) => {
+  const { root, wf, env } = await fixture(t);
+  const file = await freshSpill(t);
+  const first = hooksFor("intake", wf, env);
+  await first.hooks.onPostToolUse!(post(root, tooLarge(file)), invocation);
+  assert.deepEqual(
+    await first.hooks.onPreToolUse!({ ...base(root), toolName: "view", toolArgs: { path: file } }, invocation),
+    { permissionDecision: "allow" },
+  );
+  const second = hooksFor("intake", wf, env);
+  const refused = (await second.hooks.onPreToolUse!({ ...base(root), toolName: "view", toolArgs: { path: file } }, invocation)) as any;
+  assert.equal(refused.permissionDecision, "deny");
+  assert.match(refused.permissionDecisionReason, /outside the repository/);
+  assert.deepEqual(second.state.readDenials.length, 1);
+});
+
+test("L1 R2: a forged path in the SDK's sentence is never recorded, and stays unreadable", async (t) => {
+  const { root, wf, env } = await fixture(t);
+  const { hooks, state } = hooksFor("intake", wf, env);
+  const outside = spillIn(path.join(path.parse(os.tmpdir()).root, "not-temp"));
+  const notSpill = path.join(os.tmpdir(), "notes.txt");
+  await hooks.onPostToolUse!(post(root, truncated(outside)), invocation);
+  await hooks.onPostToolUse!(post(root, truncated(notSpill)), invocation);
+  assert.equal(state.spillFiles.size, 0);
+  for (const target of [outside, notSpill]) {
+    const refused = (await hooks.onPreToolUse!({ ...base(root), toolName: "view", toolArgs: { path: target } }, invocation)) as any;
+    assert.equal(refused.permissionDecision, "deny", target);
+  }
+});
+
+test("L1 R3: onPreToolUse records each denial with its class and hands the SDK only its own two fields", async (t) => {
+  const { root, wf, env } = await fixture(t);
+  const { hooks, state } = hooksFor("intake", wf, env);
+  const pre = (toolName: string, toolArgs: unknown) => hooks.onPreToolUse!({ ...base(root), toolName, toolArgs }, invocation);
+
+  const severe = (await pre("view", { path: "workflows/wf_0002/manifest.json" })) as any;
+  assert.deepEqual(Object.keys(severe).sort(), ["permissionDecision", "permissionDecisionReason"]);
+  await pre("powershell", { command: "Get-ChildItem -Recurse -File | Select-Object FullName" });
+  await pre("powershell", { command: "New-Item -ItemType Directory -Path workflows\\wf_0001\\notes" });
+  await pre("create", { path: "cookbook/x.md", file_text: "x" });
+  await pre("view", { path: "workflows/wf_0001/manifest.json" }); // allowed: no denial
+
+  // Task L6 (R2): another workflow, named, and a write outside the own workflow are severe
+  assert.equal(state.readDenials.length, 1);
+  assert.equal(state.actDenials.length, 1);
+  assert.equal(state.severeDenials.length, 2);
+  assert.equal(state.denials.length, 4, "every denial is still listed, in order");
+  assert.match(state.severeDenials[0], /^view: no access to other workflows/);
+  assert.match(state.severeDenials[1], /^create: cookbook\/ is read-only/);
+  assert.match(state.readDenials[0], /^powershell: /);
+  assert.match(state.actDenials[0], /^powershell: /);
+  // nothing about the audit changes: every call, allowed or denied, has its pre line, and a denied
+  // call's line names its class
+  const lines = await auditLines(root);
+  assert.deepEqual(lines.map((line) => line.decision), ["deny", "deny", "deny", "deny", "allow"]);
+  assert.deepEqual(lines.map((line) => line.class), ["severe", "read", "act", "severe", undefined]);
+});
+
+test("L1 R3: recordMetrics sums read, act and severe denials over sessions, like toolCalls", async (t) => {
+  const { root, wf, env } = await fixture(t);
+  for (const session of [1, 2]) {
+    const { hooks } = hooksFor("intake", wf, env);
+    await hooks.onPreToolUse!({ ...base(root), toolName: "view", toolArgs: { path: "C:/elsewhere/x.md" } }, invocation);
+    if (session === 2) {
+      // an act (inside the own workflow, outside intake's lane) and, Task L6, a severe one (outside it)
+      await hooks.onPreToolUse!({ ...base(root), toolName: "create", toolArgs: { path: "workflows/wf_0001/segments/seg_01/contract.json" } }, invocation);
+      await hooks.onPreToolUse!({ ...base(root), toolName: "create", toolArgs: { path: "cookbook/x.md" } }, invocation);
+    }
+    await hooks.onSessionEnd!({ ...base(root), reason: "complete" }, invocation);
+  }
+  assert.equal(wf.metrics.intake.readDenials, 2);
+  assert.equal(wf.metrics.intake.actDenials, 1);
+  assert.equal(wf.metrics.intake.severeDenials, 1);
+  assert.equal(wf.metrics.intake.toolCalls, 4);
+  const saved = await loadManifest(root, "wf_0001");
+  assert.equal(saved.metrics.intake.readDenials, 2);
+  assert.equal(saved.metrics.intake.actDenials, 1);
+  assert.equal(saved.metrics.intake.severeDenials, 1);
+});
+
+// ---------- Task L1, fix round 1 ----------
+
+test("L1 fix 1 (M1): a spill path is recorded only in its canonical spelling, whitespace untrimmed", () => {
+  const temp = os.tmpdir();
+  const file = spillIn(temp);
+  // a path that only resolves to the spill file is not the path the SDK names
+  assert.deepEqual(spillFilesNamedIn(truncated(path.join(temp, "sub") + path.sep + ".." + path.sep + SPILL_NAME), temp), []);
+  // Unicode whitespace after the name is part of the name, which is then not a spill name
+  assert.deepEqual(spillFilesNamedIn(truncated(`${file}\u00a0`), temp), []);
+  assert.deepEqual(spillFilesNamedIn(tooLarge(`${file}\u2028`), temp), []);
+  // blanks around the path inside the SDK's own sentence are still dropped
+  assert.deepEqual(spillFilesNamedIn(`[Truncated \u2014 full output (1 KB) temporarily saved to  ${file} ]`, temp), [path.resolve(file)]);
+});
+
+test("L1 fix 1 (M5): a spill path is recorded only if the file exists and is no older than the session", async (t) => {
+  const started = Date.now();
+  const fresh = await freshSpill(t);
+  assert.deepEqual(await recordableSpillFiles(truncated(fresh), started), [path.resolve(fresh)]);
+  // a path quoted from an older file: an earlier session's spill, copied into a notes file
+  const older = await freshSpill(t);
+  const anHourAgo = new Date(started - 3_600_000);
+  await utimes(older, anHourAgo, anHourAgo);
+  assert.deepEqual(await recordableSpillFiles(truncated(older), started), []);
+  // just inside the clock tolerance is still this session's
+  const skewed = await freshSpill(t);
+  const withinTolerance = new Date(started - SPILL_CLOCK_TOLERANCE_MS + 500);
+  await utimes(skewed, withinTolerance, withinTolerance);
+  assert.deepEqual(await recordableSpillFiles(tooLarge(skewed), started), [path.resolve(skewed)]);
+  // a spill-named path that does not exist
+  assert.deepEqual(await recordableSpillFiles(truncated(spillIn(os.tmpdir(), `1-copilot-tool-output-0-${randomUUID()}.txt`)), started), []);
+});
+
+test("L1 fix 1 (M5): through the hooks, a result quoting an older spill file makes nothing readable", async (t) => {
+  const { root, wf, env } = await fixture(t);
+  const older = await freshSpill(t);
+  const anHourAgo = new Date(Date.now() - 3_600_000);
+  await utimes(older, anHourAgo, anHourAgo);
+  const { hooks, state } = hooksFor("intake", wf, env);
+  // e.g. a `view` of the agent's own notes file, into which it copied an earlier session's sentence
+  await hooks.onPostToolUse!(post(root, `# notes
+${truncated(older)}`, "view"), invocation);
+  assert.equal(state.spillFiles.size, 0);
+  const refused = (await hooks.onPreToolUse!({ ...base(root), toolName: "view", toolArgs: { path: older } }, invocation)) as any;
+  assert.equal(refused.permissionDecision, "deny");
+});
+
+test("L1 fix 1 (M9): a denied call's pre line carries its reason, redacted and bounded, and its class", async (t) => {
+  const { root, wf, env } = await fixture(t);
+  const { hooks } = hooksFor("intake", wf, env);
+  const pre = (toolName: string, toolArgs: unknown) => hooks.onPreToolUse!({ ...base(root), toolName, toolArgs }, invocation);
+  await pre("view", { path: "workflows/wf_0001/manifest.json" });
+  await pre("view", { path: "workflows/wf_0002/manifest.json" });
+  await pre("powershell", { command: `python scripts/segment.py wf_0001 --token=sk-live-9 ${"x".repeat(900)}` });
+  await pre("view", { path: "C:/elsewhere/x.md" });
+  const [allowed, severe, act, read] = await auditLines(root);
+  assert.equal(allowed.decision, "allow");
+  assert.equal("reason" in allowed || "class" in allowed, false, "an allowed call's line is unchanged");
+  assert.equal(severe.decision, "deny");
+  assert.equal(severe.class, "severe", "Task L6 (R2): a call whose reason is another workflow is severe");
+  assert.match(severe.reason, /no access to other workflows \(wf_0002\)/);
+  assert.equal(read.class, "read");
+  assert.match(read.reason, /outside the repository/);
+  assert.equal(act.class, "act");
+  assert.doesNotMatch(act.reason, /sk-live-9/, "the reason is redacted like the arguments");
+  assert.ok(act.reason.length <= AUDIT_ARG_LIMIT, `bounded: ${act.reason.length}`);
+});
+
+// ---------- live hardening, Task L9 fix round 2 (L9-m4): outputFolders holds ids to ID_PATTERN ----------
+
+test("L9-m4: outputFolders skips a segment id that fails ID_PATTERN, and names it in skipped", () => {
+  const bad = outputFolders("translator", { segment: "../../etc" });
+  assert.deepEqual(bad.folders, [], "no folder built from the bad id");
+  assert.deepEqual(bad.skipped, ["../../etc"]);
+
+  const good = outputFolders("translator", { segment: "seg_01" });
+  assert.deepEqual(good.folders, ["segments/seg_01"]);
+  assert.deepEqual(good.skipped, []);
+});
+
+test("L9-m4: outputFolders skips only the bad ids in a batch, keeping the rest", () => {
+  const result = outputFolders("analyzer", { batch: { id: "batch_01", segments: ["seg_01", "../evil", "seg_02"] } });
+  assert.deepEqual(result.folders, ["notes", "analysis", "segments/seg_01", "segments/seg_02"]);
+  assert.deepEqual(result.skipped, ["../evil"]);
 });

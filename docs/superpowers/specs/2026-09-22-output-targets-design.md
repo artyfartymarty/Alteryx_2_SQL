@@ -136,7 +136,11 @@ workflow `NEEDS_HUMAN` with reason `target-mismatch: <detail>`.
   - **Exactly one sink**: `.write.mode("overwrite" | "append").save_as_table(<one positional
     literal>)`, the table named in the same two forms, with `<LOGICAL>` an `outputs[].logical` this
     contract declares for the `{tgt_db}.{tgt_schema}` form; `.merge(...)` on
-    `session.table(f"{tgt_db}.{tgt_schema}.<LOGICAL>")` is that same shape. `saveAsTable` is a real
+    `session.table(f"{tgt_db}.{tgt_schema}.<LOGICAL>")` is that same shape. A final target's write
+    mode picks which (`rule:write_mode`, live hardening L4): `overwrite` and `append` their own
+    `.mode(...)`, `truncate_append` `.mode("truncate")`, `update_insert` the `.merge(...)` on exactly
+    the contract's keys; a `.update(...)` or `.delete(...)` of the target is the Output tool's
+    PreSQL or PostSQL, and only when the tool has one. `saveAsTable` is a real
     alias and is held to the same rule. Every OTHER way of putting something somewhere is refused
     wherever the name appears, as an attribute or as a bare name, whatever the receiver is called:
     `insert_into`, `insertInto`, `copy_into_location`, `copyIntoLocation`, `copy_into_table`,

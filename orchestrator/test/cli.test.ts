@@ -1,13 +1,16 @@
 // Flags, workflow selection and the exit-code contract.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
+import { existsSync } from "node:fs";
 import { readFile, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { makeEnv, seedWorkflow } from "./fakes.ts";
 import {
   parseArgs, main, loadConfig, assertPythonExists, DEFAULT_CONFIG, UsageError, githubAccess,
-  makeEnv as makeRealEnv,
+  makeEnv as makeRealEnv, sessionEnvironment, copilotClientOptions,
 } from "../cli.ts";
 import { writeJson } from "../manifest.ts";
 import { ROLES } from "../types.ts";
@@ -165,6 +168,168 @@ test("main refuses to run with a python that does not exist (exit 2, nothing esc
   assert.match(errors.join("\n"), /python/);
   const manifest = JSON.parse(await readFile(path.join(root, "workflows", "wf_0001", "manifest.json"), "utf8"));
   assert.notEqual(manifest.status?.parse, "NEEDS_HUMAN", "the workflow must not be escalated for a config mistake");
+});
+
+// Task L1 fix round 1 (M6): a read-denial budget that is not a non-negative integer would make every
+// comparison with it false, so read denials would never park the session -- failing open.
+test("L1 fix 1 (M6): budgets.maxReadDenialsPerSession must be a non-negative integer, or the config is refused", async () => {
+  const { root } = await makeEnv({ wf: "wf_0001" });
+  for (const bad of ["twenty", "20", -1, 2.5, null, true, [], {}, Number.NaN]) {
+    await writeJson(`${root}/orchestrator.config.json`, { budgets: { maxReadDenialsPerSession: bad } });
+    await assert.rejects(loadConfig(root), (error: unknown) => {
+      assert.ok(error instanceof UsageError, `${JSON.stringify(bad)}: expected a UsageError, got ${error}`);
+      assert.match((error as Error).message, /budgets\.maxReadDenialsPerSession must be a non-negative integer/);
+      return true;
+    });
+  }
+  for (const good of [0, 1, 20, 500]) {
+    await writeJson(`${root}/orchestrator.config.json`, { budgets: { maxReadDenialsPerSession: good } });
+    assert.equal((await loadConfig(root)).budgets.maxReadDenialsPerSession, good);
+  }
+  // unset keeps the default
+  await writeJson(`${root}/orchestrator.config.json`, { budgets: { maxToolCallsPerWorkflow: 10 } });
+  assert.equal((await loadConfig(root)).budgets.maxReadDenialsPerSession, 20);
+});
+
+// Task L6 (R2): the attempted-action budget is validated the same way: a value that is not a
+// non-negative integer would make every comparison with it false, so attempted actions would never park.
+test("L6 R2: budgets.maxActDenialsPerSession must be a non-negative integer, or main exits 2 naming the key", async (t) => {
+  const { root } = await makeEnv({ wf: "wf_0001" });
+  for (const bad of ["three", "3", -1, 2.5, null, true, [], {}, Number.NaN]) {
+    await writeJson(`${root}/orchestrator.config.json`, { budgets: { maxActDenialsPerSession: bad } });
+    await assert.rejects(loadConfig(root), (error: unknown) => {
+      assert.ok(error instanceof UsageError, `${JSON.stringify(bad)}: expected a UsageError, got ${error}`);
+      assert.match((error as Error).message, /budgets\.maxActDenialsPerSession must be a non-negative integer/);
+      return true;
+    });
+  }
+  for (const good of [0, 1, 3, 50]) {
+    await writeJson(`${root}/orchestrator.config.json`, { budgets: { maxActDenialsPerSession: good } });
+    assert.equal((await loadConfig(root)).budgets.maxActDenialsPerSession, good);
+  }
+  // unset keeps the default
+  await writeJson(`${root}/orchestrator.config.json`, { budgets: { maxToolCallsPerWorkflow: 10 } });
+  assert.equal((await loadConfig(root)).budgets.maxActDenialsPerSession, 20, "L6 fix round 1: the default is 20");
+
+  await writeJson(`${root}/orchestrator.config.json`, { budgets: { maxActDenialsPerSession: "three" } });
+  const errors: string[] = [];
+  t.mock.method(console, "error", (line: string) => errors.push(String(line)));
+  t.mock.method(console, "log", () => {});
+  assert.equal(await main(["--root", root, "--runner", "mock", "--no-interactive"]), 2);
+  assert.match(errors.join("\n"), /budgets\.maxActDenialsPerSession/);
+  const manifest = JSON.parse(await readFile(path.join(root, "workflows", "wf_0001", "manifest.json"), "utf8"));
+  assert.equal(manifest.status?.parse, undefined, "nothing ran");
+});
+
+// Task L1 fix round 2 (S5): the workflow's tool-call budget is validated the same way.
+test("L1 fix 2 (S5): budgets.maxToolCallsPerWorkflow must be a positive integer, or main exits 2 naming the key", async (t) => {
+  const { root } = await makeEnv({ wf: "wf_0001" });
+  for (const bad of ["400", 0, -5, 1.5, null, false, [], {}]) {
+    await writeJson(`${root}/orchestrator.config.json`, { budgets: { maxToolCallsPerWorkflow: bad } });
+    await assert.rejects(loadConfig(root), (error: unknown) => {
+      assert.ok(error instanceof UsageError, `${JSON.stringify(bad)}: expected a UsageError, got ${error}`);
+      assert.match((error as Error).message, /budgets\.maxToolCallsPerWorkflow must be a positive integer/);
+      return true;
+    });
+  }
+  for (const good of [1, 400, 5000]) {
+    await writeJson(`${root}/orchestrator.config.json`, { budgets: { maxToolCallsPerWorkflow: good } });
+    assert.equal((await loadConfig(root)).budgets.maxToolCallsPerWorkflow, good);
+  }
+  await writeJson(`${root}/orchestrator.config.json`, { budgets: { maxToolCallsPerWorkflow: "many" } });
+  const errors: string[] = [];
+  t.mock.method(console, "error", (line: string) => errors.push(String(line)));
+  t.mock.method(console, "log", () => {});
+  assert.equal(await main(["--root", root, "--runner", "mock", "--no-interactive"]), 2);
+  assert.match(errors.join("\n"), /budgets\.maxToolCallsPerWorkflow/);
+});
+
+// Live hardening, Task L7 (R1): `profiles.<name>.provider.maxPromptTokens`/`maxOutputTokens` reach
+// the SDK's createSession unchanged (runner.test.ts covers that half); a value that is not a
+// positive integer would silently reach the SDK as garbage instead of being refused here, by name.
+test("L7 R1: profiles.<name>.provider.maxPromptTokens/maxOutputTokens must be positive integers, or the config is refused", async () => {
+  const { root } = await makeEnv({ wf: "wf_0001" });
+  const provider = { type: "openai" as const, baseUrl: "http://127.0.0.1:8080/v1", apiKey: "local" };
+  for (const profileName of ["local", "hosted"] as const) {
+    for (const key of ["maxPromptTokens", "maxOutputTokens"] as const) {
+      for (const bad of ["120000", 0, -1, 1.5, null, true, [], {}, Number.NaN]) {
+        await writeJson(`${root}/orchestrator.config.json`, {
+          profiles: { [profileName]: { ...(profileName === "hosted" ? { model: "m" } : {}), provider: { ...provider, [key]: bad } } },
+        });
+        await assert.rejects(loadConfig(root), (error: unknown) => {
+          assert.ok(error instanceof UsageError, `${profileName}.${key}=${JSON.stringify(bad)}: expected a UsageError, got ${error}`);
+          assert.match(
+            (error as Error).message,
+            new RegExp(`profiles\\.${profileName}\\.provider\\.${key} must be a positive integer`),
+          );
+          return true;
+        });
+      }
+      for (const good of [1, 120000, 500000]) {
+        await writeJson(`${root}/orchestrator.config.json`, {
+          profiles: { [profileName]: { ...(profileName === "hosted" ? { model: "m" } : {}), provider: { ...provider, [key]: good } } },
+        });
+        const config = await loadConfig(root);
+        assert.equal(config.profiles[profileName].provider?.[key], good);
+      }
+    }
+  }
+  // absent is fine -- most profiles set neither, and the hosted default carries no provider at all.
+  assert.equal(DEFAULT_CONFIG.profiles.hosted.provider, undefined);
+});
+
+// Live hardening, Task L9 (R1): session.excludedTools extends the SDK's fixed excludedTools list
+// (runner.test.ts covers that it reaches createSession); a value that is not a list of non-empty
+// strings would silently reach the SDK as garbage instead of being refused here, by name.
+test("L9 R1: session.excludedTools must be a list of non-empty strings, or the config is refused", async () => {
+  const { root } = await makeEnv({ wf: "wf_0001" });
+  for (const bad of ["web_fetch", 0, null, true, {}, [1], [null], [""], ["web_fetch", ""], [123, "x"]]) {
+    await writeJson(`${root}/orchestrator.config.json`, { session: { excludedTools: bad } });
+    await assert.rejects(loadConfig(root), (error: unknown) => {
+      assert.ok(error instanceof UsageError, `${JSON.stringify(bad)}: expected a UsageError, got ${error}`);
+      assert.match((error as Error).message, /session\.excludedTools must be a list of non-empty strings/);
+      return true;
+    });
+  }
+  for (const good of [[], ["web_fetch"], ["mcp:extra_tool", "custom:noop"]]) {
+    await writeJson(`${root}/orchestrator.config.json`, { session: { excludedTools: good } });
+    assert.deepEqual((await loadConfig(root)).session?.excludedTools, good);
+  }
+  // absent is fine -- the fixed list alone reaches createSession.
+  await writeJson(`${root}/orchestrator.config.json`, { budgets: { maxToolCallsPerWorkflow: 10 } });
+  assert.equal((await loadConfig(root)).session?.excludedTools, undefined);
+});
+
+// Live hardening, Task L9 fix round 2 (L9 minor): a bare "*" is refused by the SDK's own createSession
+// (unlike an unknown plain tool name, which it silently ignores) -- caught here, by name, rather than
+// reaching createSession as an unhandled crash.
+test("L9 fix round 2: session.excludedTools may not contain a bare \"*\"", async () => {
+  const { root } = await makeEnv({ wf: "wf_0001" });
+  for (const bad of [["*"], ["web_fetch", "*"], ["*", "custom:noop"]]) {
+    await writeJson(`${root}/orchestrator.config.json`, { session: { excludedTools: bad } });
+    await assert.rejects(loadConfig(root), (error: unknown) => {
+      assert.ok(error instanceof UsageError, `${JSON.stringify(bad)}: expected a UsageError, got ${error}`);
+      assert.match((error as Error).message, /session\.excludedTools may not contain a bare "\*"/);
+      return true;
+    });
+  }
+  // the source-qualified forms are fine -- only a bare "*" is refused
+  for (const good of [["builtin:*"], ["mcp:*"], ["custom:*"], ["web_fetch"]]) {
+    await writeJson(`${root}/orchestrator.config.json`, { session: { excludedTools: good } });
+    assert.deepEqual((await loadConfig(root)).session?.excludedTools, good);
+  }
+});
+
+test("L1 fix 1 (M6): main exits 2 naming the key, before any workflow runs", async (t) => {
+  const { root } = await makeEnv({ wf: "wf_0001" });
+  await writeJson(`${root}/orchestrator.config.json`, { budgets: { maxReadDenialsPerSession: "twenty" } });
+  const errors: string[] = [];
+  t.mock.method(console, "error", (line: string) => errors.push(String(line)));
+  t.mock.method(console, "log", () => {});
+  assert.equal(await main(["--root", root, "--runner", "mock", "--no-interactive"]), 2);
+  assert.match(errors.join("\n"), /budgets\.maxReadDenialsPerSession/);
+  const manifest = JSON.parse(await readFile(path.join(root, "workflows", "wf_0001", "manifest.json"), "utf8"));
+  assert.equal(manifest.status?.parse, undefined, "nothing ran");
 });
 
 test("--dry-run calls neither py nor the runner", async (t) => {
@@ -454,4 +619,126 @@ test("a multi-byte character split across two pipe chunks reaches the orchestrat
   assert.equal(result.ok, true);
   assert.equal(result.out, "\u2192");
   assert.equal(result.err, "\u2192");
+});
+
+// ---------- live hardening, Task L1 (R1): the project's interpreter is `python` in every session ----------
+// Live evidence (docs/live-smoke-test.md "Third live test"): every agent file said "run
+// .venv/Scripts/python.exe scripts/\u2026", but a run root is a copy WITHOUT .venv whose
+// orchestrator.config.json names the interpreter by absolute path, and `python` on the machine's
+// PATH is the system interpreter without the project's packages -- so the models probed for an
+// interpreter (Test-Path, Get-Command, Get-ChildItem .venv\Scripts) and were refused. The session's
+// runtime now gets the configured interpreter's directory first on PATH.
+
+const WINDOWS_RUN = { python: "C:/Users/<user>/checkout/.venv/Scripts/python.exe" };
+
+test("L1 R1: Windows -- the interpreter's directory goes first on the existing Path key, never a second key", () => {
+  const base = { Path: "C:\\Windows\\system32;C:\\Tools", SystemRoot: "C:\\Windows", COPILOT_HOME: "C:\\h" };
+  const env = sessionEnvironment(WINDOWS_RUN, "C:\\mig\\runs\\r1", base, "win32");
+  assert.equal(env.Path, "C:\\Users\\<user>\\checkout\\.venv\\Scripts;C:\\Windows\\system32;C:\\Tools");
+  assert.equal("PATH" in env, false, "no duplicate key: Windows keys are case-insensitive");
+  assert.equal(env.SystemRoot, "C:\\Windows", "every other variable is passed through");
+  assert.equal(env.COPILOT_HOME, "C:\\h");
+  assert.equal(base.Path, "C:\\Windows\\system32;C:\\Tools", "base is never modified");
+
+  const upper = sessionEnvironment(WINDOWS_RUN, "C:\\mig\\runs\\r1", { PATH: "C:\\Windows" }, "win32");
+  assert.deepEqual(upper, { PATH: "C:\\Users\\<user>\\checkout\\.venv\\Scripts;C:\\Windows" });
+
+  const both = sessionEnvironment(WINDOWS_RUN, "C:\\mig\\runs\\r1", { Path: "C:\\A", PATH: "C:\\B" }, "win32");
+  assert.equal(Object.keys(both).filter((key) => key.toUpperCase() === "PATH").length, 1, JSON.stringify(both));
+  assert.equal(both.Path, "C:\\Users\\<user>\\checkout\\.venv\\Scripts;C:\\A;C:\\B", "fix round 1 (M7): no directory is lost");
+
+  const none = sessionEnvironment(WINDOWS_RUN, "C:\\mig\\runs\\r1", { SystemRoot: "C:\\Windows" }, "win32");
+  assert.equal(none.PATH, "C:\\Users\\<user>\\checkout\\.venv\\Scripts");
+});
+
+test("L1 fix 1 (M7): Path and PATH together are merged into the first key, interpreter first, each entry once", () => {
+  const base = {
+    SystemRoot: "C:\\Windows",
+    Path: "C:\\Windows\\system32;C:\\Tools;C:\\Users\\<user>\\checkout\\.venv\\Scripts",
+    PATH: "c:\\tools\\;C:\\Extra;;C:\\Windows\\System32",
+  };
+  const env = sessionEnvironment(WINDOWS_RUN, "C:\\mig", base, "win32");
+  assert.deepEqual(Object.keys(env).filter((key) => key.toUpperCase() === "PATH"), ["Path"]);
+  assert.equal(env.Path, "C:\\Users\\<user>\\checkout\\.venv\\Scripts;C:\\Windows\\system32;C:\\Tools;C:\\Extra");
+  assert.deepEqual(sessionEnvironment(WINDOWS_RUN, "C:\\mig", env, "win32"), env, "still idempotent");
+  assert.equal(base.PATH, "c:\\tools\\;C:\\Extra;;C:\\Windows\\System32", "base is never modified");
+});
+
+test("L1 R1: POSIX -- ':' separators, and only PATH itself is PATH", () => {
+  const env = sessionEnvironment({ python: "/opt/checkout/.venv/bin/python" }, "/srv/run", { PATH: "/usr/bin:/bin", Path: "unrelated" }, "linux");
+  assert.equal(env.PATH, "/opt/checkout/.venv/bin:/usr/bin:/bin");
+  assert.equal(env.Path, "unrelated", "POSIX keys are case-sensitive: Path is another variable");
+});
+
+test("L1 R1: a relative config.python resolves against the run root, exactly as the orchestrator resolves it", () => {
+  const windows = sessionEnvironment({ python: ".venv/Scripts/python.exe" }, "C:\\mig\\runs\\r1", { Path: "C:\\Windows" }, "win32");
+  assert.equal(windows.Path, "C:\\mig\\runs\\r1\\.venv\\Scripts;C:\\Windows");
+  const posix = sessionEnvironment({ python: ".venv/bin/python" }, "/srv/run", { PATH: "/usr/bin" }, "linux");
+  assert.equal(posix.PATH, "/srv/run/.venv/bin:/usr/bin");
+  // on this host, the same resolution makeEnv's py and assertPythonExists use
+  const root = path.resolve("some-run-root");
+  const here = sessionEnvironment({ python: path.join(".venv", "bin", "python") }, root, { PATH: "" });
+  assert.equal(here.PATH, path.dirname(path.resolve(root, path.join(".venv", "bin", "python"))));
+});
+
+test("L1 R1: idempotent -- applying it twice is applying it once, and an existing entry is moved, not repeated", () => {
+  const base = { Path: "C:\\Windows;c:/users/<user>/checkout/.venv/scripts/;C:\\Tools;;" };
+  const once = sessionEnvironment(WINDOWS_RUN, "C:\\mig", base, "win32");
+  assert.equal(once.Path, "C:\\Users\\<user>\\checkout\\.venv\\Scripts;C:\\Windows;C:\\Tools");
+  assert.deepEqual(sessionEnvironment(WINDOWS_RUN, "C:\\mig", once, "win32"), once);
+
+  const posixOnce = sessionEnvironment({ python: "/opt/v/bin/python" }, "/", { PATH: "/usr/bin:/opt/v/bin/:/bin" }, "linux");
+  assert.equal(posixOnce.PATH, "/opt/v/bin:/usr/bin:/bin");
+  assert.deepEqual(sessionEnvironment({ python: "/opt/v/bin/python" }, "/", posixOnce, "linux"), posixOnce);
+});
+
+test("L1 R1: the agent-session CopilotClient is built with that environment, and the SDK accepts it", async () => {
+  const root = path.resolve("some-run-root");
+  const options = copilotClientOptions({ ...DEFAULT_CONFIG, python: path.join(".venv", "bin", "python") }, root);
+  const pathKey = Object.keys(options.env).find((key) => key.toUpperCase() === "PATH")!;
+  assert.equal(options.env[pathKey]!.split(path.delimiter)[0], path.join(root, ".venv", "bin"));
+  // Constructing the client starts nothing (no runtime process until start()); it must accept `env`.
+  const { CopilotClient } = await import("@github/copilot-sdk");
+  const client = new CopilotClient(options);
+  assert.equal((client as unknown as { resolvedEnv: Record<string, string | undefined> }).resolvedEnv, options.env);
+});
+
+// The check the ruling asks for, in a real subprocess and skipping nothing: with the builder's PATH,
+// `python` is the configured interpreter and imports the project's packages. The interpreter is
+// found the way integration.test.ts finds it (PIPELINE_PYTHON, this tree's .venv, the shared
+// checkout's .venv); a machine without one fails here, loudly, instead of skipping.
+const INTERPRETER_CANDIDATES = [
+  process.env.PIPELINE_PYTHON,
+  path.join(REPO_ROOT, ".venv", "Scripts", "python.exe"),
+  path.join(REPO_ROOT, ".venv", "bin", "python"),
+  path.join(REPO_ROOT, "..", "..", ".venv", "Scripts", "python.exe"),
+  path.join(REPO_ROOT, "..", "..", ".venv", "bin", "python"),
+].filter((candidate): candidate is string => Boolean(candidate));
+
+test("L1 R1: with the session environment, `python -c \"import duckdb, sqlglot, yaml\"` runs the configured interpreter", async () => {
+  const interpreter = INTERPRETER_CANDIDATES.find((candidate) => existsSync(candidate));
+  assert.ok(interpreter, `the project's interpreter is a prerequisite of this check; none of ${INTERPRETER_CANDIDATES.join(", ")} exists (set PIPELINE_PYTHON)`);
+  // A relative config.python against a root, the way a run root's config may name it.
+  const root = path.resolve(interpreter, "..", "..", "..");
+  const config = { python: path.relative(root, interpreter) };
+  // The base PATH is this process's own, minus any entry that already names the interpreter's
+  // directory -- so only the builder can be what puts it there.
+  const dir = path.dirname(path.resolve(interpreter));
+  const same = (entry: string) => path.resolve(entry).toLowerCase() === dir.toLowerCase();
+  const base = { ...process.env };
+  const key = Object.keys(base).find((name) => (process.platform === "win32" ? name.toUpperCase() === "PATH" : name === "PATH")) ?? "PATH";
+  base[key] = (base[key] ?? "").split(path.delimiter).filter((entry) => entry && !same(entry)).join(path.delimiter);
+
+  const env = sessionEnvironment(config, root, base);
+  const { stdout } = await new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
+    execFile(
+      "python",
+      ["-c", "import sys, duckdb, sqlglot, yaml; print(sys.executable)"],
+      { env, cwd: os.tmpdir(), windowsHide: true },
+      (error, out, err) => (error ? reject(new Error(`${error.message}\n${err}`)) : resolve({ stdout: out, stderr: err })),
+    );
+  });
+  const ran = path.resolve(stdout.trim());
+  const expected = path.resolve(interpreter);
+  assert.equal(process.platform === "win32" ? ran.toLowerCase() : ran, process.platform === "win32" ? expected.toLowerCase() : expected);
 });

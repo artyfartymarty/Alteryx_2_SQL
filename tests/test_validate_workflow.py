@@ -33,6 +33,24 @@ COMPOSITION = cf.WF_COMPOSITION
 DRIFT = cf.WF_DRIFT
 
 
+def _spy_snowpark_inputs(monkeypatch, fqn, *, cast=lambda x: x):
+    """Live hardening L4 fix round 2: the chain now runs each Snowpark segment in a sandboxed child
+    (`lib.snowpark_sandbox.run_segment`), so the rows a segment is fed are the `tables` the parent
+    passes it, not a `handoff.load_into_snowpark` call. Records the first column of `fqn`'s rows for
+    every child run, in order, and lets the real run proceed."""
+    from lib import snowpark_sandbox
+    seen: list = []
+    real = snowpark_sandbox.run_segment
+
+    def spy(**kw):
+        for entry in kw["inputs"].get("tables", []):
+            if entry["fqn"] == fqn:
+                seen.append([cast(row[0]) for row in entry["table"]["rows"]])
+        return real(**kw)
+    monkeypatch.setattr(snowpark_sandbox, "run_segment", spy)
+    return seen
+
+
 def _segments(repo, wf):
     return [seg for wave in read_json(repo.wf(wf, "segments", "order.json")) for seg in wave]
 
@@ -397,28 +415,14 @@ def test_the_idempotency_rerun_presents_every_input_in_reversed_order(tmp_path, 
     re-run reversed -- and not reversed twice when the order-preserving seg_01 already passed its
     reversed raw input on in reverse."""
     repo = cf.build_order_dependent(tmp_path, snowpark=True)
-    seen = []
-    real = vw.handoff.load_into_snowpark
-
-    def spy(session, fqn, table):
-        if fqn == "MIG_WORK.WF0008_SEG_01_OUT":
-            seen.append([row[0] for row in table["rows"]])
-        return real(session, fqn, table)
-    monkeypatch.setattr(vw.handoff, "load_into_snowpark", spy)
+    seen = _spy_snowpark_inputs(monkeypatch, "MIG_WORK.WF0008_SEG_01_OUT")
     vw.validate_workflow(repo, COMPOSITION)
     assert seen == [[1, 2, 3], [3, 2, 1]]
 
 
 def test_the_rerun_reverses_what_an_upstream_sort_would_otherwise_hand_on_unchanged(tmp_path, monkeypatch):
     repo = cf.build_order_dependent(tmp_path, snowpark=True, upstream_order_by="PRICE")
-    seen = []
-    real = vw.handoff.load_into_snowpark
-
-    def spy(session, fqn, table):
-        if fqn == "MIG_WORK.WF0008_SEG_01_OUT":
-            seen.append([row[0] for row in table["rows"]])
-        return real(session, fqn, table)
-    monkeypatch.setattr(vw.handoff, "load_into_snowpark", spy)
+    seen = _spy_snowpark_inputs(monkeypatch, "MIG_WORK.WF0008_SEG_01_OUT")
     vw.validate_workflow(repo, COMPOSITION)
     assert seen == [[3, 1, 2], [2, 1, 3]]          # PRICE order, then exactly reversed
 
@@ -454,10 +458,19 @@ def test_a_vanished_snowpark_output_is_a_missing_table_not_a_stale_copy(tmp_path
         output["write_mode"] = "merge"
     write_json(repo.seg(wf, "seg_03", "contract.json"), contract)
     repo.seg(wf, "seg_03", "proc.sql").unlink()
+    # L4 fix round 1: the chain applies the Snowpark rules before it imports a module, so the target's
+    # merge is written (rule:write_mode) -- it just never runs, and the target is dropped instead.
     repo.seg(wf, "seg_03", "proc.py").write_text(
         "# tool 9: Output Data (merge on ID, logical MILLI_OUT) -- broken: drops its own target\n"
+        "from snowflake.snowpark.functions import when_matched, when_not_matched\n\n\n"
         "def run(session, src_db, src_schema, tgt_db, tgt_schema, run_id):\n"
-        "    session.table(f\"{tgt_db}.{tgt_schema}.MILLI_OUT\").drop_table()\n"
+        "    target = session.table(f\"{tgt_db}.{tgt_schema}.MILLI_OUT\")\n"
+        "    target.drop_table()\n"
+        "    if run_id == \"never\":\n"
+        "        source = session.table(\"MIG_WORK.WF0008_SEG_02_OUT\")\n"
+        "        target.merge(source, target[\"ID\"] == source[\"ID\"],\n"
+        "                     [when_matched().update({\"MILLI\": source[\"MILLI\"]}),\n"
+        "                      when_not_matched().insert({\"ID\": source[\"ID\"], \"MILLI\": source[\"MILLI\"]})])\n"
         "    return \"OK\"\n", encoding="utf-8", newline="\n")
 
     r = vw.validate_workflow(repo, wf)
@@ -469,17 +482,18 @@ def test_a_vanished_snowpark_output_is_a_missing_table_not_a_stale_copy(tmp_path
 
 # M2: an idempotency re-run that raises is blamed on the segment that raised.
 
+# L4 fix round 1: the chain applies the Snowpark rules before it imports a module, so this fixture can
+# no longer keep a marker file (`pathlib` is refused). It raises on the re-run because the re-run
+# presents its input in reversed order -- the order dependence the re-run exists to expose.
 RAISES_ON_SECOND_RUN = '''# tool 3: Formula -- MILLI = PRICE in thousandths; raises on its second run
-import pathlib
 from snowflake.snowpark.types import DecimalType, LongType, StructField, StructType
 
 
 def run(session, src_db, src_schema, tgt_db, tgt_schema, run_id):
-    marker = pathlib.Path(MARKER)
-    if marker.exists():
+    seen = session.table("MIG_WORK.WF0008_SEG_01_OUT").collect()
+    if int(seen[0]["ID"]) > int(seen[-1]["ID"]):
         raise RuntimeError("flaky: second run")
-    marker.write_text("x")
-    rows = [[int(r["ID"]), r["PRICE"] * 1000] for r in session.table("MIG_WORK.WF0008_SEG_01_OUT").collect()]
+    rows = [[int(r["ID"]), r["PRICE"] * 1000] for r in seen]
     schema = StructType([StructField("ID", LongType()), StructField("MILLI", DecimalType(19, 3))])
     session.create_dataframe(rows, schema=schema).write.mode("overwrite").save_as_table("MIG_WORK.WF0008_SEG_02_OUT")
     return "OK"
@@ -493,9 +507,7 @@ def test_a_rerun_that_raises_is_a_boundary_at_the_raising_segment(tmp_path):
     contract["target"] = "snowpark"
     write_json(repo.seg(wf, "seg_02", "contract.json"), contract)
     repo.seg(wf, "seg_02", "proc.sql").unlink()
-    marker = repr(str(tmp_path / "seg_02_ran_once"))
-    repo.seg(wf, "seg_02", "proc.py").write_text(RAISES_ON_SECOND_RUN.replace("MARKER", marker),
-                                                  encoding="utf-8", newline="\n")
+    repo.seg(wf, "seg_02", "proc.py").write_text(RAISES_ON_SECOND_RUN, encoding="utf-8", newline="\n")
 
     r = vw.validate_workflow(repo, wf)
 
@@ -571,14 +583,7 @@ def test_a_partial_reorder_upstream_does_not_hide_a_first_n_consumer(tmp_path, s
 
 def test_the_rerun_presents_a_partly_reordered_input_reversed(tmp_path, monkeypatch):
     repo = cf.build_partial_reorder(tmp_path, seg_01_select=cf.TIE_SORT_SELECT, snowpark=True)
-    seen = []
-    real = vw.handoff.load_into_snowpark
-
-    def spy(session, fqn, table):
-        if fqn == "MIG_WORK.WF0008_SEG_01_OUT":
-            seen.append([int(row[0]) for row in table["rows"]])
-        return real(session, fqn, table)
-    monkeypatch.setattr(vw.handoff, "load_into_snowpark", spy)
+    seen = _spy_snowpark_inputs(monkeypatch, "MIG_WORK.WF0008_SEG_01_OUT", cast=int)
     vw.validate_workflow(repo, COMPOSITION)
     # run 1: 1, 3, 2, 4; the re-run's seg_01 (on reversed raw input) wrote 3, 1, 4, 2 -- not the exact
     # reverse of run 1 -- so it is reversed once more before seg_02 sees it
@@ -654,3 +659,27 @@ def test_an_order_with_no_segment_is_a_usage_error_for_either_output_kind(tmp_pa
     done = run_cli(tmp_path / "dbt", dbtf.WF)
     assert done.returncode == 2 and "Traceback" not in done.stderr and "order.json" in done.stderr
     assert not list(dbt.wf(dbtf.WF).rglob("validation*.json"))
+
+
+# --- live hardening L4, fix round 1 (I1): the chain's Snowpark hand-off applies the Snowpark rules ------
+
+def test_a_chained_snowpark_module_that_breaks_the_rules_is_never_imported(tmp_path):
+    """`validate_workflow.py` drives a Snowpark segment through `validate_snowpark.load_module`, which
+    applies the rules before importing: a module that would write a file at import is a FAIL at its
+    segment naming the rule, and none of its code runs."""
+    marker = tmp_path / "marker.txt"
+    repo = cf.build_composition(tmp_path / "root", rounding=False)
+    wf = COMPOSITION
+    contract = read_json(repo.seg(wf, "seg_02", "contract.json"))
+    contract["target"] = "snowpark"
+    write_json(repo.seg(wf, "seg_02", "contract.json"), contract)
+    repo.seg(wf, "seg_02", "proc.sql").unlink()
+    repo.seg(wf, "seg_02", "proc.py").write_text(
+        f'open({str(marker)!r}, "w").write("ran")\n' + RAISES_ON_SECOND_RUN, encoding="utf-8", newline="\n")
+
+    r = vw.validate_workflow(repo, wf)
+
+    assert not marker.exists(), "the chain imported a module the Snowpark rules refuse"
+    assert r["verdict"] == "FAIL"
+    assert r["first_divergence"]["segment"] == "seg_02"
+    assert "rule:no_io" in r["error"] and "was not imported" in r["error"], r["error"]

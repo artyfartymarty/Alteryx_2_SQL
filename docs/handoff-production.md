@@ -87,7 +87,9 @@ EVIDENCE=C:/mig/evidence/<run name>   # this run's saved evidence: OUTSIDE the c
 
 Keep the run root's path short, as here (`C:\mig\runs\<name>`). In the third live test
 (`docs/live-smoke-test.md`, "Third live test") the model mangled a scratch path of about 150
-characters when it built absolute paths, and the policy correctly denied those reads.
+characters when it built absolute paths, and the policy correctly denied those reads. Since
+Task L1 every task tells the model to use relative paths, and a refused read no longer parks the
+stage by itself; it is counted against `budgets.maxReadDenialsPerSession` (README §6).
 
 Run the three suites once so you know the checkout is green before you change anything:
 
@@ -128,6 +130,13 @@ EOF
 
 Why each piece is there:
 - `scripts/`: the orchestrator runs every Python script with the run root as its working directory.
+- The config's `python`: the run root has no `.venv` of its own, so the config names the checkout's
+  interpreter by absolute path. The orchestrator runs its own script calls with it, and it puts that
+  interpreter's directory first on `PATH` for every agent session (`sessionEnvironment` in
+  `orchestrator/cli.ts`), so an agent's `python scripts/<name>.py …` is this interpreter, with the
+  project's packages. The system `python` on `PATH` has none of them. This was verified live in the
+  fourth live test (`docs/live-smoke-test.md`): the intake agent's two script calls succeeded
+  although the system interpreter has neither `yaml` nor `duckdb`.
 - `mappings/` and `catalog/`: intake's program-wide answers and its column catalog.
 - `.github/`: the agents. `orchestrator/agents.ts` loads them from `<root>/.github/agents`. Without
   them, a Copilot session gets no custom agent at all.
@@ -280,13 +289,51 @@ names on them rather than discovering them:
 3. Never loosen a deny to let a model pass. A write that the policy allowed but should not have
    allowed is a critical finding. Stop and report it.
 
+**The SDK's own `sql` tool is not Snowflake.** The SDK ships a built-in tool named exactly `sql`: a
+per-session SQLite store whose description tells the model to keep its todos there. `policy.ts`
+refuses a tool named exactly `sql` with "the session's SQL todo store is not used here; keep your plan
+in your notes file" (`SQL_TODO_TOOL`), an ordinary budgeted refusal, instead of judging it as
+Snowflake SQL. **If the production Snowflake tool turns out to be named exactly `sql`, this rule must
+change before rung 2**: until it does, every statement sent through that tool is refused as a todo.
+Change the rule (`SQL_TODO_TOOL` in `orchestrator/policy.ts`, and its tests in
+`orchestrator/test/policy.test.ts`) and have the human review the diff.
+
 Tightening `WRITE_TOOL` / `SQL_TOOL` from observed evidence is the one change to
 `orchestrator/policy.ts` this guide sanctions. The human reviews the diff before any re-run.
+
+**`excludedTools`: confirm the names, on this runtime.** Live hardening, Task L9 (R1): every
+session's `createSession` call also carries the SDK's `excludedTools` (`policy.ts`'s
+`ALWAYS_EXCLUDED_BUILTIN_TOOLS`, prefixed `builtin:` by `sessionExcludedTools`) -- `web_fetch`,
+`web_search`, `sql` and `write_agent` are never even offered, on top of `judge` still refusing each
+of them outright by name (POLICY.md, item 9). That list was written from a mix of live evidence
+(`web_fetch`: `task-L9-brief.md`, a documenter session parked on it) and the SDK's own generated
+types (`web_search`: `session-events.d.ts`'s `AssistantServerToolProgressData.kind`). Corrected (L9
+fix round 2 review): the runtime that parses `excludedTools` is the bundled LOCAL binary for BOTH
+profiles, not a "hosted-runtime" surface with nothing local to check against -- `sql` and
+`write_agent`'s existence, and an unrecognised name being a harmless no-op rather than a
+`createSession` error, are now VERIFIED against that bundled runtime offline (POLICY.md's item 9 has
+the evidence); only whether the HOSTED model's own session actually offers all four (never calls one
+despite the exclusion) still needs confirming here, at rung 2:
+1. After the first hosted run, read `audit.jsonl` for any `pre` line whose `tool` is `web_fetch`,
+   `web_search`, `sql` or `write_agent` -- **not only `"ev":"unrecognized-tool"` lines**: only
+   `web_fetch`/`web_search` produce that event when refused; `sql` is refused with its own
+   `SQL_TODO_REASON` and `write_agent` with its own reason, so both are refused-but-never
+   "unrecognized". If the SDK offered one of them (and the model called it) despite `excludedTools`,
+   `ALWAYS_EXCLUDED_BUILTIN_TOOLS` did not name it as the runtime spells it; fix the spelling, not the
+   policy rule that refused it.
+2. If `createSession` itself rejected an `excludedTools` entry (a thrown error naming the option),
+   the session that hit it ends `error` -- which PARKS the workflow (`NEEDS_HUMAN`) at that session,
+   `error` is not retried -- but drop or fix the offending name in `ALWAYS_EXCLUDED_BUILTIN_TOOLS`
+   before continuing, and note here which of the four this runtime does and does not recognise.
 
 **Verify.**
 - [ ] The node suite and `tsc` pass after the change.
 - [ ] On a re-run, `audit.jsonl` shows the write allowed inside its lane.
 - [ ] The new tests prove that a write outside the lane is still denied.
+- [ ] The Snowflake tool is not named exactly `sql`, or `SQL_TODO_TOOL` was changed as above.
+- [ ] `web_fetch`, `web_search`, `sql` and `write_agent` were confirmed as above (offered-and-called,
+      or rejected by `createSession`) against the hosted runtime; any renamed or missing one is
+      fixed in `ALWAYS_EXCLUDED_BUILTIN_TOOLS`.
 
 ## 2. Snowflake access
 
@@ -619,7 +666,9 @@ chain's idempotency re-run uses the first set.
 
 **One gap you close by hand.** No script closes it, and it is in `docs/production-backlog.md`.
 Some database outputs cannot be captured this way. This applies to a database Output tool whose
-write mode is append or merge (update/insert), or that carries PreSQL or PostSQL. For such an output
+write mode is append, merge (update/insert) or truncate_append (Delete Data & Append: its `TRUNCATE`
+needs the table to exist, and no golden set creates it otherwise), or that carries PreSQL or
+PostSQL. For such an output
 the validators need two things:
 - the target's state BEFORE the run, from `golden/targets_before/<set>/<LOGICAL>.csv`
   (`scripts/load_golden.py`);
@@ -789,7 +838,8 @@ come from an agent.
 
 **Record.**
 - the model ids that actually served, from the session's own reporting;
-- for each role, `toolCalls`, `lastMs`, `compactions` and `peakInputTokens` from `manifest.metrics`;
+- for each role, `toolCalls`, `lastMs`, `compactions`, `peakInputTokens`, `readDenials`,
+  `actDenials` and `severeDenials` from `manifest.metrics`;
 - every park and its `manifest.reasons`;
 - every `tool` name in `audit.jsonl`, with the write and SQL shapes (§1.5) and every denial;
 - whether a `session.compaction_complete` event ever arrived, and whether the model re-read its
@@ -943,6 +993,16 @@ Everything in this section is unverified. Where the ladder can settle an item, i
   - It has no `session.sql`.
   - It resolves no real `RUNTIME_VERSION` or `PACKAGES`.
   - It says nothing about performance.
+  - **It runs the agent's `proc.py` as ordinary Python on the machine you run the validator on.** The
+    self-test isolates that in a child process under a static gate and an audit hook
+    (`scripts/lib/snowpark_sandbox.py`), both now allow-lists (the static gate accepts only the
+    Snowpark/pandas surface the benign corpus uses; the hook is default-deny), which is defence in
+    depth, not a boundary — it was attacked three times and hardened (live hardening L4 fix rounds
+    2–5). On the company's own machines, run the validators (and the
+    whole pipeline) inside the program spec's container, only `workflows/` writable and no network, or
+    validate Snowpark procedures only on Snowflake (rung 3), where the code runs in Snowflake, not on
+    the host. Same for the parser-recovery agent's `scripts/parsers/ext/*.py`, which `scripts/parse.py`
+    imports. See `docs/production-backlog.md`, "Isolate agent-code execution".
   - Two mock limits are pinned for `snowflake-snowpark-python` 1.55.0. First, `==` and `!=` do not
     propagate NULL, so the cookbook teaches the explicit-NULL filter form. Second, there is no working
     `round()`: decimal narrowing goes through binary-float rounding, so a half-way value such as

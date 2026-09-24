@@ -52,10 +52,16 @@ def test_schema_failure_stops_early():
     fields = [dict(f, type="V_String") if f["name"] == "AMOUNT" else f for f in FIELDS]
     r = run([[*x[:3], str(x[3]), *x[4:]] for x in ROWS], fields=fields)
     assert r["checks"]["schema"] == "FAIL" and r["checks"]["counts"] == "SKIPPED" and r["diff_clusters"][0]["class"] == "TYPE"
-def test_duplicate_keys_in_expected_need_a_human():
+def test_duplicate_keys_in_expected_fall_back_to_the_keyless_comparison():
+    # Live hardening L11: this used to be GOLDEN_DATA + needs_human. Keys that repeat in the golden
+    # rows are compared keyless (tests/test_compare_keys_not_unique.py covers it in full): the lost
+    # copy of A1 is a row cluster, and the report says the contract's keys should be revisited.
     b = DuckDBBackend(); b.load_table("MIG_COMPARE.EXP", {"fields": FIELDS, "rows": ROWS + [ROWS[0]]}); b.load_table("MIG_WORK.ACT", {"fields": FIELDS, "rows": ROWS})
     r = cmp.compare(b, "MIG_COMPARE.EXP", "MIG_WORK.ACT", CONTRACT, TOL)
-    assert r["needs_human"] is True and r["diff_clusters"][0]["class"] == "GOLDEN_DATA"
+    assert r["needs_human"] is False and r["verdict"] == "FAIL"
+    assert [(c["class"], c["scope"], c["note"]) for c in r["diff_clusters"]] == [("LOGIC", "rows", "rows only in expected")]
+    assert r["checks"]["keys_not_unique"] == {"keys": ["ACCT", "PERIOD"], "duplicate_groups": 1,
+                                              "examples": [{"key": {"ACCT": "A1", "PERIOD": "2026-08"}, "rows": 2}]}
 def test_no_keys_uses_row_multiset():
     c = copy.deepcopy(CONTRACT); c["output"]["keys"] = []
     assert run(ROWS[::-1], contract=c)["verdict"] == "PASS"
@@ -646,13 +652,24 @@ def test_a_null_in_a_non_nullable_column_of_actual_is_a_null_semantics_diff():
     assert c["example_rows"][0]["key"] == {"ACCT": "A1"} and c["example_rows"][0]["actual"] == {"REGION": None}
 
 
-def test_a_null_in_a_non_nullable_column_of_expected_needs_a_human():
+def test_a_null_in_a_non_nullable_column_of_expected_is_a_contract_advisory():
+    # Live hardening: the golden rows are the reference; a NULL there contradicts the contract's
+    # NOT NULL claim (the analyzer's judgment), so the column is judged as nullable and the report
+    # carries an advisory -- a correct translation that passes the NULL through is not parked.
     expected = {"fields": NN_FIELDS, "rows": [["A1", None]]}
     actual = {"fields": NN_FIELDS, "rows": [["A1", None]]}
     r = run_tables(expected, actual, NN_CONTRACT)
-    assert r["checks"]["nullability"] == "FAIL" and r["verdict"] == "FAIL" and r["needs_human"] is True
-    c = r["diff_clusters"][0]
-    assert (c["class"], c["columns"], c["count"]) == ("GOLDEN_DATA", ["REGION"], 1)
+    assert (r["checks"]["nullability"], r["verdict"], r["needs_human"]) == ("PASS", "PASS", False)
+    assert r["checks"]["nullability_contract"]["columns"] == ["REGION"]
+    assert r["diff_clusters"] == []
+
+
+def test_a_golden_null_the_translation_does_not_reproduce_still_fails_on_the_value():
+    expected = {"fields": NN_FIELDS, "rows": [["A1", None]]}
+    actual = {"fields": NN_FIELDS, "rows": [["A1", "APAC"]]}
+    r = run_tables(expected, actual, NN_CONTRACT)
+    assert r["verdict"] == "FAIL" and r["needs_human"] is False
+    assert r["checks"]["nullability_contract"]["columns"] == ["REGION"]
 
 
 def test_nulls_in_a_nullable_column_are_not_a_nullability_failure():
@@ -675,21 +692,13 @@ def test_nulls_in_a_nullable_column_are_not_a_nullability_failure():
 # against a future classifier change that might.
 
 def test_golden_data_is_never_approvable_even_with_a_matching_column_approval():
-    # Both sides hold the same NULL, so this raises GOLDEN_DATA (expected) AND NULL_SEMANTICS
-    # (actual) side by side (both scope="columns", both column REGION) -- approving BOTH isolates
-    # the one under test: if GOLDEN_DATA could be signed off, every cluster here would be approved
-    # and the verdict would be PASS_WITH_ACCEPTED_DIFF; it must stay FAIL regardless.
-    expected = {"fields": NN_FIELDS, "rows": [["A1", None]]}
-    actual = {"fields": NN_FIELDS, "rows": [["A1", None]]}
-    appr = [{"segment": "seg_01", "class": "GOLDEN_DATA", "columns": ["REGION"], "approver": "wf_owner",
-             "date": "2026-09-18"},
-            {"segment": "seg_01", "class": "NULL_SEMANTICS", "columns": ["REGION"], "approver": "wf_owner",
-             "date": "2026-09-18"}]
-    r = run_tables(expected, actual, NN_CONTRACT,
-                   accepted_classes=["GOLDEN_DATA", "NULL_SEMANTICS"], approvals=appr)
-    assert r["verdict"] == "FAIL" and r["needs_human"] is True
-    classes = {c["class"] for c in r["diff_clusters"]}
-    assert classes == {"GOLDEN_DATA", "NULL_SEMANTICS"}
+    # compare() no longer produces a GOLDEN_DATA cluster itself (duplicate keys and golden NULLs are
+    # contract advisories since live hardening), so the rule is pinned against `_approved` directly,
+    # as the UNKNOWN case below is.
+    cluster = {"class": "GOLDEN_DATA", "scope": "columns", "columns": ["REGION"]}
+    approvals = [{"segment": "seg_01", "class": "GOLDEN_DATA", "columns": ["REGION"], "approver": "wf_owner",
+                  "date": "2026-09-18"}]
+    assert cmp._approved(cluster, "seg_01", approvals) is False
 
 
 def test_unknown_is_never_approvable_even_at_column_scope_with_a_matching_approval():

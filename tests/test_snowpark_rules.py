@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from lib import snowpark_rules as rules
+from lib.io import read_json
+
+ROOT_DIR = Path(__file__).resolve().parents[1]
 
 CONTRACT = {"segment": "seg_02", "inputs": [{"from": "seg_01", "stream": "2_T", "table": "MIG_WORK.WF0006_SEG_01_OUT", "columns": []}],
             "outputs": [{"stream": "3_1", "table": "MIG_WORK.WF0006_SEG_02_OUT", "kind": "work", "logical": None, "columns": [], "keys": []}]}
@@ -272,14 +277,21 @@ CONTRACT_MAPPED = {
 }
 
 
+#: GOOD plus the write of the target CONTRACT_MAPPED declares, in its write mode: a declared target
+#: the module never writes is `rule:write_mode`'s refusal (Task L4), not a naming question.
+GOOD_MAPPED = GOOD.replace('    return "OK"',
+                           '    out.write.mode("overwrite").save_as_table(f"{tgt_db}.{tgt_schema}.REVENUE_BY_PERIOD")\n'
+                           '    return "OK"')
+
+
 def _errors(source: str, contract: dict = CONTRACT) -> list[str]:
     return rules.check_proc_py(source, "wf_0006", "seg_02", contract)
 
 
 def test_the_good_procedure_also_passes_against_a_contract_that_declares_logicals():
     """Positive control for I4's new check: adding declared logical names to the contract must not
-    make the literal-table procedure stop passing."""
-    assert _errors(GOOD, CONTRACT_MAPPED) == []
+    make the literal-table procedure stop passing (once it writes the target the contract declares)."""
+    assert _errors(GOOD_MAPPED, CONTRACT_MAPPED) == []
 
 
 def test_save_as_table_camel_case_alias_is_checked_like_save_as_table():
@@ -356,7 +368,7 @@ def test_a_read_of_an_undeclared_logical_is_refused():
 
 
 def test_a_read_of_the_contracts_own_source_logical_passes():
-    good = GOOD.replace('session.table("MIG_WORK.WF0006_SEG_01_OUT")',
+    good = GOOD_MAPPED.replace('session.table("MIG_WORK.WF0006_SEG_01_OUT")',
                         'session.table(f"{src_db}.{src_schema}.SUBSCRIPTIONS")')
     assert _errors(good, CONTRACT_MAPPED) == []
     assert any(e.startswith("rule:table_names") for e in _errors(good, CONTRACT))
@@ -576,3 +588,261 @@ def test_numpy_file_writers_are_refused(line):
 def test_to_numpy_itself_stays_legal():
     source = GOOD.replace("    return \"OK\"", "    arr = pdf.to_numpy()\n    return \"OK\"")
     assert rules.check_proc_py(source, "wf_0006", "seg_02", CONTRACT) == []
+
+
+# --- live hardening L3, fix round 1 (I1): one spelling of a work stream's table -------------------
+# Contract C3 names a segment's second work stream `MIG_WORK.<WF>_<SEG>_OUT_<STREAM>`. The validators
+# splice a contract's table through `lib.backend.qualified`, which takes plain UPPER-case identifiers
+# only, so the scaffold writes the stream upper-cased; Snowflake folds an unquoted identifier to upper
+# case, so a procedure may spell it either way.
+
+TWO_STREAMS = {"segment": "seg_01", "inputs": [], "outputs": [
+    {"stream": "2_1", "kind": "work", "table": "MIG_WORK.WF0200_SEG_01_OUT", "logical": None, "columns": [], "keys": []},
+    {"stream": "4_Output", "kind": "work", "table": "MIG_WORK.WF0200_SEG_01_OUT_4_OUTPUT", "logical": None,
+     "columns": [], "keys": []}]}
+TWO_STREAMS_PY = '''# tool 2: Python tool
+from snowflake.snowpark.types import StructType, StructField, StringType
+
+
+def run(session, src_db, src_schema, tgt_db, tgt_schema, run_id):
+    out = session.create_dataframe([("A",)], schema=StructType([StructField("CODE", StringType(5))]))
+    out.write.mode("overwrite").save_as_table("MIG_WORK.WF0200_SEG_01_OUT")
+    out.write.mode("overwrite").save_as_table("SECOND")
+    return "OK"
+'''
+
+
+@pytest.mark.parametrize("second", ["MIG_WORK.WF0200_SEG_01_OUT_4_OUTPUT", "MIG_WORK.WF0200_SEG_01_OUT_4_Output",
+                                    "mig_work.wf0200_seg_01_out_4_output"])
+def test_a_second_work_streams_table_is_accepted_as_the_contract_spells_it_in_any_case(second):
+    assert rules.check_proc_py(TWO_STREAMS_PY.replace("SECOND", second), "wf_0200", "seg_01", TWO_STREAMS) == []
+
+
+def test_a_table_the_contract_does_not_name_is_still_refused_in_any_case():
+    errors = rules.check_proc_py(TWO_STREAMS_PY.replace("SECOND", "MIG_WORK.WF0200_SEG_01_OUT_9_X"),
+                                 "wf_0200", "seg_01", TWO_STREAMS)
+    assert any(e.startswith("rule:table_names") for e in errors), errors
+
+
+# --- fix round 2 (X1, R2): the static rules also refuse pandas/numpy readers and object loaders ----
+# A gate-passing proc.py that calls `pd.read_pickle`, `np.load(..., allow_pickle=True)`, `np.memmap`,
+# `np.fromfile`, `pd.read_csv` on a host path, `pd.HDFStore` or `pd.ExcelWriter` runs host code or
+# reads a host file (the re-review's probe_rules.py / probe_pickle.py). The runtime sandbox is the
+# real boundary; these catch the obvious call sites before the module is spawned.
+
+_READER_PROBES = [
+    'pd.read_pickle("x.md")',
+    'pd.read_csv("C:/Windows/win.ini")',
+    'np.load("x.npy", allow_pickle=True)',
+    'np.memmap("m.bin", mode="w+", shape=(1,))',
+    'np.fromfile("C:/Windows/win.ini")',
+    'pd.HDFStore("h.h5")',
+    'pd.ExcelWriter("x.xlsx")',
+    'pd.read_parquet("x.pq")',
+    'np.loadtxt("x.txt")',
+    'np.genfromtxt("x.txt")',
+    'pd.read_sql("select 1", conn)',
+    'np.save("out.npy", arr)',
+    'np.lib.npyio.load("x.npy")',
+    'pd.io.pickle.read_pickle("x")',
+]
+
+
+@pytest.mark.parametrize("call", _READER_PROBES)
+def test_a_pandas_or_numpy_file_entry_point_is_refused(call):
+    body = GOOD.replace("import pandas as pd\n", "import pandas as pd\nimport numpy as np\n")
+    body = body.replace('    return "OK"', f"    _x = {call}\n    return \"OK\"")
+    errors = rules.check_proc_py(body, "wf_0006", "seg_02", CONTRACT)
+    assert any(e.startswith("rule:no_io") for e in errors), errors
+
+
+def test_the_reader_refusal_names_the_call_and_the_rule():
+    body = GOOD.replace("import pandas as pd\n", "import pandas as pd\n")
+    body = body.replace('    return "OK"', '    _x = pd.read_pickle("notes.md")\n    return "OK"')
+    errors = rules.check_proc_py(body, "wf_0006", "seg_02", CONTRACT)
+    # The file-reader refusal still names the call, the rule and that it is a host file (fix round 5
+    # adds a second, allow-list refusal for the same `pd.read_pickle` attribute -- both are fine).
+    assert any(e.startswith("rule:no_io") and "read_pickle" in e and "file" in e for e in errors), errors
+
+
+def test_read_pickle_as_a_bare_name_is_refused_too():
+    body = GOOD.replace("from snowflake.snowpark.functions import col",
+                        "from pandas import read_pickle\nfrom snowflake.snowpark.functions import col")
+    body = body.replace('    return "OK"', '    _x = read_pickle("notes.md")\n    return "OK"')
+    errors = rules.check_proc_py(body, "wf_0006", "seg_02", CONTRACT)
+    assert any(e.startswith("rule:no_io") and "read_pickle" in e for e in errors), errors
+
+
+def test_the_benign_canned_snowpark_procedures_still_pass_the_reader_rule():
+    """to_pandas / sort_values / groupby / iterrows / reset_index / pd.isna are not readers."""
+    for wf in ("wf_0006",):
+        seg = ROOT_DIR / "samples" / wf / "canned" / "segments" / "seg_02"
+        if not (seg / "proc.py").is_file():
+            continue
+        contract = read_json(seg / "contract.json")
+        source = (seg / "proc.py").read_text(encoding="utf-8")
+        assert rules.check_proc_py(source, wf, "seg_02", contract) == []
+
+
+# --- fix round 4 (the sandbox attack): the static gate refuses module and private attribute reach ----
+# The adversarial pass reached the real `sys` through `snowflake.snowpark.types.sys` (a plain
+# attribute), pulled `sqlite3` out of `sys.modules`, and walked frames via `sys._getframe(1).f_locals`
+# for the signing nonce. The gate now refuses any attribute (or bare name, or import alias) that names
+# a stdlib module or a private/frame name, method definitions included.
+
+_ATTR_REACH_PROBES = [
+    "_x = T.sys",
+    '_m = T.sys.modules["sqlite3"]',
+    "_g = T.sys._getframe(1)",
+    "_l = _fr.f_locals",
+    "_b = pd.read_pickle.__globals__",
+    "_o = T.os",
+    "_s = T.sqlite3",
+    "_i = pd.io",
+]
+
+
+@pytest.mark.parametrize("reach", _ATTR_REACH_PROBES)
+def test_reaching_a_module_or_private_name_as_an_attribute_is_refused(reach):
+    body = GOOD.replace("from snowflake.snowpark.functions import col",
+                        "import snowflake.snowpark.types as T\nfrom snowflake.snowpark.functions import col")
+    body = body.replace('    return "OK"', f"    {reach}\n    return \"OK\"")
+    errors = rules.check_proc_py(body, "wf_0006", "seg_02", CONTRACT)
+    assert any(e.startswith("rule:no_io") for e in errors), errors
+
+
+def test_the_sqlite_pass_escape_payload_is_refused_at_the_gate():
+    """The attack report's `sqlite_pass_escape.py`: `T.sys.modules['sqlite3'].connect(host)`."""
+    body = GOOD.replace("from snowflake.snowpark.functions import col",
+                        "import snowflake.snowpark.types as T\nfrom snowflake.snowpark.functions import col")
+    body = body.replace('    return "OK"',
+                        '    _db = T.sys.modules["sqlite3"]\n'
+                        '    _c = _db.connect("x.db")\n'
+                        '    return "OK"')
+    errors = rules.check_proc_py(body, "wf_0006", "seg_02", CONTRACT)
+    assert any(e.startswith("rule:no_io") and "sys" in e for e in errors), errors
+
+
+def test_importing_a_stdlib_module_by_alias_through_an_allowed_package_is_refused():
+    body = GOOD.replace("import pandas as pd\n",
+                        "import pandas as pd\nfrom snowflake.snowpark.types import sys as _s\n")
+    errors = rules.check_proc_py(body, "wf_0006", "seg_02", CONTRACT)
+    assert any("sys" in e for e in errors), errors
+
+
+@pytest.mark.parametrize("defn", [
+    "class Fin:\n    def __del__(self):\n        pass\n",
+    "def _helper():\n    return 1\n",
+    "def __sneaky():\n    return 1\n",
+])
+def test_a_method_or_function_definition_with_a_private_name_is_refused(defn):
+    body = GOOD.replace("def run(", defn + "\n\ndef run(")
+    errors = rules.check_proc_py(body, "wf_0006", "seg_02", CONTRACT)
+    assert any(e.startswith("rule:no_io") for e in errors), errors
+
+
+@pytest.mark.parametrize("fmt", [
+    '"{0.read_pickle}".format(pd)',
+    '"{0[secret]}".format({})',
+    '"{0.__class__}".format(pd)',
+    '"{a.b}".format_map({})',
+])
+def test_a_format_string_that_traverses_attributes_or_items_is_refused(fmt):
+    body = GOOD.replace('    return "OK"', f"    _v = {fmt}\n    return \"OK\"")
+    errors = rules.check_proc_py(body, "wf_0006", "seg_02", CONTRACT)
+    assert any(e.startswith("rule:no_io") for e in errors), errors
+
+
+@pytest.mark.parametrize("call", ["hasattr(pd, 'x')", "dir(pd)"])
+def test_hasattr_and_dir_are_refused(call):
+    body = GOOD.replace('    return "OK"', f"    _v = {call}\n    return \"OK\"")
+    errors = rules.check_proc_py(body, "wf_0006", "seg_02", CONTRACT)
+    assert any(e.startswith("rule:no_io") for e in errors), errors
+
+
+def test_a_throwaway_underscore_name_and_ordinary_methods_still_pass():
+    """`for _, row in ...` and `.iterrows()`/`.groupby()` (the canned idioms) are not private reach."""
+    body = ('# tool 3: keep the canned idioms\n'
+            'import pandas as pd\n'
+            'from snowflake.snowpark.types import StructType, StructField, StringType\n\n\n'
+            'def run(session, src_db, src_schema, tgt_db, tgt_schema, run_id):\n'
+            '    pdf = session.table("MIG_WORK.WF0006_SEG_01_OUT").to_pandas()\n'
+            '    for _, row in pdf.iterrows():\n'
+            '        _keep = row["CUSTOMER"]\n'
+            '    out = pdf.sort_values(["CUSTOMER"]).reset_index(drop=True)\n'
+            '    session.create_dataframe(out, schema=StructType([StructField("CUSTOMER", StringType(20))]))'
+            '.write.mode("overwrite").save_as_table("MIG_WORK.WF0006_SEG_02_OUT")\n'
+            '    return "OK"\n')
+    assert rules.check_proc_py(body, "wf_0006", "seg_02", CONTRACT) == []
+
+
+# --- fix round 5 (allow-lists): the gate accepts only the Snowpark/pandas surface the corpus uses ----
+# The static gate is now an ALLOW-list, not a deny-list: a method call whose NAME is not on the
+# union of Snowpark DataFrame/Column/Row methods, the pandas carry-over methods and the builtin
+# str/list/dict methods is refused; a `pd.`/`np.` module attribute not on the per-module allow-list
+# is refused; `pd.eval`, `df.query`, `df.eval`, `engine="python"` are refused outright. These are
+# proven with HARMLESS constructs (route (3) of the attack, by name only) -- no working escape.
+
+def test_pd_eval_is_refused_as_a_module_attribute():
+    """`pd.eval(<string>, engine="python")` executes a string the AST gate never sees. `eval` is not
+    on the pandas module allow-list, so `pd.eval` is refused (proven with the harmless `pd.eval("1")`)."""
+    body = GOOD.replace('    return "OK"', '    _v = pd.eval("1")\n    return "OK"')
+    errors = _errors(body)
+    assert any(e.startswith("rule:no_io") and "eval" in e for e in errors), errors
+
+
+@pytest.mark.parametrize("method", ["query", "eval", "pipe", "style", "plot", "to_pandas_batches",
+                                    "apply", "transform", "pivot_table"])
+def test_a_method_not_on_the_allow_list_is_refused(method):
+    """`df.query("x > 1")`, `df.eval(...)`, `.pipe(...)`, `.style`, `.plot()` and the other
+    non-allow-listed methods are refused just by not being on the allow-list (harmless call text)."""
+    body = GOOD.replace('    return "OK"', f'    _v = out.{method}("x > 1")\n    return "OK"')
+    errors = _errors(body)
+    assert any(e.startswith("rule:no_io") and method in e for e in errors), errors
+
+
+@pytest.mark.parametrize("engine_call", [
+    'pd.DataFrame({"a": [1]}).eval("a + 1", engine="python")',
+    'out.to_pandas().query("a > 0", engine="python")',
+])
+def test_engine_python_is_refused_outright(engine_call):
+    """`engine="python"` runs a string in the Python engine -- refused wherever it appears, even
+    apart from the method-name refusal above (the two payloads use methods that are already off the
+    allow-list, so the engine kwarg is a second, independent refusal)."""
+    body = GOOD.replace('    return "OK"', f'    _v = {engine_call}\n    return "OK"')
+    errors = _errors(body)
+    assert any(e.startswith("rule:no_io") and "engine" in e for e in errors), errors
+
+
+@pytest.mark.parametrize("attr", ["read_csv", "read_parquet", "eval", "json_normalize", "concat",
+                                  "merge", "pivot"])
+def test_a_pandas_module_attribute_not_on_the_allow_list_is_refused(attr):
+    """`pd.<attr>` is refused unless `<attr>` is on the pandas module allow-list (isna/notna/NA/
+    DataFrame/Series/Timestamp): a reader, `pd.eval`, or a top-level combiner is off it."""
+    body = GOOD.replace('    return "OK"', f'    _v = pd.{attr}\n    return "OK"')
+    errors = _errors(body)
+    assert any(e.startswith("rule:no_io") and attr in e for e in errors), errors
+
+
+@pytest.mark.parametrize("attr", ["isna", "notna", "NA", "DataFrame", "Series", "Timestamp"])
+def test_the_allowed_pandas_module_attributes_pass(attr):
+    """The carry-over pandas surface the allow-list names is accepted (a bare reference, no I/O)."""
+    body = GOOD.replace('    return "OK"', f'    _v = pd.{attr}\n    return "OK"')
+    assert _errors(body) == [], _errors(body)
+
+
+def test_a_numpy_module_attribute_not_on_the_allow_list_is_refused():
+    """`numpy` is import-allowed for row-sequential math, but its attributes are an allow-list too:
+    a file API like `np.load`/`np.savetxt` is off it (`np.random` is on it -- the fixture uses it)."""
+    body = GOOD.replace("import pandas as pd\n", "import pandas as pd\nimport numpy as np\n")
+    body = body.replace('    return "OK"', '    _v = np.load\n    return "OK"')
+    errors = rules.check_proc_py(body, "wf_0006", "seg_02", CONTRACT)
+    assert any(e.startswith("rule:no_io") and "load" in e for e in errors), errors
+
+
+def test_every_canned_and_cookbook_method_stays_on_the_allow_list():
+    """The allow-list is derived from the benign corpus, so every method the canned procedure, the
+    cookbook fragments and the broad positive control (GOOD4) call must be on it -- this is the
+    control that says the allow-list bans unlisted methods, not the DataFrame/pandas API."""
+    for source in (GOOD, GOOD2, GOOD3, GOOD4):
+        assert _errors(source) == [], (source, _errors(source))

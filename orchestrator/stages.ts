@@ -9,8 +9,9 @@
 // not apply to WAITING_FOR_ANSWERS, whose whole point is to be re-run every pass so a newly
 // merged answer can move intake forward, or to a T3 workflow's MANUAL, which is a normal (if
 // permanent) resting state, not an escalation.
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { retryFeedback } from "./feedback.ts";
 import { auditArgs, notesPath } from "./hooks.ts";
 import { fileExists, loadManifest, readJsonOr, reloadManifest, saveManifest, wfDir } from "./manifest.ts";
 import { STAGES } from "./types.ts";
@@ -42,6 +43,11 @@ export const TERMINAL_GOOD: Record<Stage, string[]> = {
   document: ["DONE"],
   pr: ["OPEN"],
 };
+
+/** Live hardening, Task L8: the one fixed string every stub body of `scripts/translation_scaffold.py`'s
+ * skeleton is (`scripts/lib/scaffold.py` `TODO_MARKER`; `tests/test_translation_scaffold.py` pins the two
+ * equal). `compile_check.py` refuses a file that still holds it (`scaffold:todo`). */
+export const SCAFFOLD_TODO = "TODO(scaffold)";
 
 /** Errors worth one identical retry before escalating (spec §5 routing table). */
 const RETRY_ONCE: AgentError[] = ["missing-output", "timeout"];
@@ -96,19 +102,155 @@ function domainFailure(env: Env, m: Manifest, stage: Stage, why: string, result:
 }
 
 /**
+ * Task L1 (R4): the fixed session rules every agent task carries, for every role and every form of
+ * its task. Live evidence (docs/live-smoke-test.md "Third live test"): nothing told the model how
+ * to navigate, so it typed absolute paths (mangling a long run root), listed files with PowerShell
+ * and opened a sibling workflow's folder -- each refused, each a tool call spent. A constant: it
+ * carries no workflow-authored text (not even the workflow's id; the task names that).
+ * `.github/copilot-instructions.md` mirrors the same seven rules.
+ *
+ * Task L7 (R3) adds the fifth. Live evidence (task-L7-brief.md): a translator whose `validate_segment.py`
+ * run failed spent the rest of its session reading 54 files, many of them the pipeline's own `scripts/`
+ * source, trying to debug the diff by reading the tool's own implementation -- until its session timed
+ * out. `translator.agent.md` / `fixer.agent.md` bound self-validation to one run per session for the
+ * same reason (R3's other half); this rule is the general instruction every role gets, since none of
+ * them may read this pipeline's own source to debug a difference either.
+ *
+ * Task L8 (R3) adds the sixth. Live evidence (task-L8-brief.md): a dbt translator read every golden CSV
+ * of every set before writing anything and overflowed its context. Reading stays allowed -- this is
+ * guidance, and the budgets bound the rest.
+ *
+ * Task L9 (R3) adds the seventh. Live evidence (task-L9-brief.md): the SDK offered a documenter session
+ * its own built-in `web_fetch`, and the model called it -- refused as a severe network attempt, parking
+ * the session at once, on a workflow whose translation had already reached VALIDATED. `policy.ts`'s
+ * `ALWAYS_EXCLUDED_BUILTIN_TOOLS` (R1) stops the SDK offering it in the first place; this rule is the
+ * same fact stated to the model, for a build where the exclusion is not honoured or the tool is offered
+ * under another name this codebase has not seen yet.
+ */
+export const SESSION_RULE_LINES: readonly string[] = [
+  "In every tool call use a path relative to the repository root (workflows/<id>/…, where <id> is the workflow " +
+    "your task names); never type an absolute path. The one exception is a temporary file that a tool result " +
+    "itself says holds that result's full output: read it with view or grep, exactly as named.",
+  "List files with glob, read them with view and search them with grep; the shell only runs the commands your " +
+    "agent file names, its scripts as `python scripts/<name>.py …`, one command per shell call: `;`, `&&`, `|`, " +
+    "redirection and `$` are refused, so read a script's report file with view afterwards. `python` is already the " +
+    "project's interpreter: never check it.",
+  "Among the workflows, only workflows/<id>/ is yours; never open another workflow's folder.",
+  "A refused tool call is final: do not retry it in another form or through another tool. Continue with what is " +
+    "allowed, and if you cannot finish without it, say so in your notes (or, if your role keeps none, in the file " +
+    "you were asked to write) and stop.",
+  "Do not read this pipeline's own scripts/ or orchestrator/ source to debug a difference: the validation report, " +
+    "the contract, the cookbook and docs/reference/ are the evidence.",
+  "Never read the golden data in bulk: the contract describes every column. When an example helps, read at most one " +
+    "golden set's inputs (e.g. normal); the validator compares the rest.",
+  "There is no network in these sessions: every page you need is in the repository (`cookbook/`, `docs/reference/`).",
+];
+
+export const SESSION_RULES =
+  `Session rules, the same for every agent: ${SESSION_RULE_LINES.map((rule, i) => `(${i + 1}) ${rule}`).join(" ")}`;
+
+/** A task in its two parts: the orchestrator's own instructions, and the fenced inline context
+ * (`scripts/prompt_context.py`, Task F) that follows them -- data, never instructions. */
+interface AgentTask {
+  instructions: string;
+  context: string;
+}
+
+/** The text an agent is sent (Task L1, R4): the instructions, then the session rules, then any
+ * inline context -- so the rules are always part of the instructions and never inside the fence. */
+export function taskText(task: string | AgentTask): string {
+  const { instructions, context } = typeof task === "string" ? { instructions: task, context: "" } : task;
+  return `${instructions}\n\n${SESSION_RULES}${context}`;
+}
+
+/** What a stage's verify callback may hand `runAgent` besides its verdict: the full report of the
+ * check that failed (Task L3, R4), which the retry quotes after the recorded reason. */
+type VerifyNote = (report: string) => void;
+
+/** Live hardening, Task L7 (R2): additive per role, on the same rules as `hooks.ts`'s `recordMetrics`
+ * (a retried or later attempt's count is never lost) -- how many of this role's sessions ended
+ * `timeout` but were kept because the stage's own verify passed anyway. */
+function recordKeptTimeout(m: Manifest, role: Role): void {
+  const previous = m.metrics[role] as Record<string, unknown> | undefined;
+  const prior = typeof previous?.timeouts === "number" ? (previous.timeouts as number) : 0;
+  m.metrics[role] = { ...(previous ?? {}), timeouts: prior + 1 };
+}
+
+/**
+ * Live hardening, Task L7 fix round 2 (IMP-2): whether `before` (a snapshot taken at an attempt's
+ * own start, via `snapshot`) still matches `after` byte for byte, file for file -- the same
+ * comparison `untouched` (Task L8) makes, extracted so a `runAgent` `freshSince` closure can compare
+ * two snapshots it took itself directly, without `untouched`'s own `tree`/`wanted` recompute.
+ */
+function sameContent(before: Skeleton, after: Skeleton): boolean {
+  if (before.size !== after.size) return false;
+  for (const [file, text] of before) if (after.get(file) !== text) return false;
+  return true;
+}
+
+/** Live hardening, Task L7 fix round 2 (IMP-2): the dbt project's OWN work files -- every model
+ * under `models/` (`MODEL_FILE`, Task L8) plus the two model YAMLs, `models/sources.yml` and
+ * `models/schema.yml` -- exactly the translator's/fixer's lane (`translator.agent.md`, "Your lane"),
+ * never `dbt_project.yml`, `profiles.yml`, `README.md`, `translation_notes.md`, `fix_log.md`,
+ * `compile_check.json`, `review.json`, `validation*.json` or `logs/`. Review IMP-2: the orchestrator
+ * writes `compile_check.json` milliseconds before a fixer that follows a compile failure runs, and a
+ * dbt fixer is told to log every iteration to `fix_log.md` -- either one alone used to be enough to
+ * make a timed-out session with no real repair look "written this session" under the old, clock-based
+ * check (any mtime within a 2 s tolerance of the attempt's start counted, whatever file it was).
+ */
+const DBT_WORK_FILE = (file: string): boolean => MODEL_FILE(file) || /[\\/]models[\\/](sources|schema)\.yml$/i.test(file);
+
+/**
  * One agent call with the spec's retry policy: back off on a rate limit, retry a missing
  * output or a timeout once, escalate a denied tool at once, and never start an agent once
- * the workflow is over its tool-call budget.
+ * the workflow is over its tool-call budget. (Since Tasks L1 and L6 a session is `denied` only for a
+ * severe attempt, or for attempted actions or blocked reads over `budgets.maxActDenialsPerSession` /
+ * `budgets.maxReadDenialsPerSession` -- see `CopilotRunner.run`.) Every task is sent through
+ * `taskText`, so every role gets the session rules.
+ *
+ * Task L3 (R4): the one retry after a failed verify (`missing-output`) is told why -- the task gains
+ * `feedback.ts`'s fixed sentence and, in a data fence, the reason the attempt recorded (or the
+ * agent-level error) and the report the verify callback noted. A first attempt, and a retry after
+ * a timeout (no check failed), carry no such block.
+ *
+ * Task L7 (R2), live evidence (task-L7-brief.md): a translator wrote a valid, compiling `proc.sql`
+ * and then spent the rest of its session reading source files instead of stopping, until the SDK's
+ * own session timeout -- and the orchestrator threw the compiled procedure away and retried from
+ * scratch. A session that ends `timeout` is no longer retried unseen: when the stage gave a `verify`
+ * callback, it is run once against what the session actually left on disk; if it passes, the result
+ * is accepted as a success (logged, and counted in `recordKeptTimeout`) instead of being retried. If
+ * `verify` fails, or the stage gave none, the existing `RETRY_ONCE` path below applies unchanged.
+ * A session with a severe denial is never kept: it parks `denied` (L6 fix round 2, I3).
+ *
+ * Task L7 fix round 1 (R-b, review I2): `verify` alone is existence, and existence can already be
+ * true before this attempt ever ran -- a fixer's `verify` is the same `fileExists(proc.sql)` the
+ * translator's iteration 0 already satisfied, so a fixer that timed out having changed nothing was
+ * still "kept". `freshSince`, when the caller gives one, is an extra gate on the SAME timeout-keep
+ * path: it must also say the checked output actually CHANGED during this attempt. Roles with no
+ * `freshSince` (every one but the translator/fixer calls in `migrateSegment`/`migrateDbt`) are
+ * unchanged -- existence is still their whole check, per the ruling's own scope (fix round 1 review,
+ * M4).
+ *
+ * Task L7 fix round 2 (IMP-2): "changed" is judged by CONTENT, not the clock -- fix round 1's
+ * `freshSince(attemptStartedAt)` compared a file's mtime against the attempt's start (with a 2 s
+ * tolerance), and housekeeping the orchestrator or the agent itself writes near the same instant
+ * (`compile_check.json`, `fix_log.md`) could satisfy it without a single model file changing. Now
+ * `freshSince` is called ONCE, before the session runs, to snapshot the stage's own work files; it
+ * returns a check function called AFTER, true only if that snapshot no longer matches -- no clock
+ * involved at all, so nothing written before or after the attempt (however close in time) can be
+ * mistaken for something written during it.
  */
 async function runAgent(
   env: Env,
   m: Manifest,
   role: Role,
   stage: Stage,
-  task: string,
+  task: string | AgentTask,
   ctx: AgentCtx = {},
-  verify?: () => Promise<boolean>,
+  verify?: (note: VerifyNote) => Promise<boolean>,
+  freshSince?: () => Promise<() => Promise<boolean>>,
 ): Promise<AgentResult> {
+  let text = taskText(task);
   const budget = env.config.budgets.maxToolCallsPerWorkflow;
   let rateLimits = 0;
   let retried = false;
@@ -126,9 +268,37 @@ async function runAgent(
       return { ok: false, error: "error", detail: "budget", toolCalls: 0, ms: 0 };
     }
 
-    let result = await env.runner.run(role, m, task, ctx);
-    if (result.ok && verify && !(await verify())) {
+    // Task L7 fix round 2 (IMP-2): the "before" snapshot is taken before the session runs, so
+    // `changed` (below) judges THIS attempt's own edits -- content an earlier iteration or a
+    // resumed run already left in place is part of "before" too, so it is never mistaken for work
+    // done now.
+    const changed = freshSince ? await freshSince() : undefined;
+    let report: string | undefined;
+    let result = await env.runner.run(role, m, text, ctx);
+    // L6 fix round 2 (I3): a session with a severe denial parks `denied` at once, whatever ended it --
+    // never verified, kept or retried. (CopilotRunner already reports it so; this holds for any runner.)
+    if ((result.severeDenials ?? 0) > 0 && result.error !== "denied") {
+      result = { ...result, ok: false, error: "denied", detail: `severe-denials: ${result.severeDenials} (parks at once); ${result.detail ?? ""}` };
+    }
+    if (result.ok && verify && !(await verify((noted) => { report = noted; }))) {
       result = { ...result, ok: false, error: "missing-output", detail: "the agent wrote no output file" };
+    }
+    // Task L7 (R2), extended by fix round 1/2 (R-b, IMP-2): a timeout with a `verify` that now
+    // passes, AND (when the caller cares) an output that actually CHANGED during this attempt, is
+    // kept, not retried -- see the doc comment above. `result.ok` is already false here (the block
+    // above only ever turns a success into `missing-output`, never the reverse), so this and the
+    // `if (result.ok)` below are mutually exclusive: `verify` runs at most once per attempt either way.
+    if (
+      !result.ok &&
+      result.error === "timeout" &&
+      !result.severeDenials &&
+      verify &&
+      (await verify((noted) => { report = noted; })) &&
+      (!changed || (await changed()))
+    ) {
+      recordKeptTimeout(m, role);
+      env.log(`${m.id}: ${role} timed out after writing an output that passes its check — kept`);
+      return { ...result, ok: true, error: undefined, detail: undefined };
     }
     if (result.ok) return result;
     env.log(`${m.id}: ${role} ${result.error ?? "error"}${result.detail ? ` — ${result.detail}` : ""}`);
@@ -140,6 +310,10 @@ async function runAgent(
     }
     if (result.error && RETRY_ONCE.includes(result.error) && !retried) {
       retried = true;
+      if (result.error === "missing-output") {
+        const why = m.reasons?.[stage] ?? `${result.error}${result.detail ? `: ${result.detail}` : ""}`;
+        text = `${taskText(task)}\n\n${retryFeedback(why, report)}`;
+      }
       continue;
     }
     return result;
@@ -247,10 +421,13 @@ async function stageIntake(env: Env, m: Manifest): Promise<Step> {
       m,
       "intake",
       "intake",
-      `Run intake for ${m.id}. Read workflows/${m.id}/parsed/dag.json, workflows/${m.id}/intake/touchpoints.json ` +
-        `and mappings/global.yaml, then write workflows/${m.id}/intake/mappings.yaml, open_questions.md and plan.md.` +
-        notesInstruction("intake", m.id) +
+      {
+        instructions:
+          `Run intake for ${m.id}. Read workflows/${m.id}/parsed/dag.json, workflows/${m.id}/intake/touchpoints.json ` +
+          `and mappings/global.yaml, then write workflows/${m.id}/intake/mappings.yaml, open_questions.md and plan.md.` +
+          notesInstruction("intake", m.id),
         context,
+      },
       {},
       () => fileExists(wfDir(env.root, m.id, "intake", "plan.md")),
     );
@@ -402,7 +579,7 @@ interface SeamReport {
  * names its producers and table instead), and `script-error` for exit 2 or an exit 1 that left no
  * mismatch to name.
  */
-async function seamReason(env: Env, m: Manifest, segments?: string[]): Promise<string | undefined> {
+async function seamReason(env: Env, m: Manifest, segments?: string[], note?: VerifyNote): Promise<string | undefined> {
   const file = wfDir(env.root, m.id, "segments", "seams.json");
   await rm(file, { force: true });
   const checked = await env.py("scripts/check_seams.py", segments ? [m.id, "--segments", segments.join(",")] : [m.id]);
@@ -411,6 +588,7 @@ async function seamReason(env: Env, m: Manifest, segments?: string[]): Promise<s
     env.log(`${m.id}: scripts/check_seams.py exited ${checked.code} — ${checked.err.trim().split("\n").slice(-1)[0] ?? ""}`);
     return "script-error";
   }
+  note?.(checked.err);
   const report = await readJsonOr<SeamReport>(file, {});
   const seam = (report.seams ?? []).find((s) => s.status === "mismatch");
   const duplicate = (report.duplicates ?? [])[0];
@@ -422,6 +600,51 @@ async function seamReason(env: Env, m: Manifest, segments?: string[]): Promise<s
   env.log(`${m.id}: ${why} — ${checked.err.trim().split("\n").slice(0, 3).join(" | ")}`);
   return why;
 }
+
+/** `--segments a,b` for a batch's call of a script, nothing for the whole workflow's. */
+function scoped(segments?: string[]): string[] {
+  return segments ? ["--segments", segments.join(",")] : [];
+}
+
+/** The reason a contract step failed with: `contract: <the script's first stderr line>` (redacted and
+ * bounded, as every recorded reason is), or `script-error` for anything but exit 1. The script's
+ * whole stderr is noted for the retry (R4). */
+function contractFailure(env: Env, m: Manifest, script: string, result: ShResult, note?: VerifyNote): string {
+  const lines = result.err.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  if (result.code !== 1) {
+    env.log(`${m.id}: ${script} exited ${result.code} — ${lines.slice(-1)[0] ?? ""}`);
+    return "script-error";
+  }
+  note?.(lines.join("\n"));
+  env.log(`${m.id}: ${script} — ${lines.slice(0, 3).join(" | ")}`);
+  return `contract: ${auditArgs(lines[0] ?? `${script} exited 1 and named no problem`)}`;
+}
+
+/**
+ * Task L3 (R3), the first half of the analyze gate's contract step: `contract_scaffold.py --apply`
+ * re-applies every mechanical field over the analyzer's contracts (authoritative: the analyzer's
+ * judgment, nullability, keys and `target` are kept as written -- raising or dropping a target is
+ * still `checkTargets`' to report). Undefined when it ran; else the reason to park with.
+ */
+async function reapplyScaffold(env: Env, m: Manifest, segments?: string[], note?: VerifyNote): Promise<string | undefined> {
+  const applied = await env.py("scripts/contract_scaffold.py", [m.id, "--apply", ...scoped(segments)]);
+  return applied.ok ? undefined : contractFailure(env, m, "scripts/contract_scaffold.py", applied, note);
+}
+
+/** The second half, after the target and seam checks: `contract_check.py` (Task L3, R2). */
+async function contractReason(env: Env, m: Manifest, segments?: string[], note?: VerifyNote): Promise<string | undefined> {
+  const checked = await env.py("scripts/contract_check.py", [m.id, ...scoped(segments)]);
+  return checked.ok ? undefined : contractFailure(env, m, "scripts/contract_check.py", checked, note);
+}
+
+/** The analyzer's own share of a contract (Task L3): the orchestrator writes every mechanical field. */
+const JUDGMENT_SENTENCE =
+  `Every mechanical field of each contract -- workflow, segment, target, inputs, outputs, output, and every column's ` +
+  `name and type -- is pre-filled by the orchestrator from the parsed DAG, the segment cuts, segments/targets.json ` +
+  `and intake/mappings.yaml, and is re-applied after you: do not change it. Your job is the judgment: ` +
+  `row_relation, ordering, tolerances, normalizations and parity_risks, each column's nullable, each entry's keys ` +
+  `(and an input's expected_rows and large); and you may only lower a target (sql → snowpark → manual, never back ` +
+  `towards sql).`;
 
 async function stageAnalyze(env: Env, m: Manifest): Promise<Step> {
   const segmented = await env.py("scripts/segment.py", [m.id]);
@@ -452,6 +675,13 @@ async function stageAnalyze(env: Env, m: Manifest): Promise<Step> {
   const batches = entries.map((batch) => ({ id: batch.id, segments: [...batch.segments] }));
   for (const warning of Array.isArray(plan.warnings) ? plan.warnings : []) env.log(`${m.id}: plan_batches: ${String(warning)}`);
 
+  // Task L3 (R3): the mechanical fields are code's, written before the analyzer (single or batched)
+  // ever runs -- and only where no contract exists yet, so a resumed run keeps the analyzer's
+  // judgment. A field the scaffold could not derive is a note on stderr, logged, and left to the analyzer.
+  const prefilled = await env.py("scripts/contract_scaffold.py", [m.id, "--prefill"]);
+  if (!prefilled.ok) return scriptError(env, m, "analyze", "scripts/contract_scaffold.py", prefilled);
+  for (const line of prefilled.err.split(/\r?\n/).filter((l) => l.trim())) env.log(`${m.id}: contract_scaffold: ${line.trim()}`);
+
   const order = await readOrder(env, m.id);
   const segments = order.flat();
   if (batches.length > 1) return await analyzeInBatches(env, m, batches, segments);
@@ -463,15 +693,19 @@ async function stageAnalyze(env: Env, m: Manifest): Promise<Step> {
     m,
     "analyzer",
     "analyze",
-    `Analyze ${m.id}: classify every tool in workflows/${m.id}/parsed/dag.json, confirm the cuts in ` +
-      `workflows/${m.id}/segments/order.json, and write a contract.json for each segment plus analysis.md, ` +
-      `unsupported.json and the tier in manifest.json. Read workflows/${m.id}/segments/targets.json and copy ` +
-      `each segment's target into its contract.json (you may only lower a target: sql → snowpark → manual, ` +
-      `never back towards sql), saying in analysis.md why for each one you lowered.` +
-      notesInstruction("analyzer", m.id) +
+    {
+      instructions:
+        `Analyze ${m.id}: classify every tool in workflows/${m.id}/parsed/dag.json, confirm the cuts in ` +
+        `workflows/${m.id}/segments/order.json, and complete the contract.json of each segment in ` +
+        `workflows/${m.id}/segments/, plus analysis.md, unsupported.json and the tier in manifest.json. ` +
+        `${JUDGMENT_SENTENCE} The proposal is workflows/${m.id}/segments/targets.json; say in analysis.md why for ` +
+        `each target you lowered. Before you finish, run python scripts/contract_check.py ${m.id} and ` +
+        `python scripts/check_seams.py ${m.id} and fix what they report.` +
+        notesInstruction("analyzer", m.id),
       context,
+    },
     {},
-    async () => {
+    async (note) => {
       // The tier decision comes first (docs/spec/01-copilot-setup.md §3's state diagram:
       // `analyze --> MANUAL: tier T3` bypasses `analyze --> golden: contracts written` entirely,
       // and the spec's own migrateWorkflow skeleton sets status.analyze = "DONE" unconditionally
@@ -490,15 +724,27 @@ async function stageAnalyze(env: Env, m: Manifest): Promise<Step> {
         if (!(await fileExists(wfDir(env.root, m.id, "segments", segment, "contract.json")))) return false;
       }
       if (segments.length === 0) return false;
+      // Task L3 (R3): the mechanical fields are re-applied BEFORE anything reads the contracts...
+      const applied = await reapplyScaffold(env, m, undefined, note);
+      if (applied) {
+        reasons(m).analyze = applied;
+        return false;
+      }
       const checked = await checkTargets(env, m, segments);
       if (!checked.ok) {
         reasons(m).analyze = checked.reason!;
         return false;
       }
       // Task W2: every seam is checked by code, never by a model.
-      const seams = await seamReason(env, m);
+      const seams = await seamReason(env, m, undefined, note);
       if (seams) {
         reasons(m).analyze = seams;
+        return false;
+      }
+      // ...and the checker runs last, so the target and seam checks keep their order and reasons.
+      const contract = await contractReason(env, m, undefined, note);
+      if (contract) {
+        reasons(m).analyze = contract;
         return false;
       }
       verdict = checked;
@@ -543,7 +789,7 @@ async function analyzeInBatches(env: Env, m: Manifest, batches: AnalyzerBatch[],
     }
     const context = rendered.ok && rendered.out.trim() ? `\n\n${rendered.out.trim()}` : "";
     const fragment = (suffix: string) => wfDir(env.root, m.id, "analysis", `${batch.id}${suffix}`);
-    const task =
+    const instructions =
       `Analyze ${m.id}, batch ${index + 1} of ${batches.length} (${batch.id}): segments ${batch.segments.join(", ")}. ` +
       `The workflow is too large for one analyzer call, so it is analysed batch by batch in wave order; the ` +
       `workflow map, the target proposal and the contracts earlier batches wrote at this batch's input seams are ` +
@@ -551,15 +797,16 @@ async function analyzeInBatches(env: Env, m: Manifest, batches: AnalyzerBatch[],
       `are in workflows/${m.id}/segments/<segment>/dag.json) and write ONLY: a contract.json for each of these ` +
       `segments, workflows/${m.id}/analysis/${batch.id}.md (this batch's part of analysis.md) and ` +
       `workflows/${m.id}/analysis/${batch.id}.unsupported.json (this batch's tier and unsupported tools, in ` +
-      `unsupported.json's shape). Copy each segment's target from workflows/${m.id}/segments/targets.json into its ` +
-      `contract.json (you may only lower a target: sql → snowpark → manual, never back towards sql), saying in ` +
-      `the fragment why for each one you lowered. For every input that comes from a segment of an earlier batch, ` +
-      `copy that producer's outputs[] entry: same table, same columns in order, same type family, same ` +
-      `nullability, same keys — scripts/check_seams.py checks every seam after you. The orchestrator stitches ` +
-      `analysis.md and unsupported.json and records the tier; do not write them or manifest.json.` +
-      notesInstruction("analyzer", m.id) +
-      context;
-    const result = await runAgent(env, m, "analyzer", "analyze", task, { batch }, async () => {
+      `unsupported.json's shape). ${JUDGMENT_SENTENCE} The proposal is workflows/${m.id}/segments/targets.json; say ` +
+      `in the fragment why for each target you lowered. For every input that comes from a segment of an earlier ` +
+      `batch, declare the same nullability and keys as that producer's outputs[] entry below — ` +
+      `scripts/check_seams.py checks every seam after you. Before you finish, run ` +
+      `python scripts/contract_check.py ${m.id} --segments <segment> and ` +
+      `python scripts/check_seams.py ${m.id} --segments <segment> for each of ${batch.segments.join(", ")}, and fix ` +
+      `what they report. The orchestrator stitches analysis.md and unsupported.json and records the tier; do not ` +
+      `write them or manifest.json.` +
+      notesInstruction("analyzer", m.id);
+    const result = await runAgent(env, m, "analyzer", "analyze", { instructions, context }, { batch }, async (note) => {
       if (!(await fileExists(fragment(".md")))) return false;
       // The fragment's unsupported.json must carry a tier the stitch can rank: a missing or unreadable
       // one is this batch's missing output, retried once here, never left for the stitch to refuse.
@@ -572,14 +819,26 @@ async function analyzeInBatches(env: Env, m: Manifest, batches: AnalyzerBatch[],
       for (const segment of batch.segments) {
         if (!(await fileExists(wfDir(env.root, m.id, "segments", segment, "contract.json")))) return false;
       }
+      // Task L3 (R3): as for one call -- re-apply, then targets, then seams, then the checker, each for
+      // this batch's own segments only.
+      const applied = await reapplyScaffold(env, m, batch.segments, note);
+      if (applied) {
+        reasons(m).analyze = applied;
+        return false;
+      }
       const checked = await checkTargets(env, m, batch.segments);
       if (!checked.ok) {
         reasons(m).analyze = checked.reason!;
         return false;
       }
-      const seams = await seamReason(env, m, batch.segments);
+      const seams = await seamReason(env, m, batch.segments, note);
       if (seams) {
         reasons(m).analyze = seams;
+        return false;
+      }
+      const contract = await contractReason(env, m, batch.segments, note);
+      if (contract) {
+        reasons(m).analyze = contract;
         return false;
       }
       return true;
@@ -607,6 +866,12 @@ async function analyzeInBatches(env: Env, m: Manifest, batches: AnalyzerBatch[],
 async function finishAnalyze(env: Env, m: Manifest, verdict?: TargetVerdict, segments?: string[]): Promise<Step> {
   const tier = asTier((await readJsonOr<{ tier?: unknown }>(wfDir(env.root, m.id, "unsupported.json"), {})).tier);
   if (tier) m.tier = tier;
+  if (m.tier === "T3") {
+    // Task L3: a T3 workflow has no contracts (it is never translated), so whatever the pre-fill wrote
+    // and no analyzer judged goes; a contract an analyzer did judge stays.
+    const pruned = await env.py("scripts/contract_scaffold.py", [m.id, "--prune-unjudged"]);
+    if (!pruned.ok) return scriptError(env, m, "analyze", "scripts/contract_scaffold.py", pruned);
+  }
   if (!verdict && segments) {
     if (m.tier === "T3") {
       verdict = { ok: true, outputKind: await mirroredKind(env, m), lowered: [] };
@@ -700,6 +965,148 @@ function diagnosis(result: ShResult): string {
   return auditArgs(`${result.err}\n${result.out}`.trim()) || "(no output)";
 }
 
+/** `validation.json` and `validation.<set>.json` -- the shapes `lib.validation.clear_stale_reports`
+ * deletes -- and the chain report's `validation_workflow[.<set>].json` (`clear_stale_workflow_reports`). */
+const SEGMENT_REPORT = /^validation(\.[a-z0-9_-]+)?\.json$/i;
+const CHAIN_REPORT = /^validation_workflow(\.[a-z0-9_-]+)?\.json$/i;
+
+/**
+ * Task L4 (R2): the translator and the fixer may run the validator scripts on their own work, which
+ * writes the very reports a validator session is judged by ("the report exists", then its verdict).
+ * Before the validator is dispatched those reports are deleted -- each named segment's, and for a
+ * dbt project the chain report too -- so only the validator's own run can satisfy that check, and a
+ * verdict read afterwards is never one a translator or fixer produced.
+ */
+async function clearValidationReports(env: Env, wfId: string, segments: string[], chain: boolean): Promise<void> {
+  const clear = async (dir: string, shape: RegExp) => {
+    let names: string[] = [];
+    try {
+      names = await readdir(dir);
+    } catch {
+      return; // no directory, nothing to clear
+    }
+    for (const name of names) if (shape.test(name)) await rm(path.join(dir, name), { force: true });
+  };
+  for (const segment of segments) await clear(wfDir(env.root, wfId, "segments", segment), SEGMENT_REPORT);
+  if (chain) await clear(wfDir(env.root, wfId), CHAIN_REPORT);
+}
+
+// ---------- live hardening, Task L8: the orchestrator writes the translation's skeleton ----------
+
+/** The translation files of a skeleton, with the text each held when the translator's session began --
+ * so a session that ends with every one of them exactly as it was is known to have written nothing. */
+type Skeleton = Map<string, string>;
+
+/** The marker as `scripts/lib/scaffold.py`'s `TODO_PATTERN` finds it: any case, any spacing (fix round 1, M2). */
+const TODO_RE = /todo\s*\(\s*scaffold\s*\)/i;
+
+/** The files a translation lives in (fix round 1, I3): a segment's procedure file itself, or a dbt project's
+ * models -- never its notes, `compile_check.json`, logs or anything else a session may also leave there. */
+const MODEL_FILE = (file: string): boolean => /[\\/]models[\\/].*\.sql$/i.test(file);
+
+/** The text of `target` (a file), or of every file under it (a directory, recursively) -- only the
+ * files `wanted` accepts, when it is given. */
+async function snapshot(target: string, wanted?: (file: string) => boolean): Promise<Skeleton> {
+  const files: Skeleton = new Map();
+  const visit = async (at: string): Promise<void> => {
+    let info;
+    try {
+      info = await stat(at);
+    } catch {
+      return;
+    }
+    if (info.isDirectory()) {
+      for (const entry of await readdir(at)) await visit(path.join(at, entry));
+    } else if (!wanted || wanted(at)) {
+      files.set(at, await readFile(at, "utf8"));
+    }
+  };
+  await visit(target);
+  return files;
+}
+
+/**
+ * Task L8, fix round 1 (I1, I3, M1): the skeleton a translator's session is judged against -- the
+ * translation files (`tree`, filtered by `wanted`) as they are when the session begins, whoever wrote them
+ * (this run's scaffold or an earlier run's), but only while they still hold a TODO body. A skeleton with
+ * nothing to fill (a segment that only passes a stream through) is already a complete translation:
+ * undefined, so leaving it exactly as written is no failure.
+ */
+async function pendingSkeleton(tree: string, wanted?: (file: string) => boolean): Promise<Skeleton | undefined> {
+  const files = await snapshot(tree, wanted);
+  return [...files.values()].some((text) => TODO_RE.test(text)) ? files : undefined;
+}
+
+/** Whether the translation files still hold exactly the pending skeleton: the same files, each with the same
+ * text (a new model counts as work; a new note, report or log does not -- they are not translation files). */
+async function untouched(skeleton: Skeleton | undefined, tree: string, wanted?: (file: string) => boolean): Promise<boolean> {
+  if (!skeleton) return false;
+  const now = await snapshot(tree, wanted);
+  if (now.size !== skeleton.size) return false;
+  for (const [file, text] of skeleton) if (now.get(file) !== text) return false;
+  return true;
+}
+
+/** Whether a translation file under `target` (a model, a YAML file, a procedure) still holds a TODO body. */
+async function holdsTodo(target: string): Promise<boolean> {
+  for (const text of (await snapshot(target, (file) => /\.(sql|py|yml)$/.test(file))).values()) {
+    if (TODO_RE.test(text)) return true;
+  }
+  return false;
+}
+
+/**
+ * Task L8 (R2): before a translator's first session the orchestrator writes the translation's skeleton
+ * (`scripts/translation_scaffold.py <wf> --segment <seg> | --dbt`: every mechanical line, a TODO body per tool) --
+ * only when `own`, the file the translation lives in, does not exist yet, so a resumed run keeps the
+ * translator's work (and the script itself never writes over a file either). "written" when it ran,
+ * "exists" when there was nothing to do, "error" when the script failed -- a script error, like
+ * compile_check.py's exit 2.
+ */
+async function writeSkeleton(env: Env, m: Manifest, args: string[], own: string): Promise<"written" | "exists" | "error"> {
+  if (await fileExists(own)) return "exists";
+  const ran = await env.py("scripts/translation_scaffold.py", args);
+  if (!ran.ok) {
+    env.log(`${m.id}${args.includes("--segment") ? ` ${args[args.length - 1]}` : ""}: translation_scaffold.py exited ${ran.code} — ${ran.err.trim()}`);
+    return "error";
+  }
+  // What it wrote (stdout: `wrote <file>`) and anything it could not derive (stderr: `note: …`).
+  for (const line of `${ran.out}\n${ran.err}`.split(/\r?\n/).filter((l) => l.trim())) {
+    env.log(`${m.id}: translation_scaffold: ${line.trim()}`);
+  }
+  return "written";
+}
+
+/** What the translator is told when the skeleton the orchestrator just wrote has no TODO in it (I1). */
+function completeSentence(file: string): string {
+  return ` The orchestrator has written ${file} and it is already complete: every line of this translation is ` +
+    `mechanical (it only passes its input through). Review it, keep it as it is, and write translation_notes.md.`;
+}
+
+/** What the translator is told when its file is (still) the orchestrator's skeleton. */
+function skeletonSentence(file: string, target: "sql" | "snowpark"): string {
+  const [lines, keep] = target === "snowpark"
+    ? ["the signature, the reads, the writes and the return", "the signature, the reads, the writes or the file layout"]
+    : ["the header, the LET lines, the write statements, the work-table names and the RETURN",
+       "the header, the LET lines, the write statements or the file layout"];
+  return ` The orchestrator has written the skeleton, ${file}: every mechanical line (${lines}) is already there. ` +
+    `Replace every ${SCAFFOLD_TODO} body with the transformation and change nothing else: not ${keep}. ` +
+    `scripts/compile_check.py refuses a remaining ${SCAFFOLD_TODO} (scaffold:todo).`;
+}
+
+function dbtSkeletonSentence(wfId: string): string {
+  return ` The orchestrator has written the project's skeleton under workflows/${wfId}/dbt/: dbt_project.yml, ` +
+    `profiles.yml, README.md, models/sources.yml, models/schema.yml and one model per contract output with its config ` +
+    `line, its source()/ref() reads, its CTE names and its final SELECT. Replace every ${SCAFFOLD_TODO} (a CTE body, or ` +
+    `a hook in a config line) with the transformation and change nothing else: not the file layout, the YAML files ` +
+    `or the config lines. scripts/compile_check.py ${wfId} --target dbt refuses a remaining ${SCAFFOLD_TODO} (scaffold:todo).`;
+}
+
+/** What a fixer is told when the file it repairs still holds a TODO body. */
+const UNWRITTEN_SENTENCE =
+  ` Some ${SCAFFOLD_TODO} bodies of the orchestrator's skeleton are still unwritten (compile_check.py names each as ` +
+  `scaffold:todo): write them, and keep the mechanical lines around them as they are.`;
+
 /** How far one call of `migrateSegment` runs. The defaults are the ordinary loop (translator on
  * iteration 0, then fixers, up to `maxFixIterations`); the chain check (Task W1) asks for exactly
  * one fixer round — `{ firstIteration: 1, iterations: 2, note }` — on the segment where the stitched
@@ -746,21 +1153,62 @@ async function migrateSegment(env: Env, m: Manifest, segment: string, opts: Segm
     }
     const target: "sql" | "snowpark" = contract.target === "snowpark" ? "snowpark" : "sql";
     const role: Role = iteration === 0 ? "translator" : "fixer";
+    // Task L8 (R2): the file the translation lives in, and the skeleton the orchestrator writes there
+    // before the translator's first session (only where none exists: a resumed run keeps its work).
+    const own = target === "snowpark" ? procPy : procSql;
+    const ownRel = `workflows/${m.id}/segments/${segment}/${path.basename(own)}`;
+    let skeleton: Skeleton | undefined;
+    let complete = false;
+    if (iteration === 0) {
+      const scaffolded = await writeSkeleton(env, m, [m.id, "--segment", segment], own);
+      if (scaffolded === "error") return { verdict: "NEEDS_HUMAN", reason: "script-error" };
+      // fix round 1 (I1, M1): judged against the file as this session finds it, while it holds a TODO
+      skeleton = await pendingSkeleton(own);
+      complete = scaffolded === "written" && !skeleton && (await fileExists(own));
+    }
+    const hasTodo = await holdsTodo(own);
     const pythonNote =
       ` This is a Snowpark Python segment: its source of truth is proc.py, and proc.sql is rendered from it by ` +
       `scripts/render_snowpark.py — never edit proc.sql by hand.`;
     const task =
       iteration === 0
         ? `Translate segment ${segment} of ${m.id} per workflows/${m.id}/segments/${segment}/contract.json and dag.json.` +
+          (hasTodo ? skeletonSentence(ownRel, target) : complete ? completeSentence(ownRel) : "") +
           (target === "snowpark" ? pythonNote : "")
         : (opts.repairTask ??
             `Repair segment ${segment} of ${m.id}: read workflows/${m.id}/segments/${segment}/validation.json and ` +
               `review.json first and change only what their diagnosis points at.`) +
           (failedBeforeReview ? ` ${failedBeforeReview}` : "") +
+          (hasTodo ? UNWRITTEN_SENTENCE : "") +
           (target === "snowpark" ? pythonNote : "") +
           notesInstruction("fixer", m.id);
-    const written = await runAgent(env, m, role, "translate", task, { segment, iteration }, async () =>
-      target === "snowpark" ? fileExists(procPy) : (await fileExists(procSql)) || (await fileExists(procPy)),
+    const written = await runAgent(
+      env,
+      m,
+      role,
+      "translate",
+      task,
+      { segment, iteration },
+      async (note) => {
+        const exists = target === "snowpark" ? await fileExists(procPy) : (await fileExists(procSql)) || (await fileExists(procPy));
+        // Task L8: the skeleton is the orchestrator's, not the translator's output -- a session that
+        // left it exactly as written has written nothing (retried once, told why; a timeout not kept).
+        if (exists && (await untouched(skeleton, own))) {
+          note(`${ownRel} is still the orchestrator's skeleton, exactly as written: every ${SCAFFOLD_TODO} body is still to be written`);
+          return false;
+        }
+        return exists;
+      },
+      // Task L7 fix round 1 (R-b), by content since fix round 2 (IMP-2): the same file `verify`
+      // checks for existence (`own` -- L8's own canonical translation file for this target), now
+      // also for a content change during THIS attempt -- a fixer (or a resumed translator) that
+      // timed out without actually editing it is not kept just because an EARLIER attempt already
+      // wrote one, or because something else (compile_check.json, fix_log.md) changed near the
+      // same instant.
+      async () => {
+        const before = await snapshot(own);
+        return async () => !sameContent(before, await snapshot(own));
+      },
     );
     if (!written.ok) {
       env.log(`${m.id} ${segment}: ${role} ${written.error ?? "error"} — segment needs a human`);
@@ -826,6 +1274,7 @@ async function migrateSegment(env: Env, m: Manifest, segment: string, opts: Segm
       continue;
     }
 
+    await clearValidationReports(env, m.id, [segment], false); // Task L4: never a translator's own report
     const validated = await runAgent(
       env,
       m,
@@ -929,17 +1378,53 @@ async function migrateDbt(env: Env, m: Manifest, segments: string[]): Promise<Db
     // describes it: a park must never report a PASS for a project nothing validated since.
     verdicts = {};
     const role: Role = iteration === 0 ? "translator" : "fixer";
+    // Task L8 (R2): the project's skeleton, written before the translator's first session when the
+    // project does not exist yet (a resumed run keeps the translator's project).
+    let skeleton: Skeleton | undefined;
+    if (iteration === 0) {
+      // N3: the project is asked for by name, never inferred from the manifest on disk
+      const scaffolded = await writeSkeleton(env, m, [m.id, "--dbt"], dbtFile("dbt_project.yml"));
+      if (scaffolded === "error") return { verdicts, reason: "script-error" };
+      // fix round 1 (I3, M1): judged on the project's models alone, while they hold a TODO
+      skeleton = await pendingSkeleton(dbtFile(), MODEL_FILE);
+    }
+    const hasTodo = await holdsTodo(dbtFile());
     const task =
       iteration === 0
         ? `Translate ${m.id} into ONE dbt project under workflows/${m.id}/dbt/ (its output kind is dbt): read every ` +
-          `segment's contract.json and dag.json and follow docs/reference/output-targets.md §3.3 and cookbook/dbt.md.`
+          `segment's contract.json and dag.json and follow docs/reference/output-targets.md §3.3 and cookbook/dbt.md.` +
+          (hasTodo ? dbtSkeletonSentence(m.id) : "")
         : `Repair the dbt project of ${m.id}: read workflows/${m.id}/dbt/review.json and every segment's ` +
           `validation.json first and change only what their diagnosis points at.` +
           (failing ? ` Failing models: ${failing}.` : "") +
           (failedBeforeReview ? ` ${failedBeforeReview}` : "") +
+          (hasTodo ? UNWRITTEN_SENTENCE : "") +
           notesInstruction("fixer", m.id);
-    const written = await runAgent(env, m, role, "translate", task, { iteration, dbt: true }, () =>
-      fileExists(dbtFile("dbt_project.yml")),
+    const written = await runAgent(
+      env,
+      m,
+      role,
+      "translate",
+      task,
+      { iteration, dbt: true },
+      async (note) => {
+        if (!(await fileExists(dbtFile("dbt_project.yml")))) return false;
+        // Task L8: a project that is still exactly the orchestrator's skeleton is not the translator's output.
+        if (await untouched(skeleton, dbtFile(), MODEL_FILE)) {
+          note(`workflows/${m.id}/dbt/ is still the orchestrator's skeleton, exactly as written: every ${SCAFFOLD_TODO} is still to be written`);
+          return false;
+        }
+        return true;
+      },
+      // Task L7 fix round 1 (R-b), "the dbt fixer likewise", by content since fix round 2 (IMP-2): a
+      // dbt fixer usually edits one or two model files, never `dbt_project.yml` itself, so freshness
+      // is snapshotted over `DBT_WORK_FILE` -- every model and the two model YAMLs, recursively under
+      // `dbt/` -- not just the one file `verify` checks, and never `compile_check.json`/`fix_log.md`/
+      // other housekeeping a fixer is told to write regardless of whether it repaired anything.
+      async () => {
+        const before = await snapshot(dbtFile(), DBT_WORK_FILE);
+        return async () => !sameContent(before, await snapshot(dbtFile(), DBT_WORK_FILE));
+      },
     );
     if (!written.ok) {
       env.log(`${m.id}: ${role} ${written.error ?? "error"} on the dbt project — it needs a human`);
@@ -980,6 +1465,7 @@ async function migrateDbt(env: Env, m: Manifest, segments: string[]): Promise<Db
       continue;
     }
 
+    await clearValidationReports(env, m.id, segments, true); // Task L4: never a translator's own reports
     const validated = await runAgent(
       env,
       m,

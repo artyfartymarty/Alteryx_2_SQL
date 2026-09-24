@@ -11,6 +11,17 @@ logical this segment's contract actually declares; the DataFrame API only -- no 
 `sql_expr`/`call_function`/the rest of the raw-SQL escape hatches, no dunder access anywhere in the
 module; the output `StructType` lists columns in the contract's declared order.
 
+Since live hardening L4 fix round 5 the gate is an **allow-list**: it accepts only the Snowpark/pandas
+surface these patterns use and refuses everything else. Imports come from the fixed list
+(`snowflake.snowpark[.functions|.types]`, `pandas`, `numpy`, `re`, `math`, `datetime`, `decimal`); a
+`pd.`/`np.` attribute must be on its short allow-list (`pd.isna`, `pd.notna`, `pd.NA`, `pd.DataFrame`,
+`pd.Series`, `pd.Timestamp`; `np.random`, `np.nan`), so `pd.eval`/`pd.read_csv`/`np.load` never
+resolve; a method call is refused unless its name is a documented Snowpark DataFrame/Column method or
+a pandas carry-over method (`to_pandas`, `sort_values`, `reset_index`, `groupby`, `iterrows`,
+`itertuples`, `to_dict`, `sum`), so `.eval`, `.query`, `.pipe`, `.style`, `.plot`, `.apply`, every
+`to_*` writer and every `read_*` reader are off it; and `engine="python"` is refused outright (it
+would run a string the gate never sees). Every fragment below stays inside that surface.
+
 Those rules are the contract this page's snippets are written to fit inside. **Every snippet below
 is a fragment, not a whole file**: it is what a translator pastes into `run`, reading from
 `session.table("...")` and returning (or, for the carry-over pattern, building) a DataFrame -- the

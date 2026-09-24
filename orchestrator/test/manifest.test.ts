@@ -207,3 +207,46 @@ test("reloadManifest still takes disk's compactions/peakInputTokens when disk is
   assert.equal(manifest.metrics.analyzer.compactions, 4, "the higher count wins whichever side it's on");
   assert.equal(manifest.metrics.analyzer.peakInputTokens, 12000);
 });
+
+// --- live hardening, Task L1 (R3): a session's read and act denial counts are summed per role like
+// toolCalls, so the same disk-wins hazard applies -- a mid-stage reload must never lower either. --
+
+test("reloadManifest keeps the higher readDenials/actDenials, whichever side it is on", async (t) => {
+  const root = await tmp(t);
+  await writeJson(manifestPath(root, "wf_0001"), {
+    id: "wf_0001",
+    status: {},
+    metrics: { intake: { toolCalls: 40, readDenials: 3, actDenials: 0 }, analyzer: { readDenials: 9, actDenials: 2 } },
+  });
+  // In memory, a later (unsaved) intake session recorded more; the analyzer's disk copy is ahead.
+  const manifest: Manifest = {
+    id: "wf_0001",
+    status: {},
+    metrics: { intake: { toolCalls: 55, readDenials: 7, actDenials: 1 }, analyzer: { readDenials: 4, actDenials: 0 } },
+  };
+  await reloadManifest(root, manifest);
+  assert.equal(manifest.metrics.intake.readDenials, 7);
+  assert.equal(manifest.metrics.intake.actDenials, 1);
+  assert.equal(manifest.metrics.analyzer.readDenials, 9);
+  assert.equal(manifest.metrics.analyzer.actDenials, 2);
+});
+
+// --- live hardening, Task L6 (R2): the severe count is summed per role the same way ---------------
+
+test("reloadManifest keeps the higher severeDenials, whichever side it is on", async (t) => {
+  const root = await tmp(t);
+  await writeJson(manifestPath(root, "wf_0001"), {
+    id: "wf_0001",
+    status: {},
+    metrics: { intake: { toolCalls: 40, severeDenials: 0 }, analyzer: { actDenials: 3, severeDenials: 2 } },
+  });
+  const manifest: Manifest = {
+    id: "wf_0001",
+    status: {},
+    metrics: { intake: { toolCalls: 55, severeDenials: 1 }, analyzer: { actDenials: 1, severeDenials: 0 } },
+  };
+  await reloadManifest(root, manifest);
+  assert.equal(manifest.metrics.intake.severeDenials, 1, "an unsaved in-memory severe denial survives the reload");
+  assert.equal(manifest.metrics.analyzer.severeDenials, 2);
+  assert.equal(manifest.metrics.analyzer.actDenials, 3);
+});

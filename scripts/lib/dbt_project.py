@@ -72,6 +72,25 @@ alteryx_migration:
 """
 
 
+#: `dbt_project.yml` of every migrated workflow (live hardening, Task L8): exactly the keys the closed
+#: surface allows (`dbt:project_yml`) with the values `dbt:layout` requires, as the committed sample
+#: writes it. `scripts/translation_scaffold.py` writes it before the translator's session.
+PROJECT_YML_TEMPLATE = """\
+name: {wf_id}
+version: "1.0.0"
+config-version: 2
+profile: alteryx_migration
+model-paths: [models]
+vars:
+  src_schema: null
+  tgt_schema: null
+"""
+
+
+def project_yml(wf_id: str) -> str:
+    return PROJECT_YML_TEMPLATE.format(wf_id=wf_id)
+
+
 class DbtUnavailable(RuntimeError):
     """No dbt console script beside this interpreter: a usage problem, never a domain verdict."""
 

@@ -63,9 +63,11 @@ FROM t2_filter_f
    still NULL — exactly the row `IS NULL` exists to catch. Both queries above are checked in the
    same test case so a fix to one that forgets the other fails loudly.
 3. **A duplicate input row (`ID` 1 twice in the example) stays duplicated on whichever branch it
-   lands on.** Filter never deduplicates, so a contract that keys this stream on a non-unique column
-   sees a `GOLDEN_DATA`/duplicate-key failure that has nothing to do with the translation — this is
-   why both streams here compare keyless (`"keys": []`).
+   lands on.** Filter never deduplicates, so a key on a non-unique column does not identify a row
+   — this is why both streams here compare keyless (`"keys": []`). A contract that keys such a
+   stream anyway is compared keyless all the same, with a `keys_not_unique` advisory in its report
+   (live hardening, Task L11; it used to be a `GOLDEN_DATA` failure that had nothing to do with the
+   translation).
 
 ## Config fields that change the pattern
 

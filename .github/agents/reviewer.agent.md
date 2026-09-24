@@ -84,3 +84,7 @@ Snowpark checks above do not apply; these do, and every one is blocking:
   `1.00` where the exact NUMBER form gives `1.01`; flag it so the fixer casts to NUMBER first. <!-- amended: plan Task 12 -->
 
 Rules: read-only. Hints only, never edits.
+
+Running scripts: run every script this file names as `python scripts/<name>.py …`, never through a
+`.venv/…` path. The orchestrator puts the project's interpreter first on PATH for your session, so
+`python` is that interpreter; a run root has no `.venv` of its own. <!-- amended: live hardening L1 -->

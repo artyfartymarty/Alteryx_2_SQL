@@ -6,9 +6,12 @@ import path from "node:path";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { makeEnv, readManifest } from "./fakes.ts";
-import { dbtModelName, dbtReadme, migrateWorkflow, masterSql, plannedStages } from "../stages.ts";
+import { dbtModelName, dbtReadme, migrateWorkflow, masterSql, plannedStages, SESSION_RULE_LINES, SESSION_RULES } from "../stages.ts";
 import { readJsonOr, saveManifest, writeJson } from "../manifest.ts";
 import { WORKFLOW_ID_SCRIPTS } from "../policy.ts";
+import { CopilotRunner } from "../runner.ts";
+import type { CopilotClient, SessionHooks } from "@github/copilot-sdk";
+import type { AgentCtx, AgentRunner, Env, Manifest, Role } from "../types.ts";
 
 test("happy path reaches VALIDATED and documents", async () => {
   const { env, calls } = await makeEnv({ wf: "wf_0001" });
@@ -749,7 +752,8 @@ test("render_snowpark.py exiting 1 ends the iteration like a compile failure", a
 
 // Task W1 updated this pin deliberately: the one addition is the chain check, one
 // `validate_workflow.py <wf>` call after every segment PASSed; every per-segment call is unchanged.
-test("a SQL workflow's script calls are exactly what they were, plus target_check.py, the two prompt_context.py calls, plan_batches.py, check_seams.py and the one validate_workflow.py call", async () => {
+// Task L8 adds one call: translation_scaffold.py, once per segment, right before its translator.
+test("a SQL workflow's script calls are exactly what they were, plus target_check.py, the two prompt_context.py calls, plan_batches.py, check_seams.py, contract_scaffold.py (pre-fill, re-apply), contract_check.py, translation_scaffold.py and the one validate_workflow.py call", async () => {
   const { env, calls } = await makeEnv({ wf: "wf_0001" });
   await migrateWorkflow(env, "wf_0001", {});
   assert.deepEqual(
@@ -762,9 +766,13 @@ test("a SQL workflow's script calls are exactly what they were, plus target_chec
       ["scripts/segment.py", ["wf_0001"]],
       ["scripts/target_check.py", ["wf_0001", "--prefer", "auto"]],
       ["scripts/plan_batches.py", ["wf_0001", "--budget-chars", "60000"]],
+      ["scripts/contract_scaffold.py", ["wf_0001", "--prefill"]],
       ["scripts/prompt_context.py", ["wf_0001", "--role", "analyzer", "--budget-chars", "16000"]],
+      ["scripts/contract_scaffold.py", ["wf_0001", "--apply"]],
       ["scripts/check_seams.py", ["wf_0001"]],
+      ["scripts/contract_check.py", ["wf_0001"]],
       ["scripts/dev/alteryx_sim.py", ["wf_0001", "--set", "all"]],
+      ["scripts/translation_scaffold.py", ["wf_0001", "--segment", "seg_01"]],
       ["scripts/compile_check.py", ["wf_0001", "seg_01"]],
       ["scripts/validate_segment.py", ["wf_0001", "seg_01"]],
       ["scripts/validate_workflow.py", ["wf_0001"]],
@@ -934,7 +942,9 @@ test("a diagnosis quoted to the fixer is redacted and bounded exactly like an au
   assert.ok(fixer, "the fixer ran");
   assert.doesNotMatch(fixer!.task, /sk-live-123456/, "a secret in a script's stderr must not reach a prompt");
   assert.match(fixer!.task, /<redacted>/);
-  assert.ok(fixer!.task.length < 1200, `the quoted diagnosis is bounded, task was ${fixer!.task.length} chars`);
+  // Task L1 (R4): the fixed session-rules paragraph is not part of what this bound measures.
+  const bounded = fixer!.task.replace(SESSION_RULES, "");
+  assert.ok(bounded.length < 1200, `the quoted diagnosis is bounded, task was ${bounded.length} chars without the session rules`);
 });
 
 test("a SQL segment that never fails before review carries no diagnosis sentence", async () => {
@@ -1512,14 +1522,19 @@ test("a chain-triggered fixer round points at validation_workflow.json's first_d
   assert.doesNotMatch(fixer.task, /change only what their diagnosis points at/);
   assert.doesNotMatch(fixer.task, /--root/);
   // the ordinary fixer task is untouched but for Task W4's trailing notes sentence (Task N1 adds
-  // one more fixed sentence after it, so this no longer anchors at the very end of the task).
+  // one more fixed sentence after it, and Task L1 the fixed session rules after that, so the notes
+  // sentences end the instructions, not the task).
   const plain = await makeEnv({ wf: "wf_0001", scenario: "fix-loop:seg_01" });
   await migrateWorkflow(plain.env, "wf_0001", {});
   const plainFixer = plain.calls.tasks.find((t) => t.role === "fixer")!.task;
   assert.match(plainFixer, /change only what their diagnosis points at\. Keep your decisions/);
-  assert.match(
+  assert.ok(
+    plainFixer.endsWith(
+      "workflows/wf_0001/notes/fixer.md as you go; the durable record stays in the contract and the files you write. " +
+        "The directory already exists; write the file with your file-writing tool; do not create directories.\n\n" +
+        SESSION_RULES,
+    ),
     plainFixer,
-    /workflows\/wf_0001\/notes\/fixer\.md as you go; the durable record stays in the contract and the files you write\. The directory already exists; write the file with your file-writing tool; do not create directories\.$/,
   );
 });
 
@@ -1654,12 +1669,17 @@ test("a workflow over the budget is analysed batch by batch and stitched", async
   const from = seq.indexOf("py:scripts/plan_batches.py wf_0001 --budget-chars 60000");
   assert.deepEqual(seq.slice(from, seq.indexOf("py:scripts/stitch_analysis.py wf_0001") + 1), [
     "py:scripts/plan_batches.py wf_0001 --budget-chars 60000",
+    "py:scripts/contract_scaffold.py wf_0001 --prefill",
     "py:scripts/prompt_context.py wf_0001 --role analyzer --batch batch_01 --budget-chars 60000",
     "agent:analyzer",
+    "py:scripts/contract_scaffold.py wf_0001 --apply --segments seg_01",
     "py:scripts/check_seams.py wf_0001 --segments seg_01",
+    "py:scripts/contract_check.py wf_0001 --segments seg_01",
     "py:scripts/prompt_context.py wf_0001 --role analyzer --batch batch_02 --budget-chars 60000",
     "agent:analyzer",
+    "py:scripts/contract_scaffold.py wf_0001 --apply --segments seg_02",
     "py:scripts/check_seams.py wf_0001 --segments seg_02",
+    "py:scripts/contract_check.py wf_0001 --segments seg_02",
     "py:scripts/stitch_analysis.py wf_0001",
   ]);
   assert.ok(!calls.py.some((c) => c.script === "scripts/prompt_context.py" && c.args[2] === "analyzer" && !c.args.includes("--batch")),
@@ -1903,3 +1923,456 @@ test("Task W4 fix round 1: a mid-stage reload between batches keeps the higher c
   assert.equal(m.metrics.analyzer?.compactions, 3, "batch_02's higher count must survive the reload right after it");
   assert.equal(m.metrics.analyzer?.peakInputTokens, 9000, "same for peakInputTokens");
 });
+
+// ---------- live hardening, Task L1 (R4): fixed session rules in every agent task ----------
+// Live evidence (docs/live-smoke-test.md "Third live test"): nothing in the task text told the model
+// how to navigate, so it typed absolute paths (and mangled a long run root), listed files with
+// PowerShell and opened a sibling workflow's folder. Every task runAgent sends now carries one fixed
+// paragraph -- a constant, no workflow-authored text -- with the instructions, BEFORE any fenced
+// inline-context block (Task F: the data fence never carries an instruction). Task L7 (R3) adds a
+// fifth rule, on the live evidence that a translator spent its whole session reading this pipeline's
+// own scripts/ source trying to debug a validation diff instead of handing off; Task L8 (R3) a sixth,
+// on a dbt translator that read every golden CSV of every set and overflowed its context; Task L9
+// (R3) a seventh, on a documenter session that parked calling the SDK's own `web_fetch`.
+
+test("L1 R4 / L7 R3 / L8 R3 / L9 R3: the session rules are a constant that says the seven things", () => {
+  assert.equal(SESSION_RULE_LINES.length, 7);
+  const squeezed = SESSION_RULES.replace(/\s+/g, " ");
+  for (const phrase of [
+    "relative to the repository root", "workflows/<id>/", "never type an absolute path",
+    "glob", "view", "grep", "`python scripts/<name>.py …`",
+    "only workflows/<id>/ is yours", "never open another workflow's folder",
+    "A refused tool call is final", "do not retry it in another form or through another tool",
+    "say so in your notes", "and stop",
+    "Do not read this pipeline's own scripts/ or orchestrator/ source to debug a difference",
+    "the validation report, the contract, the cookbook and docs/reference/ are the evidence",
+    "Never read the golden data in bulk", "at most one golden set's inputs", "the validator compares the rest",
+    "There is no network in these sessions", "every page you need is in the repository",
+    "`cookbook/`", "`docs/reference/`",
+  ]) {
+    assert.ok(squeezed.includes(phrase), phrase);
+  }
+  for (const rule of SESSION_RULE_LINES) assert.ok(SESSION_RULES.includes(rule), rule);
+  assert.doesNotMatch(SESSION_RULES, /wf_\d|seg_\d|batch_\d/, "no workflow's own text or id");
+});
+
+test("L1 R4: every role's task, in every form, carries the session rules once, before any inline context", async () => {
+  const runs: [Awaited<ReturnType<typeof makeEnv>>, string][] = [
+    [await makeEnv({ wf: "wf_0001", scenario: "fix-loop:seg_01" }), "wf_0001"],
+    [await makeEnv({ wf: "wf_0001", twoWaves: true, scenario: "batched" }), "wf_0001"],
+    [await makeEnv({ ...DBT, scenario: "fix-loop:dbt" }), "wf_0001"],
+    [await makeEnv({ wf: "wf_0005" }), "wf_0005"],
+  ];
+  const forms = new Set<string>();
+  let fenced = 0;
+  for (const [{ env, calls }, id] of runs) {
+    await migrateWorkflow(env, id, {});
+    for (const { role, task, dbt, batch } of calls.tasks) {
+      const form = `${role}${dbt ? " (dbt)" : ""}${batch ? " (batch)" : ""}`;
+      forms.add(form);
+      assert.equal(task.split(SESSION_RULES).length, 2, `${form}: the paragraph exactly once\n${task}`);
+      const fence = task.indexOf("## Inline context");
+      if (fence >= 0) {
+        fenced += 1;
+        assert.ok(task.indexOf(SESSION_RULES) < fence, `${form}: the rules come before the inline context\n${task}`);
+      }
+    }
+  }
+  for (const form of [
+    "parser-recovery", "intake", "analyzer", "analyzer (batch)", "translator", "reviewer", "validator", "fixer",
+    "documenter", "translator (dbt)", "reviewer (dbt)", "validator (dbt)", "fixer (dbt)",
+  ]) {
+    assert.ok(forms.has(form), `${form} was not exercised; saw ${[...forms].join(", ")}`);
+  }
+  assert.ok(fenced >= 4, `the inline-context forms were exercised (${fenced})`);
+});
+
+test("L1 R4: .github/copilot-instructions.md mirrors every session rule", async () => {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const text = (await readFile(path.join(here, "..", "..", ".github", "copilot-instructions.md"), "utf8")).replace(/\s+/g, " ");
+  for (const rule of SESSION_RULE_LINES) assert.ok(text.includes(rule), rule);
+});
+
+// ---------- live hardening, Task L4 (R2): a translator's or fixer's own validation is never the verdict ----------
+// The translator and the fixer may now run the validator scripts on their own work, which writes the same
+// validation*.json the validator's session is judged by ("the report exists"). The orchestrator clears those
+// reports before it dispatches the validator, so only the validator's own run can satisfy that check.
+
+const STALE_PASS = { verdict: "PASS", needs_human: false, diff_clusters: [], idempotent: true, sets: { normal: "PASS" } };
+
+test("L4: a translator's own validation.json never stands in for the validator's", async () => {
+  const { env, root } = await makeEnv({ wf: "wf_0001" });
+  const recording = env.runner;
+  const seen: boolean[] = [];
+  const segDir = path.join(root, "workflows", "wf_0001", "segments", "seg_01");
+  env.runner = {
+    async run(role, wf, task, ctx) {
+      if (role === "validator") {
+        // a validator session that ends "ok" without running anything
+        seen.push(await exists(path.join(segDir, "validation.json")) || await exists(path.join(segDir, "validation.normal.json")));
+        return { ok: true, toolCalls: 0, ms: 0 };
+      }
+      const result = await recording.run(role, wf, task, ctx);
+      if (role === "translator") {
+        // what `python scripts/validate_segment.py wf_0001 seg_01 --set normal` leaves behind
+        await writeJson(path.join(segDir, "validation.json"), STALE_PASS);
+        await writeJson(path.join(segDir, "validation.normal.json"), STALE_PASS);
+      }
+      return result;
+    },
+  };
+  const m = await migrateWorkflow(env, "wf_0001", {});
+  assert.deepEqual(seen, [false, false], "the validator (and its one retry) started with no report on disk");
+  assert.equal(m.status.translate, "NEEDS_HUMAN");
+  assert.match(String(m.reasons?.translate), /validator missing-output/);
+});
+
+test("L4: with the validator running, a translator's own report is replaced and the segment still passes", async () => {
+  const { env, root } = await makeEnv({ wf: "wf_0001" });
+  const recording = env.runner;
+  const segDir = path.join(root, "workflows", "wf_0001", "segments", "seg_01");
+  let atValidator: boolean | undefined;
+  env.runner = {
+    async run(role, wf, task, ctx) {
+      if (role === "validator") atValidator = await exists(path.join(segDir, "validation.normal.json"));
+      const result = await recording.run(role, wf, task, ctx);
+      if (role === "translator") await writeJson(path.join(segDir, "validation.normal.json"), STALE_PASS);
+      return result;
+    },
+  };
+  const m = await migrateWorkflow(env, "wf_0001", {});
+  assert.equal(atValidator, false);
+  assert.equal(m.status.translate, "VALIDATED");
+});
+
+test("L4: in dbt scope every segment's report and the chain report are cleared before the validator", async () => {
+  const { env, root } = await makeEnv({ ...DBT, scenario: "dbt" });
+  const recording = env.runner;
+  const wfRoot = path.join(root, "workflows", "wf_0001");
+  const reports = ["segments/seg_01/validation.json", "segments/seg_02/validation.json", "validation_workflow.json",
+    "validation_workflow.normal.json"];
+  const seen: string[][] = [];
+  env.runner = {
+    async run(role, wf, task, ctx) {
+      if (role === "validator") {
+        const present: string[] = [];
+        for (const rel of reports) if (await exists(path.join(wfRoot, ...rel.split("/")))) present.push(rel);
+        seen.push(present);
+        return { ok: true, toolCalls: 0, ms: 0 };
+      }
+      const result = await recording.run(role, wf, task, ctx);
+      if (role === "translator") {
+        // what `python scripts/validate_dbt.py wf_0001` leaves behind
+        for (const rel of reports) await writeJson(path.join(wfRoot, ...rel.split("/")), STALE_PASS);
+      }
+      return result;
+    },
+  };
+  const m = await migrateWorkflow(env, "wf_0001", {});
+  assert.deepEqual(seen, [[], []], "nothing a translator's own run wrote was on disk when the validator started");
+  assert.equal(m.status.translate, "NEEDS_HUMAN");
+  assert.match(String(m.reasons?.translate), /validator missing-output/);
+});
+
+// ---------- live hardening, Task L7 (R2): a timed-out session's checked output is kept ----------
+// Live evidence (task-L7-brief.md): a translator wrote a valid, once-validated proc.sql and then
+// spent the rest of its session reading source trying to debug a genuine semantics diff, until its
+// session timed out -- and the orchestrator discarded the compiled procedure and retranslated from
+// scratch (RETRY_ONCE). Since R2, a session that ends `timeout` has the stage's own `verify` run
+// against it first; if it now passes, the result is accepted instead of retried.
+
+test("L7 R2: a translator that timed out after writing a proc.sql that passes its check is kept, not retried", async () => {
+  const { env, calls } = await makeEnv({ wf: "wf_0001" });
+  const recording = env.runner;
+  let timedOutOnce = false;
+  env.runner = {
+    async run(role, wf, task, ctx) {
+      const result = await recording.run(role, wf, task, ctx);
+      // The translator's real MockRunner replay already wrote a compiling proc.sql; only its own
+      // AgentResult is misreported as a timeout, exactly once -- the SAME shape a real SDK session
+      // ending mid-cleanup would leave: the output on disk, the session's own outcome `timeout`.
+      if (role === "translator" && !timedOutOnce) {
+        timedOutOnce = true;
+        return { ok: false, error: "timeout", detail: "Timeout after 2700000ms waiting for session.idle", toolCalls: result.toolCalls, ms: result.ms };
+      }
+      return result;
+    },
+  };
+  const m = await migrateWorkflow(env, "wf_0001", {});
+  assert.equal(m.status.translate, "VALIDATED");
+  const translatorCalls = calls.tasks.filter((t) => t.role === "translator");
+  assert.equal(translatorCalls.length, 1, "kept, not retried -- one translator session, not two");
+  assert.equal(m.metrics.translator?.timeouts, 1, "the kept timeout is counted in the role's metrics");
+  assert.ok(
+    calls.logs.some((line) => line.includes("wf_0001: translator timed out after writing an output that passes its check — kept")),
+    calls.logs.join("\n"),
+  );
+});
+
+// L6 fix round 2 (I3), through the REAL CopilotRunner and its policy hooks: the live-review shape. A
+// translator session writes a proc.sql that passes its check, tries three severe things -- another
+// workflow's file, a network command, a write into the pipeline's scripts/ -- each refused by the real
+// policy, and then ends by a timeout, a rate limit or a context overflow. Before the fix the timeout was
+// kept by L7's path and the workflow reached VALIDATED; every ending now parks the stage `denied`.
+const SEVERE_TRANSLATOR_CALLS = [
+  { toolName: "view", toolArgs: { path: "workflows/wf_0002/manifest.json" } },
+  { toolName: "powershell", toolArgs: { command: "curl.exe https://example.invalid/x" } },
+  { toolName: "create", toolArgs: { path: "scripts/_diag.py", file_text: "print(1)\n" } },
+];
+
+/** A runner whose translator sessions go through a real `CopilotRunner` with a fake SDK client: the
+ * session replays the canned output (the recording MockRunner), runs `SEVERE_TRANSLATOR_CALLS` through the
+ * policy's own onPreToolUse hook, and then throws `ending`. Every other role runs as before. */
+function severeTranslator(env: Env, recording: AgentRunner, ending: Error): AgentRunner {
+  let current: { role: Role; wf: Manifest; task: string; ctx?: AgentCtx } | undefined;
+  const client = {
+    async createSession(config: { hooks?: SessionHooks }) {
+      const hooks = config.hooks!;
+      const base = { sessionId: "session-1", timestamp: new Date(), workingDirectory: env.root };
+      return {
+        on: () => () => undefined,
+        async send() {
+          return "";
+        },
+        async sendAndWait() {
+          await recording.run(current!.role, current!.wf, current!.task, current!.ctx);
+          for (const call of SEVERE_TRANSLATOR_CALLS) {
+            const decision = await hooks.onPreToolUse!({ ...base, ...call }, { sessionId: "session-1" });
+            assert.equal((decision as { permissionDecision?: string }).permissionDecision, "deny", call.toolName);
+          }
+          throw ending;
+        },
+        async disconnect() {
+          return undefined;
+        },
+      };
+    },
+  } as unknown as CopilotClient;
+  const copilot = new CopilotRunner({ client, root: env.root, config: env.config, profile: "local", agents: [] });
+  copilot.attach(env);
+  return {
+    async run(role, wf, task, ctx) {
+      if (role !== "translator") return recording.run(role, wf, task, ctx);
+      current = { role, wf, task, ctx };
+      return copilot.run(role, wf, task, ctx);
+    },
+  };
+}
+
+for (const [how, ending] of [
+  ["a timeout", new Error("Timeout after 2700000ms waiting for session.idle")],
+  ["a rate limit", new Error("HTTP 429 rate limit exceeded")],
+  ["a context overflow", new Error("400 request (34965 tokens) exceeds the available context size (32768 tokens), try increasing it")],
+] as [string, Error][]) {
+  test(`L6 fix 2 (I3): a real CopilotRunner session with severe denials that ends by ${how} parks denied -- never kept`, async () => {
+    const { env, calls } = await makeEnv({ wf: "wf_0001" });
+    env.runner = severeTranslator(env, env.runner, ending);
+    const m = await migrateWorkflow(env, "wf_0001", {});
+    assert.equal(m.status.translate, "NEEDS_HUMAN", `${how}: the stage parks`);
+    assert.match(String(m.reasons?.translate), /denied/, how);
+    assert.equal(calls.tasks.filter((t) => t.role === "translator").length, 1, `${how}: parked at once -- not kept, not retried`);
+    assert.equal(m.metrics.translator?.timeouts, undefined, `${how}: never kept`);
+    assert.ok(calls.logs.some((line) => line.includes("severe-denials: 3 (parks at once)")), calls.logs.join("\n"));
+    assert.ok(!calls.logs.some((line) => line.includes("— kept")), how);
+  });
+}
+
+// The same guard in runAgent itself, for a runner that reports the ending but not the park: a result that
+// carries severe denials is never kept, whatever `error` it names.
+test("L6 fix 2 (I3): runAgent parks any runner's result that carries a severe denial -- never kept", async () => {
+  const { env, calls } = await makeEnv({ wf: "wf_0001" });
+  const recording = env.runner;
+  env.runner = {
+    async run(role, wf, task, ctx) {
+      const result = await recording.run(role, wf, task, ctx);
+      if (role !== "translator") return result;
+      return { ok: false, error: "timeout", detail: "Timeout after 2700000ms waiting for session.idle", toolCalls: result.toolCalls, ms: result.ms, severeDenials: 1 };
+    },
+  };
+  const m = await migrateWorkflow(env, "wf_0001", {});
+  assert.equal(m.status.translate, "NEEDS_HUMAN");
+  assert.match(String(m.reasons?.translate), /denied/);
+  assert.equal(calls.tasks.filter((t) => t.role === "translator").length, 1);
+  assert.equal(m.metrics.translator?.timeouts, undefined);
+});
+
+test("L7 R2: a translator that timed out with nothing on disk still retries once, same as before R2", async () => {
+  const { env, calls } = await makeEnv({ wf: "wf_0001", agentErrors: { translator: ["timeout"] } });
+  const m = await migrateWorkflow(env, "wf_0001", {});
+  assert.equal(m.status.translate, "VALIDATED", "the retry succeeds");
+  const translatorCalls = calls.tasks.filter((t) => t.role === "translator");
+  assert.equal(translatorCalls.length, 2, "the existing RETRY_ONCE path is unchanged when verify still fails");
+  assert.equal(translatorCalls[1].task, translatorCalls[0].task, "a timeout's retry carries no feedback block, same as before R2");
+  assert.equal(m.metrics.translator?.timeouts, undefined, "never kept, so never counted");
+});
+
+test("L7 R2: a fixer that timed out after repairing proc.sql to a passing compile is kept, not retried", async () => {
+  const { env, calls } = await makeEnv({ wf: "wf_0001", scenario: "fix-loop:seg_01" });
+  const recording = env.runner;
+  let timedOutOnce = false;
+  env.runner = {
+    async run(role, wf, task, ctx) {
+      const result = await recording.run(role, wf, task, ctx);
+      if (role === "fixer" && !timedOutOnce) {
+        timedOutOnce = true;
+        return { ok: false, error: "timeout", detail: "Timeout after 2700000ms waiting for session.idle", toolCalls: result.toolCalls, ms: result.ms };
+      }
+      return result;
+    },
+  };
+  const m = await migrateWorkflow(env, "wf_0001", {});
+  assert.equal(m.status.translate, "VALIDATED");
+  const fixerCalls = calls.tasks.filter((t) => t.role === "fixer");
+  assert.equal(fixerCalls.length, 1, "kept, not retried");
+  assert.equal(m.metrics.fixer?.timeouts, 1);
+});
+
+// ---------- live hardening, Task L7 fix round 1/2 (R-b, IMP-2): only an output CHANGED this session is kept ----------
+// Review I2 (fix round 1): the fixer's `verify` is `fileExists(proc.sql) || fileExists(proc.py)`, which
+// the translator's iteration 0 already satisfied -- so a fixer that timed out having changed NOTHING was
+// still logged "kept". Review IMP-2 (fix round 2): fix round 1's mtime-based `freshSince` was gameable by
+// housekeeping the orchestrator or the agent itself writes near the same instant -- `dbt/compile_check.json`
+// (the orchestrator, right after a compile failure, or the fixer's own permitted run of it) and
+// `dbt/fix_log.md` (every dbt fixer is told to log every iteration there). The check is now by CONTENT
+// (`sameContent`/`snapshot` in stages.ts): no clock, no tolerance, so nothing written before or after an
+// attempt, however close in time, and no file outside the translation's own lane, can be mistaken for a
+// real edit.
+
+/** The three probe shapes the fix round 2 review verified break the mtime-based version (none of them
+ * touch a model): the orchestrator's own `compile_check.json` from the wave before the fixer starts,
+ * the fixer running `compile_check.py` itself (also `compile_check.json`), and the fixer logging its
+ * iteration to `fix_log.md` -- exactly what `fixer.agent.md` tells it to do every time, whether or not
+ * it changed a model. */
+const DBT_HOUSEKEEPING_ONLY: Record<string, (dbtDir: string) => Promise<void>> = {
+  "the orchestrator's own compile_check.json, written right before the fixer starts": async (dbtDir) => {
+    await writeJson(path.join(dbtDir, "compile_check.json"), { status: "ERROR", target: "dbt", errors: ["stale"], statements: 0, models: 2 });
+  },
+  "the fixer's own permitted compile_check.py run": async (dbtDir) => {
+    await writeJson(path.join(dbtDir, "compile_check.json"), { status: "OK", target: "dbt", errors: [], statements: 3, models: 2 });
+  },
+  "only fix_log.md, as fixer.agent.md instructs every iteration": async (dbtDir) => {
+    await writeFile(path.join(dbtDir, "fix_log.md"), "## iteration 1 -- dbt project\n- symptom: see review.json\n- fix: investigating\n", "utf8");
+  },
+};
+
+for (const [shape, writeHousekeeping] of Object.entries(DBT_HOUSEKEEPING_ONLY)) {
+  test(`IMP-2: a dbt fixer that timed out after writing only ${shape} is not kept`, async () => {
+    const { env, calls, files } = await makeEnv({ ...DBT, scenario: "fix-loop:dbt" });
+    const recording = env.runner;
+    const dbtDir = files.path("workflows", "wf_0001", "dbt");
+    let fixerAttempts = 0;
+    env.runner = {
+      async run(role, wf, task, ctx) {
+        if (role === "fixer" && ctx?.dbt) {
+          fixerAttempts += 1;
+          if (fixerAttempts === 1) {
+            // This attempt never reaches the real (mock) runner -- exactly like an SDK session that
+            // timed out having written only housekeeping -- so `calls.tasks`/`roles`/`order` are
+            // recorded here, the same bookkeeping `recording.run` itself would have done.
+            calls.tasks.push({ role, segment: ctx?.segment, dbt: ctx?.dbt, batch: ctx?.batch, task });
+            calls.roles.push(role);
+            calls.order.push(`agent:${role}`);
+            await writeHousekeeping(dbtDir);
+            return { ok: false, error: "timeout", detail: "Timeout after 2700000ms waiting for session.idle", toolCalls: 0, ms: 0 };
+          }
+        }
+        return recording.run(role, wf, task, ctx);
+      },
+    };
+    const m = await migrateWorkflow(env, "wf_0001", {});
+    assert.equal(m.status.translate, "VALIDATED", "the real fixer attempt (the retry) still fixes the project");
+    const fixerCalls = calls.tasks.filter((t) => t.role === "fixer");
+    assert.equal(fixerCalls.length, 2, "not kept: RETRY_ONCE ran -- housekeeping alone is not a model change");
+    assert.equal(m.metrics.fixer?.timeouts, undefined, "never kept, so never counted");
+  });
+}
+
+test("L7 R-b: a fixer that timed out without writing is not kept -- it retries as before R2", async () => {
+  const { env, calls, files } = await makeEnv({ wf: "wf_0001", scenario: "fix-loop:seg_01" });
+  const recording = env.runner;
+  let fixerAttempts = 0;
+  env.runner = {
+    async run(role, wf, task, ctx) {
+      if (role === "fixer") {
+        fixerAttempts += 1;
+        if (fixerAttempts === 1) {
+          // This attempt never reaches the real (mock) runner -- exactly like an SDK session that
+          // timed out before writing anything -- so `calls.tasks`/`roles`/`order` are recorded here,
+          // the same bookkeeping `recording.run` itself would have done. Nothing touches proc.sql,
+          // so the content snapshot taken at this attempt's own start is unchanged; no clock or
+          // backdating is involved at all (fix round 2, IMP-2).
+          calls.tasks.push({ role, segment: ctx?.segment, dbt: ctx?.dbt, batch: ctx?.batch, task });
+          calls.roles.push(role);
+          calls.order.push(`agent:${role}`);
+          return { ok: false, error: "timeout", detail: "Timeout after 2700000ms waiting for session.idle", toolCalls: 0, ms: 0 };
+        }
+      }
+      return recording.run(role, wf, task, ctx);
+    },
+  };
+  const m = await migrateWorkflow(env, "wf_0001", {});
+  assert.equal(m.status.translate, "VALIDATED", "the real fixer attempt (the retry) still fixes it");
+  const fixerCalls = calls.tasks.filter((t) => t.role === "fixer");
+  assert.equal(fixerCalls.length, 2, "not kept: RETRY_ONCE ran, same as before R-b");
+  assert.equal(fixerCalls[1].task, fixerCalls[0].task, "a timeout's retry carries no feedback block");
+  assert.equal(m.metrics.fixer?.timeouts, undefined, "never kept, so never counted");
+});
+
+test("IMP-2: a segment fixer that timed out after writing only fix_log.md (not proc.sql) is not kept", async () => {
+  const { env, calls, files } = await makeEnv({ wf: "wf_0001", scenario: "fix-loop:seg_01" });
+  const recording = env.runner;
+  const segDir = files.path("workflows", "wf_0001", "segments", "seg_01");
+  let fixerAttempts = 0;
+  env.runner = {
+    async run(role, wf, task, ctx) {
+      if (role === "fixer") {
+        fixerAttempts += 1;
+        if (fixerAttempts === 1) {
+          calls.tasks.push({ role, segment: ctx?.segment, dbt: ctx?.dbt, batch: ctx?.batch, task });
+          calls.roles.push(role);
+          calls.order.push(`agent:${role}`);
+          // proc.sql is untouched; only the fixer's own log, exactly what fixer.agent.md asks for
+          // every iteration, whether or not it actually repaired anything.
+          await writeFile(path.join(segDir, "fix_log.md"), "## iteration 1 -- seg_01\n- symptom: see validation.json\n- fix: investigating\n", "utf8");
+          return { ok: false, error: "timeout", detail: "Timeout after 2700000ms waiting for session.idle", toolCalls: 0, ms: 0 };
+        }
+      }
+      return recording.run(role, wf, task, ctx);
+    },
+  };
+  const m = await migrateWorkflow(env, "wf_0001", {});
+  assert.equal(m.status.translate, "VALIDATED", "the real fixer attempt (the retry) still fixes it");
+  const fixerCalls = calls.tasks.filter((t) => t.role === "fixer");
+  assert.equal(fixerCalls.length, 2, "not kept: fix_log.md is not proc.sql");
+  assert.equal(m.metrics.fixer?.timeouts, undefined, "never kept, so never counted");
+});
+
+test("L7 R-b: a dbt fixer that timed out after actually repairing a model is kept, not retried", async () => {
+  const { env, calls } = await makeEnv({ ...DBT, scenario: "fix-loop:dbt" });
+  const recording = env.runner;
+  let timedOutOnce = false;
+  env.runner = {
+    async run(role, wf, task, ctx) {
+      const result = await recording.run(role, wf, task, ctx);
+      if (role === "fixer" && ctx?.dbt && !timedOutOnce) {
+        timedOutOnce = true;
+        return { ok: false, error: "timeout", detail: "Timeout after 2700000ms waiting for session.idle", toolCalls: result.toolCalls, ms: result.ms };
+      }
+      return result;
+    },
+  };
+  const m = await migrateWorkflow(env, "wf_0001", {});
+  assert.equal(m.status.translate, "VALIDATED");
+  const fixerCalls = calls.tasks.filter((t) => t.role === "fixer");
+  assert.equal(fixerCalls.length, 1, "kept, not retried");
+  assert.equal(m.metrics.fixer?.timeouts, 1);
+});
+
+async function exists(file: string): Promise<boolean> {
+  try {
+    await stat(file);
+    return true;
+  } catch {
+    return false;
+  }
+}

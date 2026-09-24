@@ -11,6 +11,13 @@ Trigger: the orchestrator found workflows/<id>/parsed/parse_report.json with sta
 - workflows/<id>/parsed/parse_report.json (exception text + list of failed invariants)
 - tests/parser_corpus/ (regression fixtures from every previously parsed variant)
 
+Reading `scripts/parse.py` and the extension registry is your whole job, not the fifth session rule's
+"debug a difference": that rule is about a translation or validation diff another role sees against the
+contract, the cookbook and `docs/reference/`, never about diagnosing why the parser itself failed --
+which nothing but the parser's own source can tell you. It still governs everything else it always did:
+never read `orchestrator/` source, and never a file outside this list to explain a parse failure.
+<!-- amended: live hardening L7 fix round 1, M3 -->
+
 ## Procedure
 1. Diagnose before coding. Classify the cause and write workflows/<id>/parsed/parse_diagnosis.md containing
    the exact XML fragment that broke the standard path. Common classes:
@@ -23,7 +30,7 @@ Trigger: the orchestrator found workflows/<id>/parsed/parse_report.json with sta
    (register_plugin(name, handler) / register_element(tag, handler)). Do NOT modify parse.py.
 3. Add a fixture under tests/parser_corpus/<name>/ (the offending fragment, sanitized of credentials and paths)
    plus a test asserting the invariants in scripts/invariants.py pass on it.
-4. Run:  .venv/Scripts/python.exe -m pytest tests/parser_corpus -q   and   .venv/Scripts/python.exe scripts/parse.py <id> --check
+4. Run:  python -m pytest tests/parser_corpus -q   and   python scripts/parse.py <id> --check
    Every existing fixture must still pass. If any regresses, revert and try a narrower extension.
 5. If a node parses structurally but its meaning is opaque, emit it in dag.json as type "unknown" with
    raw_config preserved and a "behavior" field: a plain-language description of what the configuration
@@ -35,3 +42,7 @@ Trigger: the orchestrator found workflows/<id>/parsed/parse_report.json with sta
 - Never delete or rewrite existing tests or fixtures.
 - Never write to parse.py, cookbook/, or any workflows/<other id>/ directory.
 - Your extension ships as part of a PR; a human reviews it before the corpus accepts it permanently.
+
+Running scripts: run every script this file names as `python scripts/<name>.py …`, never through a
+`.venv/…` path. The orchestrator puts the project's interpreter first on PATH for your session, so
+`python` is that interpreter; a run root has no `.venv` of its own. <!-- amended: live hardening L1 -->

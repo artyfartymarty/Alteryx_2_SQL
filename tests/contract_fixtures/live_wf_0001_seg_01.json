@@ -1,0 +1,77 @@
+{
+  "segment": "seg_01",
+  "target": "sql",
+  "row_relation": "aggregate",
+  "ordering": {
+    "order_dependent_columns": [],
+    "sort": [
+      {"column": "TOTAL_NET", "direction": "desc"},
+      {"column": "REGION", "direction": "asc"}
+    ]
+  },
+  "tolerances": {},
+  "inputs": [
+    {
+      "table": "SALES.RAW.ORDERS",
+      "logical": "ORDERS",
+      "columns": [
+        {"name": "ORDER_ID", "type": "NUMBER(38,0)", "nullable": false},
+        {"name": "CUSTOMER", "type": "VARCHAR", "nullable": true},
+        {"name": "REGION", "type": "VARCHAR", "nullable": true},
+        {"name": "AMOUNT_TXT", "type": "VARCHAR", "nullable": true},
+        {"name": "QTY", "type": "NUMBER(38,0)", "nullable": true},
+        {"name": "ORDER_DATE", "type": "DATE", "nullable": false},
+        {"name": "STATUS", "type": "VARCHAR", "nullable": true}
+      ],
+      "keys": []
+    }
+  ],
+  "outputs": [
+    {
+      "stream": "sales_summary",
+      "kind": "target",
+      "logical": "SALES_SUMMARY",
+      "tool_id": "7",
+      "columns": [
+        {"name": "REGION", "type": "VARCHAR", "nullable": false},
+        {"name": "SIZE_BAND", "type": "VARCHAR", "nullable": true},
+        {"name": "TOTAL_NET", "type": "FLOAT", "nullable": true},
+        {"name": "ORDERS", "type": "NUMBER(38,0)", "nullable": false},
+        {"name": "PRICED_ORDERS", "type": "NUMBER(38,0)", "nullable": false},
+        {"name": "LAST_ORDER", "type": "DATE", "nullable": false}
+      ],
+      "keys": []
+    },
+    {
+      "stream": "excluded_orders",
+      "kind": "target",
+      "logical": "EXCLUDED_ORDERS",
+      "tool_id": "8",
+      "columns": [
+        {"name": "CUSTOMER", "type": "VARCHAR", "nullable": true},
+        {"name": "ORDER_STATUS", "type": "VARCHAR", "nullable": true},
+        {"name": "ORDER_ID", "type": "NUMBER(38,0)", "nullable": false},
+        {"name": "REGION", "type": "VARCHAR", "nullable": true},
+        {"name": "AMOUNT_TXT", "type": "VARCHAR", "nullable": true},
+        {"name": "QTY", "type": "NUMBER(38,0)", "nullable": true},
+        {"name": "ORDER_DATE", "type": "DATE", "nullable": false}
+      ],
+      "keys": []
+    }
+  ],
+  "output": {
+    "stream": "sales_summary",
+    "kind": "target",
+    "logical": "SALES_SUMMARY",
+    "tool_id": "7",
+    "columns": [
+      {"name": "REGION", "type": "VARCHAR", "nullable": false},
+      {"name": "SIZE_BAND", "type": "VARCHAR", "nullable": true},
+      {"name": "TOTAL_NET", "type": "FLOAT", "nullable": true},
+      {"name": "ORDERS", "type": "NUMBER(38,0)", "nullable": false},
+      {"name": "PRICED_ORDERS", "type": "NUMBER(38,0)", "nullable": false},
+      {"name": "LAST_ORDER", "type": "DATE", "nullable": false}
+    ],
+    "keys": []
+  }
+}

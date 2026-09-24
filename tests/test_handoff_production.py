@@ -114,6 +114,17 @@ def test_the_two_added_backlog_items_have_their_four_fields():
             assert field in body, f"'{item}' lacks {field}"
 
 
+def test_the_isolate_agent_code_backlog_item_has_its_four_fields():
+    """Live hardening L4 fix round 4: the in-process Snowpark sandbox is defence in depth, not a
+    boundary; production isolates agent-code execution in the spec's container."""
+    sections = re.split(r"^## ", BACKLOG.read_text(encoding="utf-8"), flags=re.MULTILINE)
+    body = next((s for s in sections if s.startswith("Isolate agent-code execution")), None)
+    assert body is not None, "production-backlog.md has no '## Isolate agent-code execution' section"
+    for field in BACKLOG_FIELDS:
+        assert field in body, f"'Isolate agent-code execution' lacks {field}"
+    assert "not a security boundary" in body and "scripts/parsers/ext/" in body
+
+
 def test_the_backlog_says_it_is_written_down_not_built_and_where_its_numbers_come_from():
     opening = BACKLOG.read_text(encoding="utf-8").split("\n## ", 1)[0]
     assert "not built" in opening

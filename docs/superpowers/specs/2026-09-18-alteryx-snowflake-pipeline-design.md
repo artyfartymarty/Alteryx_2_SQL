@@ -161,6 +161,16 @@ flagged in the cookbook as **verify on your account**.
     disagrees with in the fewest columns — accepted only when at least half the columns agree, and
     reported with `"paired_by": "nearest_match"`. A heuristic about *which* two rows to compare, not
     about how many differences there are: `set_diff` itself stays the exact SQL multiset difference.
+    *Amended by live hardening, Task L11:* the same path compares a stream whose declared keys
+    repeat in the golden (expected) rows. Since Task L3 the analyzer declares keys as a judgment,
+    and a real Alteryx output may legitimately repeat an id (the live run's `3_F` held two identical
+    rows with `ORDER_ID` 103 in its `edge` set); the keyed path called that a `GOLDEN_DATA` defect
+    with `needs_human` and parked a correct translation. Now the stream is compared exactly as if it
+    declared no keys, the keyless verdict stands, and the report adds the advisory
+    `checks.keys_not_unique` (`{"keys", "duplicate_groups", "examples"}`: detail, never a failure,
+    never `needs_human` by itself) and a note in `normalizations_applied` that the contract's keys
+    should be revisited. Keys unique in expected but repeated in actual stay a `LOGIC` cluster;
+    `GOLDEN_DATA`'s other cause (a NULL in a `NOT NULL` column of the golden data) is unchanged.
 11. **A parked stage needs an explicit `--from-stage` to resume, and idempotent re-runs are more than
     "skip what's `DONE`".** The program spec's own phrasing — "the orchestrator skips any stage
     already `DONE`/`PASSED`" — undersells what an ordinary re-run actually does. The orchestrator
@@ -171,6 +181,280 @@ flagged in the cookbook as **verify on your account**.
     command, and only an explicit `--from-stage <stage>` reopens it and grants it a fresh tool-call
     budget. `WAITING_FOR_ANSWERS` is not an escalation and keeps re-running intake's scripts every
     pass, so a newly merged answer can move it forward without anyone typing `--from-stage`.
+12. **"Tool denied by policy → abort stage" applies at once to severe attempts, and to other
+    attempted actions and blocked reads beyond a small budget** (live hardening, Task L1; amended by
+    Task L6, whose text below supersedes L1's rule that any attempted action aborts the stage).
+    Program spec `01-copilot-setup.md` §5 routes every denied tool to "log, abort stage,
+    NEEDS_HUMAN" ("an agent trying to leave its lane is a prompt bug"). Every denial now carries a
+    class (`orchestrator/policy.ts`'s `denialClass`), and every refused call is still refused,
+    written to `audit.jsonl` first with its reason and class, and counted in
+    `manifest.metrics.<role>` (`readDenials`, `actDenials`, `severeDenials`).
+    - A `severe` denial (Task L6) is a refused call that tried to reach outside the session's
+      workflow or the sandbox, or to do damage: any SQL-tool denial (not the SDK's own `sql` todo
+      store); a reason that names another workflow, or a Windows alias that could (a broad read that
+      could reach one is a read, not severe); a path that starts at the home directory (`~`); a
+      write -- by a write tool, an `apply_patch` header, a shell command or redirection, or a
+      script's output flag -- to the own workflow's `golden/` or `audit.jsonl`, into another
+      workflow, into the pipeline's own trees or top-level files, or out of the repository (a new
+      scratch file at the run root is an `act`, fix round 2); a destructive command or a
+      recursive/forced delete; a script given `--root` or a Snowflake-account flag; an external
+      location; a shell command that names a network tool, git's remote subcommands, a one-liner
+      using a network module, a UNC share, a package installer or a credential store; an
+      unrecognised tool whose name says it reaches the network or deletes; two command keys on a
+      shell call, or a path key beside a search's `paths`. A search's own literal pattern, a write's
+      content and a planning tool's text are text, never a reach (Task L6 fix rounds 1 and 2). One
+      aborts the stage exactly as the spec says, whatever else ended the session (fix round 2: a
+      severe attempt followed by a timeout or a rate limit is still `denied`, and never kept by Task
+      L7's timeout rule, item 14).
+    - An `act` denial is every other attempted action: an interpreter one-liner, a command the role
+      may not run, a chained command, a write inside the own workflow but outside the role's lane, an
+      unrecognised tool. Since Task L6 these are budgeted: more than `budgets.maxActDenialsPerSession`
+      (default 20 since its fix round 1, like reads; it was 3; 0 restores the spec's rule) in one
+      session aborts the stage as `denied`, with the reason `act-denials: <n> over the budget of <m>`.
+      The budgets catch a session that thrashes; the stage's deterministic checks judge the output.
+    - A `read` denial is a refused call of a tool that only reads (`view`, `grep`, `glob`, `read`,
+      `read_file`, `ls`, `list_directory`, `search`, `search_files`, `find`, the SDK's
+      `read_`/`list_` shell-session tools), a refused git listing with only its own flags, or a shell
+      command whose every statement starts with a read-only cmdlet and holds no token that can run or
+      write anything -- for the PowerShell tool with statements split only on separators outside
+      quotes (Task L6). More than `budgets.maxReadDenialsPerSession` (default 20) aborts the stage,
+      with the reason `read-denials: <n> over the budget of <m>`.
+
+    Within both budgets and with no severe denial, the session's outcome is decided by its outputs
+    and the stage's checks, as if nothing had been denied. Why: a refused call has no effect, and
+    every output is verified afterwards by the stage's own checks and scripts. Live evidence: the
+    three phase-2 intake sessions (`docs/live-smoke-test.md`, "Third live test") each wrote
+    `intake/plan.md` and `mappings.yaml` and were then parked `denied`, 54 of 185 tool calls in all,
+    most of them reads: a mangled absolute run-root path, a sibling workflow's file, a PowerShell
+    listing, the SDK's own spill file (Task L1). The end-to-end run of wf_0001 through every stage
+    (Task L6): its analyzer ran 112 calls, and its contract passed `contract_check.py` and
+    `check_seams.py`; it still parked `denied` on three `act` denials -- a `Select-String` search
+    misread as an action because of a `|` inside its quoted pattern, an interpreter one-liner, and an
+    edit of intake's `open_questions.md` inside its own workflow. A later live translator on wf_0001
+    wrote SQL that passed all four golden sets and made 33 blocked attempts, about twenty of them
+    `stop_powershell` on a shell it had started itself -- which is why `stop_*` is allowed and the act
+    budget is 20 (Task L6 fix round 1). The same run's translator wrote two throwaway DuckDB probes
+    at the run root (`_diag.py`, `diag.py`); a new scratch file there is an `act`, while a write
+    into the pipeline's own files is severe (fix round 2). What is refused is unchanged, except as
+    those fix rounds ruled: `stop_*` is allowed; Windows path aliases (also in script arguments),
+    decoy search keys and a leading `~` are refused; a script's path flags (`compare.py --out`/`--db`)
+    must stay inside the own workflow and the role's lane; and the SDK's `sql` todo store is refused
+    with its own reason. Otherwise only what a refusal costs the session changes.
+13. **The analyzer no longer writes a contract's mechanical fields; code does, and checks the whole
+    contract** (live hardening, Task L3; `docs/reference/contracts.md`). Program spec
+    `01-copilot-setup.md`'s analyzer is told to "write contract.json: inputs (table FQN …; columns,
+    types, nullability, keys), output schema, row relation, ordering keys, tolerance overrides". Now
+    `scripts/contract_scaffold.py` derives every field that follows from files the pipeline already
+    wrote -- `workflow`, `segment`, `target`, every input's and output's identity, table, write mode,
+    and every column's name and type -- pre-fills it before the analyzer and re-applies it after, as
+    the authority; the analyzer decides row relation, ordering, tolerances, normalizations, parity
+    risks, nullability and keys, and may still only lower a target. `scripts/contract_check.py` then
+    gates every contract (mechanical agreement, the shape of every field a script reads, judgment
+    well-formed); a refusal parks analyze as `contract: <first problem>` after one retry. The spec's
+    analyzer rule "Never write SQL or execute anything" also gains two scripts the analyzer may run on
+    its own workflow: `contract_check.py` and `check_seams.py`. Why: in the fourth live test the
+    analyzer wrote six mechanical fields wrong (an invented stream name, no `tool_id`, no
+    `write_mode`, sizeless string types, no `workflow`, an `ordering` shape nothing reads), and
+    nothing checked any of them before golden, translate and validate used the contract. All but one
+    are now caught or re-derived: an unsized `VARCHAR` for a variable-length string is accepted as the
+    type map's own spelling (a coordinator ruling; `wf_0007`'s committed contracts use it), so only a
+    fixed-width string that lost its size is refused.
+14. **A retry after a missing output is told why** (live hardening, Task L3; amended by Task L7, R2,
+    by Task L7 fix round 1, R-a/R-b, and by Task L7 fix round 2, IMP-1/IMP-2/L7-m1). Program spec
+    `01-copilot-setup.md` §5: "agent output file missing after session | retry once with the same
+    prompt". The one retry is still one, but its prompt is the same task plus a fixed sentence and, in
+    a data fence (escaped, redacted, bounded, never an instruction), the reason the failed verify
+    recorded and the checker's report (`orchestrator/feedback.ts`). Why: the same prompt twice gives a
+    model no way to fix the one thing the orchestrator refused. A timeout's retry, where no check
+    failed, is still the same prompt. Task L7 (R2) narrows "no check failed": a session that ends
+    `timeout` now has the stage's own `verify` run against it first, and a session that timed out but
+    left an output that passes it is kept, not retried at all -- live evidence (`task-L7-brief.md`)
+    showed a translator's compiled, once-validated `proc.sql` thrown away and retranslated from
+    scratch after its session ran out of time reading source to debug a genuine semantics diff, work
+    the fixer loop (not a from-scratch retry) is for.
+
+    Fix round 1 (R-a) also has `CopilotRunner.run` call `session.abort()` on a timeout, awaited
+    (bounded, so a hung `abort()` cannot itself hang `run`) BEFORE returning to `runAgent` -- the
+    SDK's own docs say `sendAndWait`'s timeout "does not abort in-flight agent work" (session.d.ts
+    ~154), so without this the turn judged by R2's `verify` could still be writing to the very file
+    that `verify` is about to check, or to `compile_check`/the validator after it, whichever runs
+    next. A failed or slow `abort()` is logged, never thrown; `disconnect()` still runs regardless.
+    **Fix round 2 (IMP-1) corrects where this sat**: fix round 1 put the abort call AFTER L6 fix round
+    2's severe-denial check, which returns at once -- so the one turn most worth stopping, one that
+    already made a severe attempt, was exactly the one left running. The abort now runs on every
+    timeout, severe or not, before any classification; grading the denials (severe, or (L7-m2) an
+    over-budget act/read count) still decides the final result afterward, unchanged. **Fix round 2
+    (L7-m1)** also waits for the session to actually report `session.idle` with `IdleData.aborted` true
+    (generated/session-events.d.ts ~1417) after `abort()` itself resolves, within the same bound --
+    `abort()` only means "acknowledged" (session.d.ts ~282), not that a shell command or an attached
+    sub-agent task has actually stopped.
+
+    Fix round 1 (R-b, review I2) also narrows R2's own "passes it": for the translator/fixer calls in
+    `migrateSegment`/`migrateDbt`, `verify` alone is existence, and the translator's iteration 0
+    already made that true for every later fixer attempt on the same segment -- a fixer, or a resumed
+    translator, that timed out having changed NOTHING was still logged "kept". **Fix round 2 (IMP-2)
+    replaces fix round 1's mechanism**: the first version judged "changed" by mtime (a small clock
+    tolerance against the attempt's own start), which housekeeping the orchestrator or the agent
+    itself writes near the same instant could satisfy without a real edit -- `dbt/compile_check.json`
+    (written right before a fixer that follows a compile failure, or by the fixer's own permitted run
+    of it) and `dbt/fix_log.md` (every dbt fixer logs every iteration there, per `fixer.agent.md`) both
+    demonstrated this live. The two call sites now snapshot the stage's own work files by CONTENT
+    before the attempt runs (the segment's own `proc.sql`/`proc.py`; for dbt, every model under
+    `dbt/models/` plus `models/sources.yml`/`models/schema.yml`, recursively) and require that snapshot
+    to differ afterward -- no clock or tolerance at all, so nothing outside the translation's own lane,
+    however close in time, can be mistaken for a real edit. Every other role keeps existence alone as
+    its whole check (fix round 1 review, M4). Both conditions are added beside `runAgent`'s existing
+    timeout-keep check, not a rewrite of it, on the same round's instruction that a concurrent fix
+    (Task L6, a no-severe-denial guard on the same block, for a different Critical the same review
+    raised) must not be restructured around.
+
+    A session that had a severe denial is never kept: it parks `denied` whatever ended it (Task L6 fix
+    round 2, I3) -- `runAgent` itself also checks `result.severeDenials`, independent of what
+    `CopilotRunner` reports, so this holds for any runner.
+15. **The translator and the fixer run the validator on their own work** (live hardening, Task L4).
+    Program spec `01-copilot-setup.md` Part A §5 lets only the validator and intake execute SQL, and
+    has the translator and the fixer write only their segment's procedure files. Both may now also run
+    `scripts/validate_segment.py` / `validate_snowpark.py <wf> <own segment>`, and in dbt scope
+    `validate_dbt.py <wf>`, with `--set <name>` the only flag (`orchestrator/policy.ts`'s
+    `SELF_VALIDATION_SCRIPTS`), `--set=<name>` accepted too, and only in the shell tool's synchronous
+    mode. The script runs the procedure on a local double (DuckDB, the Snowpark Local Testing
+    Framework, dbt-duckdb) and never on Snowflake: the backend flags stay refused to every agent. The
+    double runs on the host, so the agent's own code runs there -- inside a sandbox for each target.
+    A Snowpark `proc.py` is checked against the Snowpark rules before it is imported and never
+    imported when it breaks one (fix round 1, I1). Both gates are **allow-lists** (fix round 5), after
+    the deny-lists were defeated three times (a `sys.modules` reach, a `sqlite3` file write, and
+    `pd.eval(..., engine="python")` reaching `_winapi` native calls): the static gate
+    (`lib.snowpark_rules`) accepts only the Snowpark/pandas surface the benign corpus uses -- imports
+    from a fixed list, `pd.`/`np.` attributes from a per-module allow-list (so `pd.eval`/`pd.read_csv`/
+    `np.load` never resolve), and method calls whose name is on the Snowpark DataFrame/Column plus
+    pandas carry-over allow-list (so `.eval`/`.query`/`.pipe`/every `to_*` writer/`read_*` reader are
+    refused), with `engine="python"` refused outright. The module then runs in a **child process**
+    under a `sys.addaudithook` armed before it is imported (`lib.snowpark_sandbox`) that is
+    **default-deny**: it allows exactly the audit events a benign procedure records
+    (`lib/sandbox_events.json`, re-recorded by `scripts/dev/record_sandbox_events.py`) -- keeping the
+    argument checks that hold `open` inside a per-run temp directory (reads also under the interpreter's
+    own installation), `import` off the blocked modules and `os.*` path operations inside the temp
+    directory -- and refuses every other event, whole native families (`_winapi.*`, `winreg.*`,
+    `ctypes.*`, `socket.*`, `subprocess.*`, `sqlite3.*`, `msvcrt.*`, `_wmi.*`) outright. A refused
+    event is that segment's FAIL, naming the event. The child (fix round 3) runs under a wall-clock
+    timeout (600 s by default, `MIG_SNOWPARK_SANDBOX_TIMEOUT` or `validate_snowpark.py
+    --sandbox-timeout`; on expiry its process tree is killed and the segment FAILs `sandbox: timeout`),
+    in a **minimal environment** (only `PATH`/`SYSTEMROOT` and the temp variables, never `SNOWFLAKE_*`,
+    tokens or the real user profile), reads no workflow file at all once the hook is armed (the golden
+    data, `golden/outputs` included, is loaded before arming and is not a read root afterward), and
+    signs its result with a per-run nonce the parent verifies (`sandbox: unauthenticated result`
+    otherwise), so neither a forged `result.json` nor a rewritten output file can fake a PASS. The
+    child signals "agent code started" to the parent before it runs the module (fix round 5, E7): once
+    that signal is seen, an exit with no authenticated result is a FAIL `sandbox: agent code exited`,
+    never a re-spawn -- the one re-spawn is only for a failure before the signal. A memory cap is
+    applied on POSIX (`RLIMIT_AS`) and not on Windows, which has no cheap per-process cap; the timeout
+    bounds a runaway allocation there. Agent code shares the harness's process, so this is a defence,
+    not a proof of isolation -- the container the spec describes is that proof.
+    A SQL procedure runs on a DuckDB connection whose external (file, network, extension) access is
+    switched off and locked before its first statement, after `compile_check.py` has refused any
+    file-touching construct by name (`c4:external_access`, fix round 1, P); a dbt project stays inside
+    the closed dbt surface. None of this is a substitute for running procedures only in Snowflake in
+    production: it protects the machine the self-test runs on, nothing about Snowflake itself.
+    It writes the segment's `validation*.json`, or for a dbt project every segment's and the chain
+    report, plus `dbt/logs/validate_*.log` and `dbt_sandbox_*.duckdb` beside a dbt project (the next
+    run removes the sandboxes; `dbt:surface` tolerates `logs/`). Those reports are not the verdict: the
+    orchestrator deletes them before it dispatches the validator, whose own run is the only one the
+    stage reads. The SQL tool is
+    unchanged: the translator and the fixer still cannot execute SQL through it. Why: a live
+    translator parked trying exactly this (`python scripts/validate_segment.py wf_0001 seg_01 --set
+    normal`), and a failure it sees in its own session is repaired there instead of costing a fixer
+    iteration and a validator session.
+
+    Amended by Task L7 (R3): self-validation is bounded to one run per session, not "fix what fails
+    within this session" without limit. Live evidence (`task-L7-brief.md`): a translator ran the
+    validator once, saw a genuine translation-semantics FAIL (TOTAL_NET values, one filter-branch
+    row), and spent the rest of its session reading 54 files -- many of them this pipeline's own
+    `scripts/` source -- trying to debug the diff by reading the checker's implementation instead of
+    handing off, until its session timed out. `translator.agent.md` / `fixer.agent.md` now run the
+    validator for their own segment (or, for a dbt project, `validate_dbt.py`) at most once after
+    `compile_check` passes; on a FAIL they write the evidence they have (the failing checks, the diff
+    clusters, the suspect CTE) into `translation_notes.md` / `fix_log.md` and finish -- the
+    orchestrator's own validator and the fixer iterations take it from there. `SESSION_RULE_LINES`
+    (`orchestrator/stages.ts`) gained a fifth, general rule on the same evidence: no role may read
+    this pipeline's own `scripts/` or `orchestrator/` source to debug a difference, only the
+    validation report, the contract, the cookbook and `docs/reference/`.
+
+16. **The local BYOK profile tells the SDK its own prompt budget** (live hardening, Task L7, R1;
+    amended by Task L7 fix round 1, R-c/R-d). Program spec `01-copilot-setup.md` says nothing about a
+    provider's context limits -- the SDK's own default compaction (triggered at its
+    `InfiniteSessionConfig.backgroundCompactionThreshold`, 80%, of the resolved model's default
+    `maxPromptTokens`) assumes it knows the model, which is true for a hosted Copilot model and false
+    for a self-hosted one. Live evidence (`task-L7-brief.md`): a `llama-server` run with `-c 262144`
+    and the default 4 parallel slots logged `Context size has been exceeded` at `n_tokens = 98490`,
+    and the SDK logged `translator context compaction failed` -- omitting `-np` put this build into a
+    single unified 262144-token cache shared by every slot (fix round 1 review, M1: this build's own
+    help text ties the unified mode to `-np` being auto, i.e. omitted, not to the slot count), and the
+    SDK's background compaction request (~140k tokens) landed beside the main conversation (~98k) in
+    that same shared pool, exceeding it together, because nothing had told the SDK this model's actual
+    budget. `orchestrator.config.json`'s `profiles.local.provider.maxPromptTokens` now reaches the
+    SDK's `createSession` unchanged (`ProviderConfig.maxPromptTokens`,
+    `node_modules/@github/copilot-sdk/dist/types.d.ts`), and `scripts/dev/serve_model.ps1` gained
+    `-Parallel <n>` (always passed explicitly as `llama-server`'s `-np`, validated as a positive
+    integer since fix round 1's review, M1). At `-np 2` this build reports, for `-c 262144`,
+    `n_slots=2, n_ctx_slot=131072, kv_unified=false`: the context is SPLIT evenly, a fixed,
+    independent 131072-token allocation per slot rather than one shared pool, so the session's own
+    conversation and the concurrent compaction request each get their own budget instead of competing
+    for one.
+
+    Fix round 1 (R-c, R-d) makes the launcher's defaults and the committed number one pairing instead
+    of two documents that happened to agree: `serve_model.ps1` now defaults to exactly `-Context
+    262144 -Parallel 2 -CacheTypeK q4_0 -CacheTypeV q4_0` (the setup verified live on a 16 GB GPU),
+    prints `n_ctx_slot = Context / Parallel` and a fitting `maxPromptTokens` (about 77% of
+    `n_ctx_slot`) on every run, and -- reading `orchestrator.config.json` when it can (saying why not
+    when it can't) -- warns if the configured value exceeds that fit. **Fix round 2 (L7-m3) corrects
+    what the warning compared against**: fix round 1 compared the configured value to the raw
+    `n_ctx_slot` (131072), not the fit (about 100925 at 77%) -- so the pre-fix-round-1 committed value,
+    120000, printed "fits within n_ctx_slot (131072)" even though the wf_0007 probe below is exactly
+    what proved 120000 overflows in practice. The committed value itself moved from 120000 to
+    **100000** after that live dbt-workflow run (the wf_0007 probe) reached 131095 tokens against this
+    same 131072-token slot with `maxPromptTokens: 120000` set and ZERO compactions. **Fix round 2
+    (L7-m4) corrects the first-round reasoning for the number itself**: fix round 1 said the SDK's
+    token estimate undercounts "by at least 9%", reading the gap only against `maxPromptTokens`
+    itself. If the SDK's background-compaction (80%) and blocking (95%) thresholds are both relative
+    to `maxPromptTokens`, as this repo assumes, a 131095-token request with zero compactions means the
+    estimate was under roughly 114000 -- at least ~15% below the real count, or, if compaction never
+    even started, as much as ~37% below it. 100000 is a conservative pull-back from 120000 under that
+    range, not a value the 9% figure proved safe. The real check going forward is `CopilotRunner.run`'s
+    own log line (the resolved `maxPromptTokens`/`maxOutputTokens`/model, once per session start)
+    together with `assistant.usage`'s `peakInputTokens` (already recorded per role in
+    `manifest.json.metrics`) on the next long session -- that ratio is the real number 77% only
+    estimates. The hosted profile sets neither field: the SDK already knows Copilot's own models'
+    limits.
+
+17. **The orchestrator writes the first version of every translation: its skeleton** (live hardening,
+    Task L8; `docs/reference/output-targets.md` §4). Program spec `01-copilot-setup.md` Part A §5
+    ("Design notes on the roster"): "translator and fixer write `proc.sql` / `translation_notes.md` for
+    one segment", and the
+    translator prompt holds the DAG, the contract, the cookbook pages and the mappings. Now, before the
+    translator's first session, `scripts/translation_scaffold.py` writes every line that follows from
+    those files: a SQL procedure's C4 header, its session line, one documented `LET` per mapped source
+    and target, one statement per contract output in the form its write mode needs (`c4:write_mode`,
+    with a TODO statement for a PreSQL/PostSQL), the C3 work-table names, one CTE stub per data node in
+    DAG order named as the canned procedures name them, the final `SELECT` and `RETURN 'OK'`; a Snowpark
+    module's signature, reads and writes; a dbt project's `dbt_project.yml`, `profiles.yml`, `README.md`,
+    `sources.yml`, `schema.yml`, model files and `config(...)` lines. Every place the transformation
+    goes is exactly `TODO(scaffold)`, which `compile_check.py` refuses by name (`scaffold:todo`) on all
+    three targets, so an unfilled skeleton never compiles. The translator replaces the TODO bodies and
+    changes nothing else; the script never writes over a file and runs only where no translation exists
+    yet (a resumed run keeps the translator's work); a translator that leaves the skeleton untouched has
+    written nothing (`missing-output`, retried once with the reason, a timeout never kept). "Untouched"
+    (fix round 1) is judged on the translation files alone as the session found them -- the procedure file,
+    or every `models/**/*.sql` of a dbt project -- byte-identical and still holding a TODO; notes,
+    `compile_check.json` and logs do not count as work, and a skeleton with no TODO (a pass-through segment)
+    is a complete translation. Column names in the mechanical lines are quoted wherever Snowflake, DuckDB or
+    YAML needs it, and the Output tool's PreSQL/PostSQL is now required by `c4:write_mode`, not only allowed.
+    `SESSION_RULE_LINES` gained a sixth rule: the contract describes every column, so the golden data is
+    not read in bulk (at most one set's inputs). Why: live translators spent their sessions on the
+    mechanical lines -- a SQL translator needed a 45-minute timeout and a retry to reach a passing
+    procedure, and a dbt translator worked 90 tool calls over 25 minutes, read every golden CSV of every
+    set and overflowed its context without writing one file. The acceptance test reproduces the
+    mechanical parts of every committed canned translation, and the canned bodies transplanted into the
+    skeleton compile. Nothing here has run on Snowflake or Alteryx.
 
 ## 5. Interactive intake (the yxdb → table requirement)
 

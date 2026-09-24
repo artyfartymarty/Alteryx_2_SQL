@@ -51,7 +51,9 @@ project. Never a mix.
    Only **exit 2** stops the stage (`script-error`). Exit 1 is not a failure: `targets.json` is
    written either way, and it is written precisely so the analyzer can see the `unknown` nodes and
    record them in `analysis.md` / `unsupported.json`. The orchestrator logs one line and carries on.
-3. **The analyzer** copies each proposal into that segment's `contract.json` as `"target"`. It may
+3. **The orchestrator pre-fills** each proposal into that segment's `contract.json` as `"target"`
+   (`scripts/contract_scaffold.py`, live-hardening Task L3, `docs/reference/contracts.md`; before
+   that task the analyzer copied it). **The analyzer** may
    only **lower** a target — `sql` → `snowpark`, or either → `manual` — with a sentence in
    `analysis.md` and a `parity_risks` entry. It may never raise one and never set `dbt` when the
    script refused it.
@@ -162,6 +164,17 @@ EXECUTE AS CALLER`, one CTE per Alteryx tool. `procs/master.sql` calls every seg
   (`savetxt`, `savez`, `savez_compressed`, `tofile`, `dump`). The view and dynamic-table forms
   matter most: they *succeed* in the Local Testing Framework, so before this rule an undeclared
   object was created and the segment still PASSed.
+- **A final target is written in its write mode** (`rule:write_mode`, live hardening L4 -- the
+  Snowpark twin of the SQL target's `c4:write_mode`). The contract's `write_mode`, else
+  `intake/mappings.yaml`'s `mode`, picks the one call: `overwrite` →
+  `.write.mode("overwrite").save_as_table(f"{tgt_db}.{tgt_schema}.<LOGICAL>")`, `append` →
+  `.mode("append")`, `truncate_append` → `.mode("truncate")` (snowflake-snowpark-python's own
+  truncate-then-append), `update_insert`/`merge` → one `.merge(…)` on
+  `session.table(f"{tgt_db}.{tgt_schema}.<LOGICAL>")` joining `<target>["<KEY>"] == <source>["<KEY>"]`
+  on exactly the contract's keys, with `when_matched().update(…)` and `when_not_matched().insert(…)`.
+  A `.update(…)`/`.delete(…)` of the target is the Output tool's PreSQL (before) or PostSQL (after),
+  allowed only when `dag.json` gives the tool one. Judged on the AST; nothing here has run on
+  Snowflake.
 - **Column order is part of the schema.** The output `StructType` must list the columns in the
   contract's declared `outputs[].columns` order: a different order is a schema FAIL, reported as a
   `TYPE` difference rather than as an ordering one. A SQL segment transcribes the contract's column
@@ -201,13 +214,13 @@ contract; the deviations the phase-2 spikes forced (DV1–DV7 in the phase-2 pla
 
 | Path (under `workflows/<wf>/`) | Content | Written by |
 |---|---|---|
-| `dbt/dbt_project.yml` | `name: <wf>`, `profile: alteryx_migration`, `model-paths: [models]`, `vars: {src_schema: null, tgt_schema: null}` | translator |
-| `dbt/profiles.yml` | the fixed template below, byte for byte — never a credential (DV2) | translator (copied, never edited) |
-| `dbt/models/sources.yml` | one source `src` with `schema: "{{ var('src_schema') }}"` and a table per logical name `intake/mappings.yaml` maps as a source, columns from the contracts | translator |
-| `dbt/models/<table>.sql` | one `materialized='table'` model per work stream, named the `MIG_WORK` table lower-cased (`MIG_WORK.WF0007_SEG_01_OUT` → `wf0007_seg_01_out.sql`) | translator |
-| `dbt/models/<logical>.sql` | one model per final target, named the logical name lower-cased, with `alias='<LOGICAL>'` in upper case (DV4) and the config its write mode needs | translator |
-| `dbt/models/schema.yml` | every model with the contract's columns in order; `not_null` for a `nullable: false` column, `unique` for a single-column key | translator |
-| `dbt/README.md`, `dbt/translation_notes.md` | the run command per target and what the two `--vars` mean; every assumption, one per line | translator |
+| `dbt/dbt_project.yml` | `name: <wf>`, `profile: alteryx_migration`, `model-paths: [models]`, `vars: {src_schema: null, tgt_schema: null}` (`dbt_project.PROJECT_YML_TEMPLATE`) | the orchestrator's skeleton (§4) |
+| `dbt/profiles.yml` | the fixed template below, byte for byte — never a credential (DV2) | the orchestrator's skeleton (never edited) |
+| `dbt/models/sources.yml` | one source `src` with `schema: "{{ var('src_schema') }}"` and a table per logical name `intake/mappings.yaml` maps as a source, columns from the contracts | the orchestrator's skeleton |
+| `dbt/models/<table>.sql` | one `materialized='table'` model per work stream, named the `MIG_WORK` table lower-cased (`MIG_WORK.WF0007_SEG_01_OUT` → `wf0007_seg_01_out.sql`) | the skeleton (file, config line, reads, CTE names, final SELECT); the translator writes each CTE body |
+| `dbt/models/<logical>.sql` | one model per final target, named the logical name lower-cased, with `alias='<LOGICAL>'` in upper case (DV4) and the config its write mode needs | the skeleton, as above (a hook's statement is the translator's) |
+| `dbt/models/schema.yml` | every model with the contract's columns in order; `not_null` for a `nullable: false` column, `unique` for a single-column key | the orchestrator's skeleton |
+| `dbt/README.md`, `dbt/translation_notes.md` | the run command per target and what the two `--vars` mean; every assumption, one per line | the skeleton writes `README.md`; the translator `translation_notes.md` |
 | `dbt/fix_log.md` | one entry per repair | fixer |
 | `dbt/review.json` | the reviewer's verdict on the whole project, in a segment review's shape | reviewer only |
 | `dbt/compile_check.json` | `compile_check.py --target dbt`'s report | the script only |
@@ -369,7 +382,8 @@ verifies the contracts as in §2. `stageTranslate` then branches on `manifest.js
 
 | Step | `sql` segment | `snowpark` segment | `dbt` workflow |
 |---|---|---|---|
-| agent writes | `proc.sql` | `proc.py` | `dbt/**` — the narrowed lane of §3.3 — once for the whole workflow, no segment in context |
+| skeleton (Task L8) | `scripts/translation_scaffold.py <wf> --segment <seg>` writes `proc.sql` | the same writes `proc.py` | `scripts/translation_scaffold.py <wf>` writes the project's files |
+| agent writes | `proc.sql` (fills the skeleton) | `proc.py` (fills the skeleton) | `dbt/**` — the narrowed lane of §3.3 — once for the whole workflow, no segment in context |
 | render | — | `scripts/render_snowpark.py <wf> <seg>` (exit 2 → the segment needs a human with reason `script-error`; exit 1 → the iteration ends like a compile failure and the fixer gets another turn) | — |
 | compile check | `scripts/compile_check.py <wf> <seg>` | `scripts/compile_check.py <wf> <seg> --target snowpark` | `scripts/compile_check.py <wf> --target dbt` (no segment) |
 | review | reviewer, `review.json` | same, against `proc.py` and the `proc.sql` ↔ `proc.py` pairing | reviewer once per workflow, `dbt/review.json` |
@@ -383,6 +397,55 @@ All three validators judge with the same unchanged `compare.py`, use the same ve
 write the same `validation.json` shape; the Snowpark one records `"target": "snowpark"` in it and
 `validate_dbt.py` records `"target": "dbt"`. Everything else — the fix-iteration budget, the tool-call
 budget, parked escalations, `--from-stage`, crash resume — is unchanged.
+
+**The orchestrator writes the skeleton first (live hardening, Task L8).** Live runs with a real model spent
+most of each translator session on lines nothing but the contract, the segment DAG and the mappings decide, and a
+dbt translator overflowed its context without writing one file. So before a translator's first session (iteration
+0 of `migrateSegment`, or of `migrateDbt`) the orchestrator runs `scripts/translation_scaffold.py`, which writes
+every mechanical line of the translation and leaves exactly one marker, `TODO(scaffold)`, as the body of each
+place the transformation goes:
+
+- **sql** — contract C4's header, the session line (`mappings/global.yaml` `session`), one documented `LET` per
+  mapped source and per target, one statement per contract output in the contract's order (a work stream as
+  `CREATE OR REPLACE TRANSIENT TABLE <C3 table> AS`; a target in the form its write mode needs, `c4:write_mode`,
+  with a TODO statement before/after it for the Output tool's PreSQL/PostSQL), each with one CTE stub per data node
+  it needs in DAG order — named `t<id>_<type>`, `_<anchor>` for one anchor of a tool with several,
+  `t<macro>_macro_m<inner>_<type>` inside a macro, as the canned procedures name them — after a
+  `-- tool <id>: <type> <annotation>` comment and a line naming what the stub reads and which columns it yields,
+  and a final `SELECT <the stream's columns> FROM <the CTE that yields it>`; then `RETURN 'OK'`.
+- **snowpark** — the handler signature, every input read into a named DataFrame (`src_<logical>`, `in_<stream>`),
+  one stub per data node with its `# tool <id>:` comment (saying which `out_<stream>` it assigns), every output
+  written from `out_<stream>` in the form `rule:write_mode` needs, and `return "OK"`.
+- **dbt** — `dbt_project.yml` (`dbt_project.PROJECT_YML_TEMPLATE`), `profiles.yml` (`PROFILES_TEMPLATE`),
+  `README.md`, `models/sources.yml`, `models/schema.yml`, and one model per contract output with its exact
+  `config(...)` line (`expected_model_config`, with `pre_hook='TODO(scaffold)'`/`post_hook=…` where the Output tool
+  has a PreSQL/PostSQL), its `source()`/`ref()` reads pre-written as the first CTEs (`src_<logical>`,
+  `ref_<model>`), a CTE stub per data node, the Output tool's comment and the final `SELECT`.
+
+Workflow-authored text reaches a skeleton in two forms only: prose (an annotation, a PreSQL) inside a comment, on
+one line, without `$$`, braces or the marker; and column names in code -- double-quoted wherever a name is not plain
+or is a reserved word of Snowflake (its documented list) or DuckDB (`duckdb_keywords()`), YAML-quoted wherever YAML
+would read it as something else (`NO`, `ON`, `YES`, `NULL`, …), JSON-escaped in a Python literal; a quoted
+`unique_key` (`'"ORDER"'`) is accepted by the closed surface and compared unquoted by `dbt:model_config`. A name
+holding `$$` (a procedure) or a brace (dbt) cannot be written in code at all: each place it would be named is a TODO,
+with a note. An Output tool's PreSQL/PostSQL is required, not only allowed: `c4:write_mode` refuses a write whose
+PreSQL/PostSQL statement is missing, as `dbt:hooks` refuses a missing hook (the Snowpark rules still only allow
+it). The script never writes over an existing file, and the orchestrator runs it only when
+the translation's file (`proc.sql`/`proc.py`, or `dbt/dbt_project.yml`, written last) does not exist yet, so a resumed run keeps
+the translator's work and a fixer is never re-scaffolded; its exit 2 is a `script-error`. `compile_check.py` refuses
+any file that still holds the marker, by name and before any other check (`scaffold:todo`, one error per line,
+naming the tool whose stub it is), on all three targets — an unfilled skeleton never compiles, and dbt never runs
+over one. A translator whose session leaves the skeleton untouched has written nothing: that is `missing-output`, retried once
+with the reason quoted, and a timeout that left it untouched is never kept (Task L7's keep rule judges the
+translator's output, not the orchestrator's). "Untouched" is judged on the translation files alone, as they were
+when the session began (whoever wrote them, this run's scaffold or an earlier run's): the procedure file itself, or
+for dbt every `models/**/*.sql` file -- byte-identical, no model added or removed, and still holding a TODO. Notes,
+`compile_check.json`, logs and every other file do not count as work. A skeleton with no TODO in it (a segment that
+only passes a stream through) is already a complete translation: leaving it as written is no failure, and the
+translator is told it is complete. The translator is told what the skeleton holds
+and what it must not change; a fixer facing an unfilled TODO is told so. The acceptance test
+(`tests/test_translation_scaffold.py`) reproduces the mechanical parts of every committed canned translation, and
+the canned bodies transplanted into the skeleton compile.
 
 **A dbt workflow is one loop.** `migrateDbt` runs translator (iteration 0) or fixer, then
 `compile_check.py <wf> --target dbt`, then the reviewer, then the validator — every agent with the
@@ -447,7 +510,9 @@ The orchestrator's own script calls are not agent tool calls and are unaffected.
 (`file_text`, `content`, `old_str`/`new_str`, `old_string`/`new_string`, `text`, `insert_line`) are
 never judged as paths; the `path` beside them always is.
 
-**Mock replay.** `MockRunner` copies `samples/<wf>/canned/segments/<seg>/proc.py` when the canned
+**Mock replay.** The skeleton is written before the mock translator too, and the replay copies the canned file
+over it (each canned translation is its skeleton with every TODO body filled, up to one ORDER BY the
+translator added after a final FROM; `tests/test_translation_scaffold.py`). `MockRunner` copies `samples/<wf>/canned/segments/<seg>/proc.py` when the canned
 tree has one (else `proc.sql`, as before) and never fabricates a `proc.sql` for a Snowpark segment —
 in an offline run that file can only have come from `render_snowpark.py`. A broken variant under
 `samples/<wf>/broken_sql/<seg>/` is the first file in name order whatever its extension, so a `.py`
@@ -508,7 +573,34 @@ workflow's `docs/migration.md` carries a `## Deployment` section that restates t
   Snowflake's SQL functions and types; it has no `session.sql`; it resolves no real
   `RUNTIME_VERSION` or `PACKAGES`; and it represents no performance characteristic. A `PASS` here
   means the logic matched the golden data in that subset, not that the procedure will create, let
-  alone run, on your account.
+  alone run, on your account. The framework runs `proc.py` as ordinary Python on the host, so the
+  self-test runs the agent's code only inside a sandbox, and both of the sandbox's gates are now
+  **allow-lists** (live hardening L4 fix round 5): the static Snowpark gate
+  (`scripts/lib/snowpark_rules.py`) accepts only the Snowpark/pandas surface the benign corpus uses —
+  imports from a fixed list; `pd.`/`np.` attributes from a per-module allow-list (so `pd.eval`,
+  `pd.read_csv`, `np.load` are refused); method calls whose name is on the Snowpark DataFrame/Column
+  plus pandas carry-over allow-list (so `.eval`, `.query`, `.pipe`, `.style`, `.plot`, every `to_*`
+  writer and `read_*` reader are refused); and `engine="python"` outright. The module then runs in a
+  **child process** under an audit hook (`scripts/lib/snowpark_sandbox.py`) armed before it is
+  imported that is **default-deny**: it allows exactly the audit events a benign procedure records
+  (`scripts/lib/sandbox_events.json`, re-recorded by `scripts/dev/record_sandbox_events.py`) — with
+  the argument checks that keep `open` inside a per-run temp directory (reads also under the
+  interpreter's own installation; once armed, no workflow file — the golden inputs are loaded before
+  arming and the expected outputs in `golden/outputs/` are never readable), keep `import` off the
+  blocked modules, and keep `os.*` path operations inside the temp directory — and refuses every other
+  event, whole native families (`_winapi.*`, `winreg.*`, `ctypes.*`, `socket.*`, `subprocess.*`,
+  `sqlite3.*`, `msvcrt.*`, `_wmi.*`) outright. The child runs under a wall-clock timeout
+  (`--sandbox-timeout`, default 600 s; its process tree is killed on expiry), in a minimal environment
+  with no credentials, and signs its result with a per-run nonce the parent verifies; once it has
+  signalled that agent code started, an exit with no authenticated result is a FAIL, never a re-spawn.
+  A blocked operation, a timeout, or an unauthenticated result is that segment's FAIL, naming the
+  reason. This is **defence in depth, not a security boundary**: it was attacked three times (fix
+  rounds 2–5 — a `snowflake.snowpark.types.sys` `sys.modules` reach, a `sqlite3` host-file write, and
+  `pd.eval(..., engine="python")` reaching `_winapi` native calls, all closed) and agent code still
+  shares the harness's Python process, so it depends on the static gate keeping `sys`, frames and every
+  stdlib module out of reach. It is not a substitute for running procedures only in Snowflake in
+  production; real isolation is the program spec's container (`docs/production-backlog.md`, "Isolate
+  agent-code execution").
 - **DuckDB** (`scripts/validate_segment.py`): DuckDB types and identifier casing differ from
   Snowflake's, and `VARCHAR(n)` length is not enforced the way a real account enforces it.
 - **The Alteryx simulator** is a model of Alteryx's tools, not the tools

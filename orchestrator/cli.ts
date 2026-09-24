@@ -4,10 +4,12 @@ import { spawn } from "node:child_process";
 import { readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { loadAgents } from "./agents.ts";
+import { MAX_ACT_DENIALS_PER_SESSION, MAX_READ_DENIALS_PER_SESSION } from "./hooks.ts";
 import { loadManifest } from "./manifest.ts";
 import { checkModels, configuredModels } from "./models.ts";
 import type { CatalogModel, CliSubagentsConfig } from "./models.ts";
 import { CopilotRunner, MockRunner } from "./runner.ts";
+import { ExternalRunner } from "./external_runner.ts";
 import { migrateWorkflow } from "./stages.ts";
 import { ROLES, STAGES } from "./types.ts";
 import type {
@@ -25,7 +27,11 @@ export const DEFAULT_CONFIG: OrchestratorConfig = {
   maxParseRecovery: 2,
   sessionTimeoutMs: 1_200_000,
   golden: { producer: "simulator" },
-  budgets: { maxToolCallsPerWorkflow: 400 },
+  budgets: {
+    maxToolCallsPerWorkflow: 400,
+    maxReadDenialsPerSession: MAX_READ_DENIALS_PER_SESSION,
+    maxActDenialsPerSession: MAX_ACT_DENIALS_PER_SESSION,
+  },
   policy: { sandboxDatabases: ["MIGDB"] },
   // GitHub is opt-in (Task P4 fix round 1, B3): with it off the orchestrator never invokes `gh` --
   // no issue for open questions, no pull request -- whether or not `gh` is installed. `--gh` turns
@@ -101,7 +107,7 @@ export function parseArgs(argv: string[]): RunOptions {
         opts.dryRun = true;
         break;
       case "--runner":
-        opts.runner = oneOf(value(), ["mock", "copilot"] as const, flag);
+        opts.runner = oneOf(value(), ["mock", "copilot", "external"] as const, flag);
         break;
       case "--profile":
         opts.profile = oneOf(value(), ["local", "hosted"] as const, flag);
@@ -183,6 +189,63 @@ export async function assertPythonExists(root: string, config: OrchestratorConfi
         `On Windows use a drive-letter path such as C:/…/.venv/Scripts/python.exe, not /c/….`,
     );
   }
+}
+
+/**
+ * Task L1 (R1): the environment every agent session's runtime process runs with -- `base` (the
+ * orchestrator's own environment by default) with the directory of the configured interpreter
+ * (`config.python`, resolved against `root` exactly as `makeEnv`'s `py` and `assertPythonExists`
+ * resolve it) put FIRST on PATH. A run root is a copy without `.venv` whose config names the
+ * interpreter by absolute path, and `python` on the machine's own PATH is the system interpreter
+ * without the project's packages; with this, `python scripts/<name>.py …` in an agent's shell runs
+ * the project's interpreter, which is the form every agent file shows.
+ *
+ * Windows environment keys are case-insensitive (`Path` vs `PATH`): the existing key is replaced,
+ * never a second one added. When `base` carries more than one case variant (a parent can pass such a
+ * block), their entries are MERGED into the first key, in key order, and the others dropped (Task L1
+ * fix round 1, M7), so exactly one remains and no directory is lost. On POSIX only `PATH` itself is
+ * PATH. The interpreter's directory comes first, then every other entry in its original order, each
+ * once: a repeat (in any case and with any trailing separator, on Windows) is dropped, so an entry
+ * already naming the interpreter's directory is moved, not repeated, and applying this twice gives
+ * the same result as once. Empty entries are dropped. `base` is never modified. `platform` exists so
+ * both path conventions can be tested on either host.
+ */
+export function sessionEnvironment(
+  config: Pick<OrchestratorConfig, "python">,
+  root: string,
+  base: Record<string, string | undefined> = process.env,
+  platform: NodeJS.Platform = process.platform,
+): Record<string, string | undefined> {
+  const windows = platform === "win32";
+  const paths = windows ? path.win32 : path.posix;
+  const interpreterDir = paths.dirname(paths.resolve(root, config.python));
+  const comparable = (entry: string): string => {
+    const trimmed = entry.replace(windows ? /[\\/]+$/ : /\/+$/, "") || entry;
+    return windows ? trimmed.replace(/\//g, "\\").toLowerCase() : trimmed;
+  };
+
+  const env: Record<string, string | undefined> = { ...base };
+  const pathKeys = Object.keys(env).filter((key) => (windows ? key.toUpperCase() === "PATH" : key === "PATH"));
+  const key = pathKeys[0] ?? "PATH";
+  const merged = pathKeys.flatMap((name) => (env[name] ?? "").split(paths.delimiter));
+  for (const duplicate of pathKeys.slice(1)) delete env[duplicate];
+  const seen = new Set([comparable(interpreterDir)]);
+  const entries: string[] = [];
+  for (const entry of merged) {
+    if (entry === "" || seen.has(comparable(entry))) continue;
+    seen.add(comparable(entry));
+    entries.push(entry);
+  }
+  env[key] = [interpreterDir, ...entries].join(paths.delimiter);
+  return env;
+}
+
+/** The options every agent-session `CopilotClient` is constructed with (Task L1, R1): the SDK's
+ * `CopilotClientOptions.env` -- "Environment variables to pass to the runtime process" -- set to
+ * `sessionEnvironment`, so the runtime and every shell it starts find the project's interpreter as
+ * `python`. (The SDK's in-process transport refuses `env`; the default stdio transport takes it.) */
+export function copilotClientOptions(config: OrchestratorConfig, root: string): { env: Record<string, string | undefined> } {
+  return { env: sessionEnvironment(config, root) };
 }
 
 /**
@@ -289,7 +352,7 @@ function profileOver(base: ProfileConfig, file: ProfileConfig | undefined): Prof
 
 export async function loadConfig(root: string): Promise<OrchestratorConfig> {
   const onDisk = await readConfigFile(root);
-  return {
+  const config: OrchestratorConfig = {
     ...DEFAULT_CONFIG,
     ...onDisk,
     golden: { ...DEFAULT_CONFIG.golden, ...(onDisk.golden ?? {}) },
@@ -301,6 +364,76 @@ export async function loadConfig(root: string): Promise<OrchestratorConfig> {
       hosted: profileOver(DEFAULT_CONFIG.profiles.hosted, onDisk.profiles?.hosted),
     },
   };
+  // Task L1 fix round 1 (M6): the read-denial budget decides whether a session parks, and a value
+  // that is not a non-negative integer ("twenty", -1, 2.5, null) would make every comparison with it
+  // false -- read denials would never park. A configuration error, stopped here (exit 2).
+  // Task L6 (R2): the same for the attempted-action budget -- failing open there would mean attempted
+  // actions never park a session.
+  for (const key of ["maxReadDenialsPerSession", "maxActDenialsPerSession"] as const) {
+    const budget: unknown = config.budgets[key];
+    if (!Number.isInteger(budget) || (budget as number) < 0) {
+      throw new UsageError(
+        `${path.join(root, CONFIG_FILE)}: budgets.${key} must be a non-negative integer ` +
+          `(got ${JSON.stringify(budget) ?? String(budget)})`,
+      );
+    }
+  }
+  // Fix round 2 (S5): the same for the workflow's tool-call budget, which must be a positive integer
+  // -- `used > "400"` or `used > null` would never stop a workflow, and 0 would stop every one.
+  const toolBudget: unknown = config.budgets.maxToolCallsPerWorkflow;
+  if (!Number.isInteger(toolBudget) || (toolBudget as number) <= 0) {
+    throw new UsageError(
+      `${path.join(root, CONFIG_FILE)}: budgets.maxToolCallsPerWorkflow must be a positive integer ` +
+        `(got ${JSON.stringify(toolBudget) ?? String(toolBudget)})`,
+    );
+  }
+  // Live hardening, Task L7 (R1): `profiles.<name>.provider.maxPromptTokens` / `maxOutputTokens` reach
+  // the SDK's `createSession` unchanged (runner.ts), so a value that is not a positive integer would
+  // silently reach the SDK as garbage (a string, a negative number) instead of failing here, by name,
+  // where a hand-edited config can actually be fixed. Either profile may set them (`checkModels`'s own
+  // hosted-only guard is a separate thing), and absent is fine -- most profiles set neither.
+  for (const name of ["local", "hosted"] as const) {
+    const provider = config.profiles[name].provider;
+    if (!provider) continue;
+    for (const key of ["maxPromptTokens", "maxOutputTokens"] as const) {
+      const value: unknown = provider[key];
+      if (value !== undefined && (!Number.isInteger(value) || (value as number) <= 0)) {
+        throw new UsageError(
+          `${path.join(root, CONFIG_FILE)}: profiles.${name}.provider.${key} must be a positive integer ` +
+            `(got ${JSON.stringify(value) ?? String(value)})`,
+        );
+      }
+    }
+  }
+  // Live hardening, Task L9 (R1): `session.excludedTools` reaches the SDK's `createSession` unchanged
+  // (runner.ts's sessionExcludedTools, appended after the fixed ALWAYS_EXCLUDED_BUILTIN_TOOLS list), so
+  // a value that is not a list of non-empty strings would silently reach the SDK as garbage instead of
+  // failing here, by name. Absent is fine -- the fixed list alone still reaches every session.
+  if (config.session?.excludedTools !== undefined) {
+    const list: unknown = config.session.excludedTools;
+    if (!Array.isArray(list) || list.some((entry) => typeof entry !== "string" || entry.length === 0)) {
+      throw new UsageError(
+        `${path.join(root, CONFIG_FILE)}: session.excludedTools must be a list of non-empty strings ` +
+          `(got ${JSON.stringify(list)})`,
+      );
+    }
+    // Live hardening, Task L9 fix round 2 (L9 minor): a bare "*" is refused by the SDK's own
+    // `createSession` (unlike an unknown plain tool name, which it silently ignores -- confirmed live
+    // against the bundled runtime). `excludedTools`'s own doc comment
+    // (node_modules/@github/copilot-sdk/dist/types.d.ts ~2004) names the only patterns it accepts:
+    // source-qualified (`builtin:*`, `builtin:<name>`, `mcp:*`, `mcp:<name>`, `custom:*`, `custom:<name>`)
+    // or a bare exact tool name -- a bare "*" is neither, and the ToolSet helper only ever produces the
+    // qualified form (`addBuiltIn("*")` yields `"builtin:*"`, never a bare `"*"`). Refused here, by name,
+    // rather than reaching `createSession` as a crash with no orchestrator-side diagnosis.
+    if (list.includes("*")) {
+      throw new UsageError(
+        `${path.join(root, CONFIG_FILE)}: session.excludedTools may not contain a bare "*" (the SDK's ` +
+          `createSession refuses it) -- use a source-qualified form instead, such as "builtin:*", "mcp:*" ` +
+          `or "custom:*"`,
+      );
+    }
+  }
+  return config;
 }
 
 /** Whether this run may use GitHub, and whether `gh` is there to use. Off unless the config's
@@ -452,12 +585,16 @@ export async function main(
     let env = deps.env;
     if (!env) {
       const kind = opts.runner ?? "mock";
-      let runner: MockRunner | CopilotRunner;
+      let runner: MockRunner | CopilotRunner | ExternalRunner;
       if (kind === "mock") {
         runner = new MockRunner(root, path.resolve(root, config.samplesDir), opts.scenario);
+      } else if (kind === "external") {
+        // Every agent call is handed out through <root>/.agent-requests/ (orchestrator/external_runner.ts).
+        runner = new ExternalRunner(root, config);
       } else {
         const { CopilotClient } = await import("@github/copilot-sdk");
-        const copilot = new CopilotClient();
+        // Task L1 (R1): the configured interpreter is `python` inside every agent session.
+        const copilot = new CopilotClient(copilotClientOptions(config, root));
         await copilot.start();
         client = copilot;
         runner = new CopilotRunner({ client: copilot, root, config, profile, agents: await loadAgents(root, profile) });

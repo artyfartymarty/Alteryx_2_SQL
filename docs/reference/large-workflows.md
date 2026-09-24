@@ -133,7 +133,9 @@ policy, not by the prompt (`orchestrator/test/policy.test.ts`, "the analyzer in 
 only its batch's contracts and fragments"). Each batch's verify callback requires its two fragments
 (the `unsupported.json` one with a T1, T2 or T3 `tier`) and, unless a fragment has made the workflow T3, every contract of the batch, no raised target
 (`target-mismatch: …` / `target-missing: …`, as for one call) and every seam INTO its segments
-(`check_seams.py <wf> --segments <its segments>`); one retry per batch, then the same park reasons as
+(`check_seams.py <wf> --segments <its segments>`); since live-hardening Task L3 the batch's contracts
+are also re-applied from the scaffold first and checked by `contract_check.py <wf> --segments <its
+segments>` last (`docs/reference/contracts.md`); one retry per batch, then the same park reasons as
 one call. `analysis/` is emptied when a batched analyze starts, so a fragment from an earlier plan is
 never stitched.
 

@@ -236,6 +236,20 @@ class DuckDBBackend:
     def __init__(self, db_path: str = ":memory:"):
         self.db_path = db_path
         self._con = duckdb.connect(db_path)
+        self._external_access_locked = False
+
+    def lock_external_access(self) -> None:
+        """No file, network or extension access on this connection from now on, and no way back:
+        `enable_external_access = false`, then `lock_configuration = true` so no statement can turn
+        it on again (live hardening L4 fix round 1, P). `lib.proc_runner.run_proc` calls this before
+        an agent-written procedure's first statement; the golden data is loaded before that, and every
+        later load (`load_table`) inserts rows through Python, never through a file function.
+        Idempotent. Both settings exist in DuckDB 1.5 (checked against the installed version)."""
+        if self._external_access_locked:
+            return
+        self._con.execute("SET enable_external_access = false")
+        self._con.execute("SET lock_configuration = true")
+        self._external_access_locked = True
 
     # --- translation ---
 
